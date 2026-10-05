@@ -1,7 +1,10 @@
 """Unit tests for DatabaseSeeder (pure in-memory, no database modification)."""
 
+import json
 import pytest
 from pathlib import Path
+from unittest.mock import MagicMock
+from query_pilot.config import get_db_settings
 from query_pilot.db.seeder import (
     DatabaseSeeder,
     TABLE_DEPENDENCY_ORDER,
@@ -9,6 +12,21 @@ from query_pilot.db.seeder import (
     SANITIZED_PASSWORD_HASH,
     ALLOWED_TARGET_DATABASE,
 )
+
+
+def test_seeder_does_not_require_gemini_api_key(monkeypatch):
+    """Verify that DatabaseSeeder configuration works with zero LLM environment variables."""
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("LANGCHAIN_API_KEY", raising=False)
+
+    db_settings = get_db_settings()
+    assert db_settings.DB_NAME == "GradeSense_Local"
+
+    seeder = DatabaseSeeder(
+        csv_dir=Path("data/raw"),
+        target_db_name=db_settings.DB_NAME,
+    )
+    assert seeder.target_db_name == "GradeSense_Local"
 
 
 def test_target_database_safeguard():
@@ -20,11 +38,62 @@ def test_target_database_safeguard():
     assert seeder.target_db_name == "GradeSense_Local"
 
     # Blocked databases
-    forbidden_targets = ["GradeSense", "GradeSenseCodeFirst", "master", "tempdb", "Production_DB"]
+    forbidden_targets = ["GradeSense", "GradeSenseCodeFirst", "master", "tempdb", "Production_DB", "", None]
     for forbidden in forbidden_targets:
         with pytest.raises(ValueError) as exc_info:
             DatabaseSeeder(csv_dir=dummy_csv_dir, target_db_name=forbidden)
         assert "SAFETY VIOLATION" in str(exc_info.value)
+
+
+def test_seed_all_session_validation_targets():
+    """Verify that seed_all validates target database using SELECT DB_NAME() on session."""
+    mock_engine = MagicMock()
+    mock_conn = MagicMock()
+    mock_engine.begin.return_value.__enter__.return_value = mock_conn
+
+    seeder = DatabaseSeeder(csv_dir=Path("data/raw"))
+    seeder.load_table_data = MagicMock(return_value=[])
+
+    # 1. Connection reporting GradeSense_Local is accepted
+    mock_conn.execute.return_value.scalar.return_value = "GradeSense_Local"
+    results = seeder.seed_all(mock_engine)
+    assert isinstance(results, dict)
+
+    # 2. Connection reporting GradeSense is rejected
+    mock_conn.execute.return_value.scalar.return_value = "GradeSense"
+    with pytest.raises(ValueError) as exc:
+        seeder.seed_all(mock_engine)
+    assert "SAFETY VIOLATION" in str(exc.value)
+
+    # 3. Connection reporting GradeSenseCodeFirst is rejected
+    mock_conn.execute.return_value.scalar.return_value = "GradeSenseCodeFirst"
+    with pytest.raises(ValueError) as exc:
+        seeder.seed_all(mock_engine)
+    assert "SAFETY VIOLATION" in str(exc.value)
+
+    # 4. Empty or NULL database name is rejected
+    for invalid in [None, ""]:
+        mock_conn.execute.return_value.scalar.return_value = invalid
+        with pytest.raises(ValueError) as exc:
+            seeder.seed_all(mock_engine)
+        assert "SAFETY VIOLATION" in str(exc.value)
+
+
+def test_seed_all_no_inserts_before_validation():
+    """Verify that seed_all performs NO inserts if target database validation fails."""
+    mock_engine = MagicMock()
+    mock_conn = MagicMock()
+    mock_engine.begin.return_value.__enter__.return_value = mock_conn
+    mock_conn.execute.return_value.scalar.return_value = "GradeSense"
+
+    seeder = DatabaseSeeder(csv_dir=Path("data/raw"))
+    seeder.seed_table = MagicMock()
+
+    with pytest.raises(ValueError):
+        seeder.seed_all(mock_engine)
+
+    # Assert seed_table was never invoked
+    seeder.seed_table.assert_not_called()
 
 
 def test_import_dependency_order():
@@ -120,3 +189,32 @@ def test_supplemental_records_loading():
         assert "RiskScore" in pred
         # Enforce that CourseEnrollmentId is within the valid sample range (<= 200)
         assert pred["CourseEnrollmentId"] <= 200
+
+
+def test_predictions_schema_filtered_unique_index():
+    """Verify that gradesense_schema.sql defines a filtered unique index on Predictions (WHERE IsActive = 1)."""
+    schema_path = Path("data/schemas/gradesense_schema.sql")
+    assert schema_path.exists(), "gradesense_schema.sql must exist"
+
+    with open(schema_path, "r", encoding="utf-8") as f:
+        schema_text = f.read()
+
+    expected_pattern = "CREATE UNIQUE INDEX [idx_predictions_active_unique] ON [Predictions] ([CourseEnrollmentId]) WHERE [IsActive] = 1"
+    assert expected_pattern in schema_text, (
+        "idx_predictions_active_unique must be a filtered unique index with WHERE [IsActive] = 1"
+    )
+
+
+def test_supplemental_predictions_filtered_uniqueness():
+    """Verify that supplemental predictions have exactly one active prediction per CourseEnrollmentId."""
+    json_path = Path("data/seeds/supplemental_predictions.json")
+    assert json_path.exists(), "supplemental_predictions.json must exist"
+
+    with open(json_path, "r", encoding="utf-8") as f:
+        records = json.load(f)
+
+    active_enrollments = [r["CourseEnrollmentId"] for r in records if r.get("IsActive") in (1, 1.0, True)]
+    # All active enrollments must be unique
+    assert len(active_enrollments) == len(set(active_enrollments)), (
+        f"Duplicate active predictions found for enrollments: {active_enrollments}"
+    )

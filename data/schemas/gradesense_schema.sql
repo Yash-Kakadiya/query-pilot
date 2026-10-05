@@ -477,7 +477,7 @@ GO
 CREATE INDEX [idx_predictions_active] ON [Predictions] ([CourseEnrollmentId], [IsActive])
 GO
 
-CREATE UNIQUE INDEX [idx_predictions_active_unique] ON [Predictions] ([CourseEnrollmentId])
+CREATE UNIQUE INDEX [idx_predictions_active_unique] ON [Predictions] ([CourseEnrollmentId]) WHERE [IsActive] = 1
 GO
 
 CREATE INDEX [idx_predictions_model] ON [Predictions] ([ModelVersion])

@@ -1,49 +1,26 @@
 """Configuration management for QueryPilot using Pydantic Settings.
 
+Cleanly separates database connection and safety settings from LLM credentials.
 Ensures fail-fast environment variable validation and prevents secret leakage.
 """
 
 from functools import lru_cache
 from typing import Optional
+import urllib.parse
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class Settings(BaseSettings):
-    """Application-wide settings with environment variable bindings."""
+class DatabaseSettings(BaseSettings):
+    """Database connection and execution guardrails configuration.
+    
+    Can be used by standalone database tooling without requiring LLM API credentials.
+    """
 
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
-    )
-
-    # --------------------------------------------------------------------------
-    # LLM Settings (Google Gemini)
-    # --------------------------------------------------------------------------
-    GEMINI_API_KEY: SecretStr = Field(
-        ...,
-        description="Google Gemini API Key for LLM reasoning and SQL generation.",
-    )
-    GEMINI_MODEL: str = Field(
-        default="gemini-2.0-flash",
-        description="Gemini model identifier to use.",
-    )
-
-    # --------------------------------------------------------------------------
-    # Observability (LangSmith)
-    # --------------------------------------------------------------------------
-    LANGCHAIN_TRACING_V2: bool = Field(
-        default=False,
-        description="Enable LangSmith tracing for LangChain/LangGraph calls.",
-    )
-    LANGCHAIN_API_KEY: Optional[SecretStr] = Field(
-        default=None,
-        description="API key for LangSmith observability.",
-    )
-    LANGCHAIN_PROJECT: str = Field(
-        default="query-pilot",
-        description="LangSmith project name for traces.",
     )
 
     # --------------------------------------------------------------------------
@@ -90,17 +67,6 @@ class Settings(BaseSettings):
         description="Maximum row limit enforced on queries.",
     )
 
-    @field_validator("GEMINI_API_KEY")
-    @classmethod
-    def validate_api_key_not_empty(cls, v: SecretStr) -> SecretStr:
-        """Ensure the API key is not empty or a default placeholder."""
-        raw_val = v.get_secret_value().strip()
-        if not raw_val or raw_val == "your_gemini_api_key_here":
-            raise ValueError(
-                "GEMINI_API_KEY cannot be empty or the default placeholder."
-            )
-        return v
-
     def get_odbc_connection_string(self) -> str:
         """Construct the raw ODBC connection string for SQL Server."""
         parts = [
@@ -117,13 +83,61 @@ class Settings(BaseSettings):
 
     def get_sqlalchemy_url(self) -> str:
         """Construct a SQLAlchemy URL using the mssql+pyodbc dialect."""
-        import urllib.parse
         odbc_str = self.get_odbc_connection_string()
         params = urllib.parse.quote_plus(odbc_str)
         return f"mssql+pyodbc:///?odbc_connect={params}"
 
 
+class Settings(DatabaseSettings):
+    """Application-wide settings extending DatabaseSettings with LLM and Observability credentials."""
+
+    # --------------------------------------------------------------------------
+    # LLM Settings (Google Gemini)
+    # --------------------------------------------------------------------------
+    GEMINI_API_KEY: SecretStr = Field(
+        ...,
+        description="Google Gemini API Key for LLM reasoning and SQL generation.",
+    )
+    GEMINI_MODEL: str = Field(
+        default="gemini-2.0-flash",
+        description="Gemini model identifier to use.",
+    )
+
+    # --------------------------------------------------------------------------
+    # Observability (LangSmith)
+    # --------------------------------------------------------------------------
+    LANGCHAIN_TRACING_V2: bool = Field(
+        default=False,
+        description="Enable LangSmith tracing for LangChain/LangGraph calls.",
+    )
+    LANGCHAIN_API_KEY: Optional[SecretStr] = Field(
+        default=None,
+        description="API key for LangSmith observability.",
+    )
+    LANGCHAIN_PROJECT: str = Field(
+        default="query-pilot",
+        description="LangSmith project name for traces.",
+    )
+
+    @field_validator("GEMINI_API_KEY")
+    @classmethod
+    def validate_api_key_not_empty(cls, v: SecretStr) -> SecretStr:
+        """Ensure the API key is not empty or a default placeholder."""
+        raw_val = v.get_secret_value().strip()
+        if not raw_val or raw_val == "your_gemini_api_key_here":
+            raise ValueError(
+                "GEMINI_API_KEY cannot be empty or the default placeholder."
+            )
+        return v
+
+
+@lru_cache(maxsize=1)
+def get_db_settings() -> DatabaseSettings:
+    """Retrieve cached database-only settings instance."""
+    return DatabaseSettings()
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """Retrieve cached application settings instance."""
+    """Retrieve cached full application settings instance."""
     return Settings()

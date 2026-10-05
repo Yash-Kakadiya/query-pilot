@@ -1,14 +1,49 @@
-"""Unit tests for query_pilot.config Settings and security guardrails."""
+"""Unit tests for query_pilot.config Settings and DatabaseSettings."""
 
 import pytest
 from pydantic import ValidationError
-from query_pilot.config import Settings
+from query_pilot.config import DatabaseSettings, Settings, get_db_settings
+
+
+def test_database_settings_without_llm_key(monkeypatch):
+    """Verify that DatabaseSettings can be instantiated without GEMINI_API_KEY."""
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("DB_USER", raising=False)
+    monkeypatch.delenv("DB_PASSWORD", raising=False)
+
+    db_settings = DatabaseSettings(_env_file=None)
+
+    assert db_settings.DB_SERVER == r"localhost\SQLEXPRESS"
+    assert db_settings.DB_NAME == "GradeSense_Local"
+    assert db_settings.DB_DRIVER == "ODBC Driver 17 for SQL Server"
+    assert db_settings.DB_USE_TRUSTED_CONNECTION is True
+    assert db_settings.DB_QUERY_TIMEOUT_SECONDS == 15
+    assert db_settings.DB_MAX_ROW_LIMIT == 100
+    assert not hasattr(db_settings, "GEMINI_API_KEY")
+
+    # Connection strings still function correctly
+    conn_str = db_settings.get_odbc_connection_string()
+    assert "Trusted_Connection=yes" in conn_str
+    sa_url = db_settings.get_sqlalchemy_url()
+    assert sa_url.startswith("mssql+pyodbc:///?odbc_connect=")
+
+
+def test_database_settings_secret_obfuscation(monkeypatch):
+    """Verify that sensitive database password is never exposed in string representation."""
+    monkeypatch.setenv("DB_PASSWORD", "secret_db_pass_123")
+    monkeypatch.setenv("DB_USER", "db_reader")
+    monkeypatch.setenv("DB_USE_TRUSTED_CONNECTION", "false")
+
+    db_settings = DatabaseSettings(_env_file=None)
+
+    assert "secret_db_pass_123" not in repr(db_settings)
+    assert "secret_db_pass_123" not in str(db_settings)
+    assert db_settings.DB_PASSWORD.get_secret_value() == "secret_db_pass_123"
 
 
 def test_settings_valid_defaults(monkeypatch):
-    """Test that settings load valid defaults when GEMINI_API_KEY is supplied."""
+    """Test that application Settings load valid defaults when GEMINI_API_KEY is supplied."""
     monkeypatch.setenv("GEMINI_API_KEY", "valid_test_gemini_api_key")
-    # Clear any leftover env vars that might interfere
     monkeypatch.delenv("LANGCHAIN_API_KEY", raising=False)
     monkeypatch.delenv("DB_USER", raising=False)
     monkeypatch.delenv("DB_PASSWORD", raising=False)
@@ -28,8 +63,8 @@ def test_settings_valid_defaults(monkeypatch):
     assert settings.DB_MAX_ROW_LIMIT == 100
 
 
-def test_settings_missing_gemini_api_key(monkeypatch):
-    """Test that missing GEMINI_API_KEY raises a ValidationError."""
+def test_settings_still_requires_gemini_api_key(monkeypatch):
+    """Verify that full application Settings still strictly rejects missing GEMINI_API_KEY."""
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     with pytest.raises(ValidationError) as exc_info:
         Settings(_env_file=None)
@@ -56,13 +91,11 @@ def test_settings_secret_obfuscation(monkeypatch):
     repr_str = repr(settings)
     str_val = str(settings)
 
-    # Neither secret should appear in repr or str
     assert secret_key not in repr_str
     assert secret_key not in str_val
     assert secret_db_pass not in repr_str
     assert secret_db_pass not in str_val
 
-    # Secret is retrievable via get_secret_value() only
     assert settings.GEMINI_API_KEY.get_secret_value() == secret_key
     assert settings.DB_PASSWORD.get_secret_value() == secret_db_pass
 
@@ -109,18 +142,14 @@ def test_guardrails_validation_bounds(monkeypatch):
     """Verify that invalid timeout and row limit bounds trigger validation errors."""
     monkeypatch.setenv("GEMINI_API_KEY", "test_key")
 
-    # Timeout too low (< 1)
     with pytest.raises(ValidationError):
         Settings(_env_file=None, DB_QUERY_TIMEOUT_SECONDS=0)
 
-    # Timeout too high (> 120)
     with pytest.raises(ValidationError):
         Settings(_env_file=None, DB_QUERY_TIMEOUT_SECONDS=300)
 
-    # Row limit too low (< 1)
     with pytest.raises(ValidationError):
         Settings(_env_file=None, DB_MAX_ROW_LIMIT=0)
 
-    # Row limit too high (> 1000)
     with pytest.raises(ValidationError):
         Settings(_env_file=None, DB_MAX_ROW_LIMIT=5000)

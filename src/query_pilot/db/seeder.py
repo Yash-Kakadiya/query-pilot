@@ -2,7 +2,7 @@
 
 Safely loads, sanitizes, and seeds GradeSense_Local using CSV and supplemental
 data in strict foreign-key dependency order. Enforces fail-safe target database
-verification and memory-level credential sanitization.
+verification via SQL Server session context and memory-level credential sanitization.
 Uses Python's standard library csv module to avoid heavy third-party dependencies.
 """
 
@@ -103,9 +103,9 @@ class DatabaseSeeder:
         self.validate_target_database_name(self.target_db_name)
 
     @staticmethod
-    def validate_target_database_name(db_name: str) -> None:
+    def validate_target_database_name(db_name: Optional[str]) -> None:
         """Enforce that seeding operations only target GradeSense_Local."""
-        if db_name != ALLOWED_TARGET_DATABASE:
+        if not db_name or db_name != ALLOWED_TARGET_DATABASE:
             raise ValueError(
                 f"SAFETY VIOLATION: Seeder is strictly restricted to '{ALLOWED_TARGET_DATABASE}'. "
                 f"Target database '{db_name}' is forbidden to prevent accidental mutation of other databases."
@@ -188,12 +188,12 @@ class DatabaseSeeder:
 
     def seed_all(self, engine: Engine) -> Dict[str, int]:
         """Execute the full database seeding sequence."""
-        # Safeguard: verify database name from engine URL
-        engine_db = engine.url.database
-        self.validate_target_database_name(engine_db)
-
         results: Dict[str, int] = {}
         with engine.begin() as conn:
+            # Authoritative safeguard: Query SQL Server directly for the active database session context
+            current_db = conn.execute(text("SELECT DB_NAME();")).scalar()
+            self.validate_target_database_name(current_db)
+
             # Temporarily disable foreign-key constraints for clean ingestion
             for table in TABLE_DEPENDENCY_ORDER:
                 conn.execute(text(f"ALTER TABLE [{table}] NOCHECK CONSTRAINT ALL;"))
