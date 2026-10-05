@@ -1,0 +1,62 @@
+[
+  {
+    "Id": 1,
+    "CourseOfferingId": 1,
+    "FacultyId": 2,
+    "Role": "Course Coordinator",
+    "AssignmentDate": "2024-08-01 09:00:00",
+    "CreatedAt": "2024-08-01 09:00:00",
+    "UpdatedAt": null,
+    "DeletedAt": null
+  },
+  {
+    "Id": 2,
+    "CourseOfferingId": 1,
+    "FacultyId": 3,
+    "Role": "Lecturer",
+    "AssignmentDate": "2024-08-01 09:00:00",
+    "CreatedAt": "2024-08-01 09:00:00",
+    "UpdatedAt": null,
+    "DeletedAt": null
+  },
+  {
+    "Id": 3,
+    "CourseOfferingId": 2,
+    "FacultyId": 4,
+    "Role": "Course Coordinator",
+    "AssignmentDate": "2024-08-01 09:00:00",
+    "CreatedAt": "2024-08-01 09:00:00",
+    "UpdatedAt": null,
+    "DeletedAt": null
+  },
+  {
+    "Id": 4,
+    "CourseOfferingId": 2,
+    "FacultyId": 5,
+    "Role": "Teaching Assistant",
+    "AssignmentDate": "2024-08-01 09:00:00",
+    "CreatedAt": "2024-08-01 09:00:00",
+    "UpdatedAt": null,
+    "DeletedAt": null
+  },
+  {
+    "Id": 5,
+    "CourseOfferingId": 3,
+    "FacultyId": 2,
+    "Role": "Lecturer",
+    "AssignmentDate": "2024-08-01 09:00:00",
+    "CreatedAt": "2024-08-01 09:00:00",
+    "UpdatedAt": null,
+    "DeletedAt": null
+  },
+  {
+    "Id": 6,
+    "CourseOfferingId": 3,
+    "FacultyId": 3,
+    "Role": "Teaching Assistant",
+    "AssignmentDate": "2024-08-01 09:00:00",
+    "CreatedAt": "2024-08-01 09:00:00",
+    "UpdatedAt": null,
+    "DeletedAt": null
+  }
+]
