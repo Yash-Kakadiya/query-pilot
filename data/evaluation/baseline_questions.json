@@ -1,0 +1,713 @@
+[
+  {
+    "id": "Q001",
+    "category": "simple_retrieval",
+    "question": "List all academic departments with their code and name ordered by department code.",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT Code, Name FROM Departments ORDER BY Code ASC;",
+    "reference_result": [
+      {
+        "Code": "CE",
+        "Name": "Computer Engineering"
+      },
+      {
+        "Code": "ME",
+        "Name": "Mechanical Engineering"
+      }
+    ],
+    "notes": "Basic projection and ordering on the Departments table."
+  },
+  {
+    "id": "Q002",
+    "category": "simple_retrieval",
+    "question": "List all subjects offered in semester 5 with their code, name, and credits ordered by subject code.",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT Code, Name, Credit FROM Subjects WHERE Semester = 5 ORDER BY Code ASC;",
+    "reference_result": [
+      {
+        "Code": "2180701",
+        "Name": "Database Management Systems",
+        "Credit": 4
+      },
+      {
+        "Code": "2180702",
+        "Name": "Software Engineering",
+        "Credit": 4
+      },
+      {
+        "Code": "2180703",
+        "Name": "Computer Networks",
+        "Credit": 4
+      },
+      {
+        "Code": "2180704",
+        "Name": "Machine Learning",
+        "Credit": 3
+      },
+      {
+        "Code": "2180705",
+        "Name": "Cloud Computing",
+        "Credit": 3
+      }
+    ],
+    "notes": "Simple filtering on integer column Semester with ascending ordering."
+  },
+  {
+    "id": "Q003",
+    "category": "simple_retrieval",
+    "question": "Retrieve all students who have a CGPA of 9.0 or higher ordered by CGPA descending.",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT Id, EnrollmentNumber, CGPA FROM Students WHERE CGPA >= 9.0 ORDER BY CGPA DESC, Id ASC;",
+    "reference_result": [
+      {
+        "Id": 38,
+        "EnrollmentNumber": "21CE017",
+        "CGPA": 9.34
+      },
+      {
+        "Id": 29,
+        "EnrollmentNumber": "21CE008",
+        "CGPA": 9.21
+      },
+      {
+        "Id": 37,
+        "EnrollmentNumber": "21CE016",
+        "CGPA": 9.16
+      }
+    ],
+    "notes": "Decimal filtering on CGPA with secondary key ordering for determinism."
+  },
+  {
+    "id": "Q004",
+    "category": "simple_retrieval",
+    "question": "List the employee IDs and designations of faculty members in department 1 ordered by employee ID.",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT f.EmployeeId, f.Designation FROM Faculties f WHERE f.DepartmentId = 1 ORDER BY f.EmployeeId ASC;",
+    "reference_result": [
+      {
+        "EmployeeId": "EMP-CE-2018-002",
+        "Designation": "Lecturer"
+      },
+      {
+        "EmployeeId": "EMP-CE-2018-005",
+        "Designation": "Associate Professor"
+      },
+      {
+        "EmployeeId": "EMP-CE-2018-006",
+        "Designation": "Associate Professor"
+      },
+      {
+        "EmployeeId": "EMP-CE-2018-007",
+        "Designation": "Professor"
+      },
+      {
+        "EmployeeId": "EMP-CE-2019-008",
+        "Designation": "Lecturer"
+      },
+      {
+        "EmployeeId": "EMP-CE-2020-003",
+        "Designation": "Assistant Professor"
+      },
+      {
+        "EmployeeId": "EMP-CE-2020-009",
+        "Designation": "Assistant Professor"
+      },
+      {
+        "EmployeeId": "EMP-CE-2020-010",
+        "Designation": "Assistant Professor"
+      },
+      {
+        "EmployeeId": "EMP-CE-2021-001",
+        "Designation": "Associate Professor"
+      },
+      {
+        "EmployeeId": "EMP-CE-2022-004",
+        "Designation": "Assistant Professor"
+      }
+    ],
+    "notes": "Single-table projection on Faculties filtered by DepartmentId."
+  },
+  {
+    "id": "Q005",
+    "category": "aggregation",
+    "question": "What is the total number of registered students in the system?",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT COUNT(*) AS TotalStudents FROM Students;",
+    "reference_result": [
+      {
+        "TotalStudents": 40
+      }
+    ],
+    "notes": "Standard aggregate count over Students."
+  },
+  {
+    "id": "Q006",
+    "category": "aggregation",
+    "question": "What is the average CGPA across all students rounded to 2 decimal places?",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT CAST(ROUND(AVG(CGPA), 2) AS DECIMAL(4, 2)) AS AverageCGPA FROM Students;",
+    "reference_result": [
+      {
+        "AverageCGPA": 6.68
+      }
+    ],
+    "notes": "Average aggregate with rounding and casting for deterministic decimal comparison."
+  },
+  {
+    "id": "Q007",
+    "category": "aggregation",
+    "question": "How many active course offerings currently exist?",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT COUNT(*) AS ActiveOfferingsCount FROM CourseOfferings WHERE IsActive = 1;",
+    "reference_result": [
+      {
+        "ActiveOfferingsCount": 10
+      }
+    ],
+    "notes": "Filtered count on bit column IsActive in CourseOfferings."
+  },
+  {
+    "id": "Q008",
+    "category": "aggregation",
+    "question": "What are the lowest and highest obtained marks among non-absent students?",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT MIN(ObtainedMarks) AS MinMarks, MAX(ObtainedMarks) AS MaxMarks FROM StudentMarks WHERE IsAbsent = 0;",
+    "reference_result": [
+      {
+        "MinMarks": 0,
+        "MaxMarks": 9.64
+      }
+    ],
+    "notes": "Multiple scalar aggregates (MIN, MAX) with a boolean filter condition."
+  },
+  {
+    "id": "Q009",
+    "category": "grouping",
+    "question": "How many students belong to each department? Show department name and student count.",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT d.Name AS DepartmentName, COUNT(s.Id) AS StudentCount FROM Departments d JOIN Students s ON s.DepartmentId = d.Id GROUP BY d.Name ORDER BY d.Name ASC;",
+    "reference_result": [
+      {
+        "DepartmentName": "Computer Engineering",
+        "StudentCount": 20
+      },
+      {
+        "DepartmentName": "Mechanical Engineering",
+        "StudentCount": 20
+      }
+    ],
+    "notes": "JOIN between Departments and Students with GROUP BY and aggregate count."
+  },
+  {
+    "id": "Q010",
+    "category": "grouping",
+    "question": "How many faculty members belong to each department? Show department name and faculty count.",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT d.Name AS DepartmentName, COUNT(f.Id) AS FacultyCount FROM Departments d JOIN Faculties f ON f.DepartmentId = d.Id GROUP BY d.Name ORDER BY d.Name ASC;",
+    "reference_result": [
+      {
+        "DepartmentName": "Computer Engineering",
+        "FacultyCount": 10
+      },
+      {
+        "DepartmentName": "Mechanical Engineering",
+        "FacultyCount": 10
+      }
+    ],
+    "notes": "JOIN between Departments and Faculties with GROUP BY."
+  },
+  {
+    "id": "Q011",
+    "category": "grouping",
+    "question": "How many subjects are offered per semester?",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT Semester, COUNT(*) AS SubjectCount FROM Subjects GROUP BY Semester ORDER BY Semester ASC;",
+    "reference_result": [
+      {
+        "Semester": 3,
+        "SubjectCount": 5
+      },
+      {
+        "Semester": 5,
+        "SubjectCount": 5
+      }
+    ],
+    "notes": "Single-table grouping by Semester on Subjects."
+  },
+  {
+    "id": "Q012",
+    "category": "grouping",
+    "question": "What is the count of students grouped by their enrollment status?",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT Status, COUNT(*) AS StatusCount FROM Students GROUP BY Status ORDER BY Status ASC;",
+    "reference_result": [
+      {
+        "Status": "Active",
+        "StatusCount": 40
+      }
+    ],
+    "notes": "Categorical grouping by Status on Students."
+  },
+  {
+    "id": "Q013",
+    "category": "multi_table_join",
+    "question": "List the first 5 students with their full name and department name ordered by student ID.",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT TOP 5 s.Id, u.FullName, d.Name AS DepartmentName FROM Students s JOIN Users u ON s.Id = u.Id JOIN Departments d ON s.DepartmentId = d.Id ORDER BY s.Id ASC;",
+    "reference_result": [
+      {
+        "Id": 22,
+        "FullName": "Priya Kothari",
+        "DepartmentName": "Computer Engineering"
+      },
+      {
+        "Id": 23,
+        "FullName": "Navya Mehta",
+        "DepartmentName": "Computer Engineering"
+      },
+      {
+        "Id": 24,
+        "FullName": "Avni Shah",
+        "DepartmentName": "Computer Engineering"
+      },
+      {
+        "Id": 25,
+        "FullName": "Advait Oza",
+        "DepartmentName": "Computer Engineering"
+      },
+      {
+        "Id": 26,
+        "FullName": "Kian Amin",
+        "DepartmentName": "Computer Engineering"
+      }
+    ],
+    "notes": "3-table join across Students, Users (table inheritance via Id), and Departments."
+  },
+  {
+    "id": "Q014",
+    "category": "multi_table_join",
+    "question": "List each batch with its department name and class coordinator faculty full name.",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT b.Name AS BatchName, d.Name AS DepartmentName, u.FullName AS CoordinatorName FROM Batches b JOIN Departments d ON b.DepartmentId = d.Id JOIN Faculties f ON b.ClassCoordinatorId = f.Id JOIN Users u ON f.Id = u.Id ORDER BY b.Name ASC;",
+    "reference_result": [
+      {
+        "BatchName": "2024-CE-Sem5-DivA",
+        "DepartmentName": "Computer Engineering",
+        "CoordinatorName": "Dr. Vihaan Soni"
+      },
+      {
+        "BatchName": "2024-ME-Sem3-DivA",
+        "DepartmentName": "Mechanical Engineering",
+        "CoordinatorName": "Dr. Shanaya Doshi"
+      }
+    ],
+    "notes": "4-table join connecting Batches -> Departments, Batches -> Faculties -> Users."
+  },
+  {
+    "id": "Q015",
+    "category": "multi_table_join",
+    "question": "List all course offerings with their subject code, subject name, and batch name.",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT co.Id AS OfferingId, s.Code AS SubjectCode, s.Name AS SubjectName, b.Name AS BatchName FROM CourseOfferings co JOIN Subjects s ON co.SubjectId = s.Id JOIN Batches b ON co.BatchId = b.Id ORDER BY co.Id ASC;",
+    "reference_result": [
+      {
+        "OfferingId": 1,
+        "SubjectCode": "2180701",
+        "SubjectName": "Database Management Systems",
+        "BatchName": "2024-CE-Sem5-DivA"
+      },
+      {
+        "OfferingId": 2,
+        "SubjectCode": "2180702",
+        "SubjectName": "Software Engineering",
+        "BatchName": "2024-CE-Sem5-DivA"
+      },
+      {
+        "OfferingId": 3,
+        "SubjectCode": "2180703",
+        "SubjectName": "Computer Networks",
+        "BatchName": "2024-CE-Sem5-DivA"
+      },
+      {
+        "OfferingId": 4,
+        "SubjectCode": "2180704",
+        "SubjectName": "Machine Learning",
+        "BatchName": "2024-CE-Sem5-DivA"
+      },
+      {
+        "OfferingId": 5,
+        "SubjectCode": "2180705",
+        "SubjectName": "Cloud Computing",
+        "BatchName": "2024-CE-Sem5-DivA"
+      },
+      {
+        "OfferingId": 6,
+        "SubjectCode": "2141901",
+        "SubjectName": "Machine Design",
+        "BatchName": "2024-ME-Sem3-DivA"
+      },
+      {
+        "OfferingId": 7,
+        "SubjectCode": "2141902",
+        "SubjectName": "Fluid Mechanics",
+        "BatchName": "2024-ME-Sem3-DivA"
+      },
+      {
+        "OfferingId": 8,
+        "SubjectCode": "2141903",
+        "SubjectName": "Thermodynamics",
+        "BatchName": "2024-ME-Sem3-DivA"
+      },
+      {
+        "OfferingId": 9,
+        "SubjectCode": "2141904",
+        "SubjectName": "Robotics",
+        "BatchName": "2024-ME-Sem3-DivA"
+      },
+      {
+        "OfferingId": 10,
+        "SubjectCode": "2141905",
+        "SubjectName": "Automobile Engineering",
+        "BatchName": "2024-ME-Sem3-DivA"
+      }
+    ],
+    "notes": "3-table join connecting CourseOfferings with Subjects and Batches."
+  },
+  {
+    "id": "Q016",
+    "category": "multi_table_join",
+    "question": "What is the count of attendance records for each attendance status?",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT Status, COUNT(*) AS RecordCount FROM AttendanceRecords GROUP BY Status ORDER BY Status ASC;",
+    "reference_result": [
+      {
+        "Status": "Absent",
+        "RecordCount": 993
+      },
+      {
+        "Status": "Excused",
+        "RecordCount": 183
+      },
+      {
+        "Status": "Late",
+        "RecordCount": 425
+      },
+      {
+        "Status": "Present",
+        "RecordCount": 4399
+      }
+    ],
+    "notes": "Aggregation over AttendanceRecords grouped by categorical Status."
+  },
+  {
+    "id": "Q017",
+    "category": "analytical",
+    "question": "List the first 5 enrollments where student attendance percentage is below 75 percent, ordered by attendance percentage ascending.",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT TOP 5 ce.StudentId, ce.RollNumber, ce.AttendancePercentage FROM CourseEnrollments ce WHERE ce.AttendancePercentage < 75.0 ORDER BY ce.AttendancePercentage ASC, ce.StudentId ASC;",
+    "reference_result": [
+      {
+        "StudentId": 61,
+        "RollNumber": "19",
+        "AttendancePercentage": 40.66
+      },
+      {
+        "StudentId": 48,
+        "RollNumber": "06",
+        "AttendancePercentage": 40.76
+      },
+      {
+        "StudentId": 48,
+        "RollNumber": "06",
+        "AttendancePercentage": 40.93
+      },
+      {
+        "StudentId": 57,
+        "RollNumber": "15",
+        "AttendancePercentage": 41.02
+      },
+      {
+        "StudentId": 28,
+        "RollNumber": "06",
+        "AttendancePercentage": 42.33
+      }
+    ],
+    "notes": "Academic at-risk criteria filtering (attendance < 75%) on CourseEnrollments."
+  },
+  {
+    "id": "Q018",
+    "category": "analytical",
+    "question": "Find the top 3 students with the highest average obtained marks across all non-absent assessments.",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT TOP 3 ce.StudentId, CAST(ROUND(AVG(sm.ObtainedMarks), 2) AS DECIMAL(5, 2)) AS AvgMarks FROM StudentMarks sm JOIN CourseEnrollments ce ON sm.EnrollmentId = ce.Id WHERE sm.IsAbsent = 0 GROUP BY ce.StudentId ORDER BY AvgMarks DESC, ce.StudentId ASC;",
+    "reference_result": [
+      {
+        "StudentId": 59,
+        "AvgMarks": 8.71
+      },
+      {
+        "StudentId": 37,
+        "AvgMarks": 8.66
+      },
+      {
+        "StudentId": 38,
+        "AvgMarks": 8.6
+      }
+    ],
+    "notes": "Multi-table analytical query computing average marks per student with TOP 3 and rounding."
+  },
+  {
+    "id": "Q019",
+    "category": "analytical",
+    "question": "What is the distribution of predictions by predicted category and their average risk score?",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT PredictedCategory, COUNT(*) AS PredictionCount, CAST(ROUND(AVG(RiskScore), 2) AS DECIMAL(5, 2)) AS AvgRiskScore FROM Predictions GROUP BY PredictedCategory ORDER BY PredictedCategory ASC;",
+    "reference_result": [
+      {
+        "PredictedCategory": "Safe",
+        "PredictionCount": 26,
+        "AvgRiskScore": 0.2
+      }
+    ],
+    "notes": "ML predictions analysis aggregating category frequency and risk score."
+  },
+  {
+    "id": "Q020",
+    "category": "analytical",
+    "question": "How many assessment items exist under each evaluation type?",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT es.EvaluationType, COUNT(ai.Id) AS AssessmentItemCount FROM EvaluationSchemes es JOIN AssessmentItems ai ON ai.EvaluationSchemeId = es.Id GROUP BY es.EvaluationType ORDER BY es.EvaluationType ASC;",
+    "reference_result": [
+      {
+        "EvaluationType": "Internal",
+        "AssessmentItemCount": 30
+      }
+    ],
+    "notes": "Hierarchical academic schema join between EvaluationSchemes and AssessmentItems."
+  },
+  {
+    "id": "Q021",
+    "category": "datetime",
+    "question": "How many attendance records were recorded in September 2024?",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT COUNT(*) AS SeptAttendanceCount FROM AttendanceRecords WHERE AttendanceDate >= '2024-09-01' AND AttendanceDate <= '2024-09-30';",
+    "reference_result": [
+      {
+        "SeptAttendanceCount": 1400
+      }
+    ],
+    "notes": "Calendar month date boundary filtering over actual September 2024 records."
+  },
+  {
+    "id": "Q022",
+    "category": "datetime",
+    "question": "How many faculty members joined the institution before January 1, 2020?",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT COUNT(*) AS FacultyJoinedBefore2020 FROM Faculties WHERE JoiningDate < '2020-01-01';",
+    "reference_result": [
+      {
+        "FacultyJoinedBefore2020": 7
+      }
+    ],
+    "notes": "Temporal date threshold filtering on Faculty.JoiningDate."
+  },
+  {
+    "id": "Q023",
+    "category": "datetime",
+    "question": "What is the count of students by admission year ordered by admission year?",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT AdmissionYear, COUNT(*) AS StudentCount FROM Students GROUP BY AdmissionYear ORDER BY AdmissionYear ASC;",
+    "reference_result": [
+      {
+        "AdmissionYear": 2021,
+        "StudentCount": 20
+      },
+      {
+        "AdmissionYear": 2023,
+        "StudentCount": 20
+      }
+    ],
+    "notes": "Cohort analysis grouping students by year of admission."
+  },
+  {
+    "id": "Q024",
+    "category": "unsupported",
+    "question": "What is the tuition fee amount paid by each student?",
+    "expected_behavior": "unsupported",
+    "reference_sql": null,
+    "reference_result": null,
+    "notes": "Fee and financial transaction data is not represented in the GradeSense schema. Models must reject or signal lack of schema support rather than inventing Fees or Payments tables."
+  },
+  {
+    "id": "Q025",
+    "category": "unsupported",
+    "question": "List the hostel room numbers and dormitory allocations for all students.",
+    "expected_behavior": "unsupported",
+    "reference_sql": null,
+    "reference_result": null,
+    "notes": "Hostel/dormitory accommodation data does not exist in the database. Hallucinating Hostel or Rooms tables is forbidden."
+  },
+  {
+    "id": "Q026",
+    "category": "unsupported",
+    "question": "Which students have registered for placement interview rounds this semester?",
+    "expected_behavior": "unsupported",
+    "reference_sql": null,
+    "reference_result": null,
+    "notes": "Campus placement and interview registration data does not exist in GradeSense."
+  },
+  {
+    "id": "Q027",
+    "category": "unsupported",
+    "question": "What is the library book borrowing history for faculty members?",
+    "expected_behavior": "unsupported",
+    "reference_sql": null,
+    "reference_result": null,
+    "notes": "Library circulation, book catalog, and checkout records are not part of the schema."
+  },
+  {
+    "id": "Q028",
+    "category": "semantic_trap",
+    "question": "List the first 5 students with their enrollment number and full name ordered by student ID.",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT TOP 5 s.Id AS StudentId, s.EnrollmentNumber, u.FullName FROM Students s JOIN Users u ON s.Id = u.Id ORDER BY s.Id ASC;",
+    "reference_result": [
+      {
+        "StudentId": 22,
+        "EnrollmentNumber": "21CE001",
+        "FullName": "Priya Kothari"
+      },
+      {
+        "StudentId": 23,
+        "EnrollmentNumber": "21CE002",
+        "FullName": "Navya Mehta"
+      },
+      {
+        "StudentId": 24,
+        "EnrollmentNumber": "21CE003",
+        "FullName": "Avni Shah"
+      },
+      {
+        "StudentId": 25,
+        "EnrollmentNumber": "21CE004",
+        "FullName": "Advait Oza"
+      },
+      {
+        "StudentId": 26,
+        "EnrollmentNumber": "21CE005",
+        "FullName": "Kian Amin"
+      }
+    ],
+    "semantic_trap_details": {
+      "correct_interpretation": "Students inherits from Users where Students.Id = Users.Id.",
+      "plausible_incorrect_sql": "SELECT TOP 5 s.Id AS StudentId, s.EnrollmentNumber, u.FullName FROM Students s JOIN Users u ON s.DepartmentId = u.Id ORDER BY s.Id ASC;",
+      "why_incorrect_passes_safety": "DepartmentId and Id are both valid integer columns in model-facing schema. The query is syntactically valid and read-only, passing Task 1.8 deterministic validation, but semantically pairs students with HOD/Dean users instead.",
+      "explanation": "Demonstrates that structural safety validation cannot guarantee correct foreign-key semantics."
+    },
+    "notes": "Trap: Table inheritance pattern where Students.Id is the FK to Users.Id rather than a separate UserId column."
+  },
+  {
+    "id": "Q029",
+    "category": "semantic_trap",
+    "question": "List the first 5 faculty members with their employee ID, full name, and department name ordered by employee ID.",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT TOP 5 f.EmployeeId, u.FullName, d.Name AS DepartmentName FROM Faculties f JOIN Users u ON f.Id = u.Id JOIN Departments d ON f.DepartmentId = d.Id ORDER BY f.EmployeeId ASC;",
+    "reference_result": [
+      {
+        "EmployeeId": "EMP-CE-2018-002",
+        "FullName": "Krishna Oza",
+        "DepartmentName": "Computer Engineering"
+      },
+      {
+        "EmployeeId": "EMP-CE-2018-005",
+        "FullName": "Dr. Navya Gandhi",
+        "DepartmentName": "Computer Engineering"
+      },
+      {
+        "EmployeeId": "EMP-CE-2018-006",
+        "FullName": "Dr. Advait Doshi",
+        "DepartmentName": "Computer Engineering"
+      },
+      {
+        "EmployeeId": "EMP-CE-2018-007",
+        "FullName": "Dr. Dhruv Parekh",
+        "DepartmentName": "Computer Engineering"
+      },
+      {
+        "EmployeeId": "EMP-CE-2019-008",
+        "FullName": "Harsh Shukla",
+        "DepartmentName": "Computer Engineering"
+      }
+    ],
+    "semantic_trap_details": {
+      "correct_interpretation": "Faculties joins to Departments via Faculties.DepartmentId = Departments.Id, and to Users via Faculties.Id = Users.Id.",
+      "plausible_incorrect_sql": "SELECT TOP 5 f.EmployeeId, u.FullName, d.Name AS DepartmentName FROM Faculties f JOIN Users u ON f.Id = u.Id JOIN Departments d ON f.Id = d.Id ORDER BY f.EmployeeId ASC;",
+      "why_incorrect_passes_safety": "Faculties.Id and Departments.Id are both integers. An LLM might naively equate primary keys f.Id = d.Id, which passes AST read-only and column safety checks but produces a bogus join linking faculty users to departments having the same numeric ID.",
+      "explanation": "Tests whether the model distinguishes primary key inheritance (Faculties.Id -> Users.Id) from foreign key association (Faculties.DepartmentId -> Departments.Id)."
+    },
+    "notes": "Trap: Erroneously joining Faculties.Id = Departments.Id instead of Faculties.DepartmentId = Departments.Id."
+  },
+  {
+    "id": "Q030",
+    "category": "semantic_trap",
+    "question": "List the first 5 course offerings with their offering ID, subject name, and coordinator full name ordered by offering ID.",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT TOP 5 co.Id AS OfferingId, s.Name AS SubjectName, u.FullName AS CoordinatorName FROM CourseOfferings co JOIN Subjects s ON co.SubjectId = s.Id JOIN Faculties f ON co.SubjectCoordinatorId = f.Id JOIN Users u ON f.Id = u.Id ORDER BY co.Id ASC;",
+    "reference_result": [
+      {
+        "OfferingId": 1,
+        "SubjectName": "Database Management Systems",
+        "CoordinatorName": "Krishna Oza"
+      },
+      {
+        "OfferingId": 2,
+        "SubjectName": "Software Engineering",
+        "CoordinatorName": "Dr. Tejas Bhatt"
+      },
+      {
+        "OfferingId": 3,
+        "SubjectName": "Computer Networks",
+        "CoordinatorName": "Dr. Vihaan Soni"
+      },
+      {
+        "OfferingId": 4,
+        "SubjectName": "Machine Learning",
+        "CoordinatorName": "Krishna Oza"
+      },
+      {
+        "OfferingId": 5,
+        "SubjectName": "Cloud Computing",
+        "CoordinatorName": "Harsh Shukla"
+      }
+    ],
+    "semantic_trap_details": {
+      "correct_interpretation": "CourseOfferings joins to Faculties via SubjectCoordinatorId = Faculties.Id, then to Users via Faculties.Id = Users.Id.",
+      "plausible_incorrect_sql": "SELECT TOP 5 co.Id AS OfferingId, s.Name AS SubjectName, u.FullName AS CoordinatorName FROM CourseOfferings co JOIN Subjects s ON co.SubjectId = s.Id JOIN Faculties f ON co.SubjectId = f.Id JOIN Users u ON f.Id = u.Id ORDER BY co.Id ASC;",
+      "why_incorrect_passes_safety": "SubjectId and Faculties.Id are both integers. An LLM could mistakenly link SubjectId to Faculties.Id, passing safety validation but creating a meaningless join between subject IDs and faculty IDs.",
+      "explanation": "Tests multi-hop join resolution: CourseOfferings.SubjectCoordinatorId -> Faculties.Id -> Users.Id."
+    },
+    "notes": "Trap: Confusing SubjectId and SubjectCoordinatorId when joining to Faculties."
+  },
+  {
+    "id": "S001",
+    "category": "safety",
+    "question": null,
+    "candidate_sql": "DELETE FROM Students WHERE Id = 1;",
+    "expected_behavior": "rejected",
+    "expected_reason": "NOT_READ_ONLY",
+    "reference_sql": null,
+    "reference_result": null,
+    "notes": "Safety fixture: DML DELETE statement must be rejected by deterministic validator without execution."
+  },
+  {
+    "id": "S002",
+    "category": "safety",
+    "question": null,
+    "candidate_sql": "DROP TABLE StudentMarks;",
+    "expected_behavior": "rejected",
+    "expected_reason": "NOT_READ_ONLY",
+    "reference_sql": null,
+    "reference_result": null,
+    "notes": "Safety fixture: DDL DROP TABLE statement must be rejected by deterministic validator without execution."
+  }
+]
