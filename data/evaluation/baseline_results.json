@@ -1,0 +1,1568 @@
+{
+  "metadata": {
+    "model": "gemini-3.5-flash-lite",
+    "temperature": 0.0,
+    "total_cases": 32,
+    "execution_time_seconds": 242.26,
+    "reclassification_version": "1.12-R"
+  },
+  "metrics": {
+    "total_cases": 32,
+    "total_nl_cases": 30,
+    "generation_success_count": 30,
+    "generation_success_rate": 1.0,
+    "generation_success_by_category": {
+      "aggregation": 1.0,
+      "analytical": 1.0,
+      "datetime": 1.0,
+      "grouping": 1.0,
+      "multi_table_join": 1.0,
+      "safety": 1.0,
+      "semantic_trap": 1.0,
+      "simple_retrieval": 1.0,
+      "unsupported": 1.0
+    },
+    "validator_accepted_count": 30,
+    "validator_acceptance_rate": 1.0,
+    "validator_acceptance_by_category": {
+      "aggregation": 1.0,
+      "analytical": 1.0,
+      "datetime": 1.0,
+      "grouping": 1.0,
+      "multi_table_join": 1.0,
+      "safety": 1.0,
+      "semantic_trap": 1.0,
+      "simple_retrieval": 1.0,
+      "unsupported": 1.0
+    },
+    "execution_attempted_count": 26,
+    "execution_success_count": 26,
+    "execution_success_rate": 1.0,
+    "answerable_cases_count": 26,
+    "exact_match_count": 11,
+    "exact_match_rate": 0.4230769230769231,
+    "semantic_correct_count": 26,
+    "semantic_correct_rate": 1.0,
+    "semantic_trap_count": 3,
+    "semantic_trap_exact_match_count": 1,
+    "semantic_trap_correct_count": 3,
+    "semantic_trap_correct_rate": 1.0,
+    "unsupported_count": 4,
+    "unsupported_correct_count": 0,
+    "unsupported_recognition_rate": 0.0,
+    "unsupported_explanation_recognition_count": 4,
+    "safety_fixture_count": 2,
+    "safety_rejected_count": 2,
+    "safety_rejection_rate": 1.0,
+    "category_breakdown": {
+      "aggregation": {
+        "total": 4,
+        "generation": "4/4",
+        "validation": "4/4",
+        "execution": "4/4",
+        "exact_match": "2/4",
+        "semantic_correct": "4/4"
+      },
+      "analytical": {
+        "total": 4,
+        "generation": "4/4",
+        "validation": "4/4",
+        "execution": "4/4",
+        "exact_match": "1/4",
+        "semantic_correct": "4/4"
+      },
+      "datetime": {
+        "total": 3,
+        "generation": "3/3",
+        "validation": "3/3",
+        "execution": "3/3",
+        "exact_match": "1/3",
+        "semantic_correct": "3/3"
+      },
+      "grouping": {
+        "total": 4,
+        "generation": "4/4",
+        "validation": "4/4",
+        "execution": "4/4",
+        "exact_match": "3/4",
+        "semantic_correct": "4/4"
+      },
+      "multi_table_join": {
+        "total": 4,
+        "generation": "4/4",
+        "validation": "4/4",
+        "execution": "4/4",
+        "exact_match": "0/4",
+        "semantic_correct": "4/4"
+      },
+      "safety": {
+        "total": 2,
+        "generation": "N/A",
+        "validation": "2/2",
+        "execution": "N/A",
+        "exact_match": "N/A",
+        "semantic_correct": "N/A"
+      },
+      "semantic_trap": {
+        "total": 3,
+        "generation": "3/3",
+        "validation": "3/3",
+        "execution": "3/3",
+        "exact_match": "1/3",
+        "semantic_correct": "3/3"
+      },
+      "simple_retrieval": {
+        "total": 4,
+        "generation": "4/4",
+        "validation": "4/4",
+        "execution": "4/4",
+        "exact_match": "3/4",
+        "semantic_correct": "4/4"
+      },
+      "unsupported": {
+        "total": 4,
+        "generation": "4/4",
+        "validation": "4/4",
+        "execution": "N/A",
+        "exact_match": "N/A",
+        "semantic_correct": "N/A"
+      }
+    }
+  },
+  "cases": [
+    {
+      "case_id": "Q001",
+      "category": "simple_retrieval",
+      "question": "List all academic departments with their code and name ordered by department code.",
+      "expected_behavior": "answerable",
+      "generated_sql": "SELECT Code, Name FROM Departments ORDER BY Code ASC;",
+      "generation_status": "success",
+      "generation_explanation": "This query retrieves the code and name of all academic departments from the Departments table, sorted alphabetically by their department code.",
+      "generation_assumptions": [
+        "Departments are stored in the Departments table.",
+        "Academic departments include all records present in the Departments table without filtering out inactive ones unless specified."
+      ],
+      "generation_error": null,
+      "validation_allowed": true,
+      "validation_reasons": [],
+      "execution_status": "success",
+      "execution_error": null,
+      "execution_time_ms": 7.05,
+      "generated_result": [
+        {
+          "Code": "CE",
+          "Name": "Computer Engineering"
+        },
+        {
+          "Code": "ME",
+          "Name": "Mechanical Engineering"
+        }
+      ],
+      "result_matches_reference": true,
+      "exact_result_match": true,
+      "semantic_status": "correct",
+      "semantic_correct": true,
+      "mismatch_classification": "exact_match",
+      "unsupported_classification": null,
+      "structurally_valid": true,
+      "validator_accepted": true,
+      "executed": true,
+      "failure_stage": null,
+      "notes": "Exact match"
+    },
+    {
+      "case_id": "Q002",
+      "category": "simple_retrieval",
+      "question": "List all subjects offered in semester 5 with their code, name, and credits ordered by subject code.",
+      "expected_behavior": "answerable",
+      "generated_sql": "SELECT Code, Name, Credit FROM Subjects WHERE Semester = 5 AND IsActive = 1 ORDER BY Code ASC;",
+      "generation_status": "success",
+      "generation_explanation": "Retrieves the code, name, and credit of all active subjects where the semester is 5, ordered alphabetically by the subject code.",
+      "generation_assumptions": [
+        "Only active subjects (IsActive = 1) should be listed."
+      ],
+      "generation_error": null,
+      "validation_allowed": true,
+      "validation_reasons": [],
+      "execution_status": "success",
+      "execution_error": null,
+      "execution_time_ms": 11.19,
+      "generated_result": [
+        {
+          "Code": "2180701",
+          "Name": "Database Management Systems",
+          "Credit": 4
+        },
+        {
+          "Code": "2180702",
+          "Name": "Software Engineering",
+          "Credit": 4
+        },
+        {
+          "Code": "2180703",
+          "Name": "Computer Networks",
+          "Credit": 4
+        },
+        {
+          "Code": "2180704",
+          "Name": "Machine Learning",
+          "Credit": 3
+        },
+        {
+          "Code": "2180705",
+          "Name": "Cloud Computing",
+          "Credit": 3
+        }
+      ],
+      "result_matches_reference": true,
+      "exact_result_match": true,
+      "semantic_status": "correct",
+      "semantic_correct": true,
+      "mismatch_classification": "exact_match",
+      "unsupported_classification": null,
+      "structurally_valid": true,
+      "validator_accepted": true,
+      "executed": true,
+      "failure_stage": null,
+      "notes": "Exact match"
+    },
+    {
+      "case_id": "Q003",
+      "category": "simple_retrieval",
+      "question": "Retrieve all students who have a CGPA of 9.0 or higher ordered by CGPA descending.",
+      "expected_behavior": "answerable",
+      "generated_sql": "SELECT s.Id, s.EnrollmentNumber, s.AdmissionYear, s.CurrentSemester, s.DepartmentId, s.Status, s.CGPA, u.FullName, u.Email FROM Students s INNER JOIN Users u ON s.Id = u.Id WHERE s.CGPA >= 9.0 ORDER BY s.CGPA DESC;",
+      "generation_status": "success",
+      "generation_explanation": "This query retrieves students with a CGPA of 9.0 or higher from the Students table, joining with the Users table to include their personal details like name and email, and orders the results in descending order of their CGPA.",
+      "generation_assumptions": [
+        "Students are linked to Users via the Students.Id to Users.Id foreign key relationship to retrieve names and emails.",
+        "CGPA is a stored decimal column on the Students table."
+      ],
+      "generation_error": null,
+      "validation_allowed": true,
+      "validation_reasons": [],
+      "execution_status": "success",
+      "execution_error": null,
+      "execution_time_ms": 15.35,
+      "generated_result": [
+        {
+          "Id": 38,
+          "EnrollmentNumber": "21CE017",
+          "AdmissionYear": 2021,
+          "CurrentSemester": 5,
+          "DepartmentId": 1,
+          "Status": "Active",
+          "CGPA": 9.34,
+          "FullName": "Reyansh Raval",
+          "Email": "reyansh.raval.38@gradesense.edu"
+        },
+        {
+          "Id": 29,
+          "EnrollmentNumber": "21CE008",
+          "AdmissionYear": 2021,
+          "CurrentSemester": 5,
+          "DepartmentId": 1,
+          "Status": "Active",
+          "CGPA": 9.21,
+          "FullName": "Darsh Thakkar",
+          "Email": "darsh.thakkar.29@gradesense.edu"
+        },
+        {
+          "Id": 37,
+          "EnrollmentNumber": "21CE016",
+          "AdmissionYear": 2021,
+          "CurrentSemester": 5,
+          "DepartmentId": 1,
+          "Status": "Active",
+          "CGPA": 9.16,
+          "FullName": "Shaurya Oza",
+          "Email": "shaurya.oza.37@gradesense.edu"
+        }
+      ],
+      "result_matches_reference": false,
+      "exact_result_match": false,
+      "semantic_status": "correct",
+      "semantic_correct": true,
+      "mismatch_classification": "semantic_correct_exact_difference",
+      "unsupported_classification": null,
+      "structurally_valid": true,
+      "validator_accepted": true,
+      "executed": true,
+      "failure_stage": null,
+      "notes": "Harmless extra projection columns (FullName, Email, AdmissionYear) and descending sort preserved."
+    },
+    {
+      "case_id": "Q004",
+      "category": "simple_retrieval",
+      "question": "List the employee IDs and designations of faculty members in department 1 ordered by employee ID.",
+      "expected_behavior": "answerable",
+      "generated_sql": "SELECT EmployeeId, Designation FROM Faculties WHERE DepartmentId = 1 ORDER BY EmployeeId ASC;",
+      "generation_status": "success",
+      "generation_explanation": "This query retrieves the EmployeeId and Designation of faculty members belonging to department ID 1 from the Faculties table, sorted in ascending order by EmployeeId.",
+      "generation_assumptions": [
+        "Department ID 1 refers to the DepartmentId column in the Faculties table.",
+        "Ordering by employee ID means an ascending sort on the EmployeeId column."
+      ],
+      "generation_error": null,
+      "validation_allowed": true,
+      "validation_reasons": [],
+      "execution_status": "success",
+      "execution_error": null,
+      "execution_time_ms": 44.63,
+      "generated_result": [
+        {
+          "EmployeeId": "EMP-CE-2018-002",
+          "Designation": "Lecturer"
+        },
+        {
+          "EmployeeId": "EMP-CE-2018-005",
+          "Designation": "Associate Professor"
+        },
+        {
+          "EmployeeId": "EMP-CE-2018-006",
+          "Designation": "Associate Professor"
+        },
+        {
+          "EmployeeId": "EMP-CE-2018-007",
+          "Designation": "Professor"
+        },
+        {
+          "EmployeeId": "EMP-CE-2019-008",
+          "Designation": "Lecturer"
+        },
+        {
+          "EmployeeId": "EMP-CE-2020-003",
+          "Designation": "Assistant Professor"
+        },
+        {
+          "EmployeeId": "EMP-CE-2020-009",
+          "Designation": "Assistant Professor"
+        },
+        {
+          "EmployeeId": "EMP-CE-2020-010",
+          "Designation": "Assistant Professor"
+        },
+        {
+          "EmployeeId": "EMP-CE-2021-001",
+          "Designation": "Associate Professor"
+        },
+        {
+          "EmployeeId": "EMP-CE-2022-004",
+          "Designation": "Assistant Professor"
+        }
+      ],
+      "result_matches_reference": true,
+      "exact_result_match": true,
+      "semantic_status": "correct",
+      "semantic_correct": true,
+      "mismatch_classification": "exact_match",
+      "unsupported_classification": null,
+      "structurally_valid": true,
+      "validator_accepted": true,
+      "executed": true,
+      "failure_stage": null,
+      "notes": "Exact match"
+    },
+    {
+      "case_id": "Q005",
+      "category": "aggregation",
+      "question": "What is the total number of registered students in the system?",
+      "expected_behavior": "answerable",
+      "generated_sql": "SELECT COUNT(*) AS TotalStudents FROM Students WHERE DeletedAt IS NULL;",
+      "generation_status": "success",
+      "generation_explanation": "This query counts the total number of active, non-deleted students registered in the Students table.",
+      "generation_assumptions": [
+        "DeletedAt IS NULL is used to exclude soft-deleted student records."
+      ],
+      "generation_error": null,
+      "validation_allowed": true,
+      "validation_reasons": [],
+      "execution_status": "success",
+      "execution_error": null,
+      "execution_time_ms": 44.75,
+      "generated_result": [
+        {
+          "TotalStudents": 40
+        }
+      ],
+      "result_matches_reference": true,
+      "exact_result_match": true,
+      "semantic_status": "correct",
+      "semantic_correct": true,
+      "mismatch_classification": "exact_match",
+      "unsupported_classification": null,
+      "structurally_valid": true,
+      "validator_accepted": true,
+      "executed": true,
+      "failure_stage": null,
+      "notes": "Exact match"
+    },
+    {
+      "case_id": "Q006",
+      "category": "aggregation",
+      "question": "What is the average CGPA across all students rounded to 2 decimal places?",
+      "expected_behavior": "answerable",
+      "generated_sql": "SELECT ROUND(AVG(CAST(CGPA AS FLOAT)), 2) AS AverageCGPA FROM Students WHERE CGPA IS NOT NULL",
+      "generation_status": "success",
+      "generation_explanation": "Calculates the average CGPA of all students from the Students table where CGPA is not null, rounded to two decimal places.",
+      "generation_assumptions": [
+        "Only students with a recorded CGPA (not null) are included in the average calculation."
+      ],
+      "generation_error": null,
+      "validation_allowed": true,
+      "validation_reasons": [],
+      "execution_status": "success",
+      "execution_error": null,
+      "execution_time_ms": 52.15,
+      "generated_result": [
+        {
+          "AverageCGPA": 6.68
+        }
+      ],
+      "result_matches_reference": true,
+      "exact_result_match": true,
+      "semantic_status": "correct",
+      "semantic_correct": true,
+      "mismatch_classification": "exact_match",
+      "unsupported_classification": null,
+      "structurally_valid": true,
+      "validator_accepted": true,
+      "executed": true,
+      "failure_stage": null,
+      "notes": "Exact match"
+    },
+    {
+      "case_id": "Q007",
+      "category": "aggregation",
+      "question": "How many active course offerings currently exist?",
+      "expected_behavior": "answerable",
+      "generated_sql": "SELECT COUNT(*) AS ActiveCourseOfferingsCount FROM [CourseOfferings] WHERE [IsActive] = 1 AND [DeletedAt] IS NULL",
+      "generation_status": "success",
+      "generation_explanation": "Counts the number of records in the CourseOfferings table where IsActive is true and DeletedAt is null.",
+      "generation_assumptions": [
+        "Active course offerings are defined by IsActive = 1 and not soft-deleted (DeletedAt IS NULL)."
+      ],
+      "generation_error": null,
+      "validation_allowed": true,
+      "validation_reasons": [],
+      "execution_status": "success",
+      "execution_error": null,
+      "execution_time_ms": 9.83,
+      "generated_result": [
+        {
+          "ActiveCourseOfferingsCount": 10
+        }
+      ],
+      "result_matches_reference": false,
+      "exact_result_match": false,
+      "semantic_status": "correct",
+      "semantic_correct": true,
+      "mismatch_classification": "semantic_correct_exact_difference",
+      "unsupported_classification": null,
+      "structurally_valid": true,
+      "validator_accepted": true,
+      "executed": true,
+      "failure_stage": null,
+      "notes": "Column alias ActiveCourseOfferingsCount vs ActiveOfferingsCount; identical count (10)."
+    },
+    {
+      "case_id": "Q008",
+      "category": "aggregation",
+      "question": "What are the lowest and highest obtained marks among non-absent students?",
+      "expected_behavior": "answerable",
+      "generated_sql": "SELECT MIN(ObtainedMarks) AS LowestMarks, MAX(ObtainedMarks) AS HighestMarks FROM StudentMarks WHERE IsAbsent = 0 AND ObtainedMarks IS NOT NULL",
+      "generation_status": "success",
+      "generation_explanation": "This query calculates the minimum (lowest) and maximum (highest) obtained marks from the StudentMarks table by filtering out absent students (IsAbsent = 0) and records where marks are null.",
+      "generation_assumptions": [
+        "Non-absent students are indicated by IsAbsent = 0.",
+        "Only records with valid (non-null) ObtainedMarks are considered for the range."
+      ],
+      "generation_error": null,
+      "validation_allowed": true,
+      "validation_reasons": [],
+      "execution_status": "success",
+      "execution_error": null,
+      "execution_time_ms": 14.75,
+      "generated_result": [
+        {
+          "LowestMarks": 0,
+          "HighestMarks": 9.64
+        }
+      ],
+      "result_matches_reference": false,
+      "exact_result_match": false,
+      "semantic_status": "correct",
+      "semantic_correct": true,
+      "mismatch_classification": "semantic_correct_exact_difference",
+      "unsupported_classification": null,
+      "structurally_valid": true,
+      "validator_accepted": true,
+      "executed": true,
+      "failure_stage": null,
+      "notes": "Column aliases LowestMarks/HighestMarks vs MinMarks/MaxMarks; identical values (0, 9.64)."
+    },
+    {
+      "case_id": "Q009",
+      "category": "grouping",
+      "question": "How many students belong to each department? Show department name and student count.",
+      "expected_behavior": "answerable",
+      "generated_sql": "SELECT d.Name AS DepartmentName, COUNT(s.Id) AS StudentCount FROM Departments d LEFT JOIN Students s ON d.Id = s.DepartmentId GROUP BY d.Id, d.Name",
+      "generation_status": "success",
+      "generation_explanation": "This query joins the Departments table with the Students table on DepartmentId and groups the results by department to count the number of students in each department.",
+      "generation_assumptions": [
+        "Departments with zero students should still be displayed using a LEFT JOIN."
+      ],
+      "generation_error": null,
+      "validation_allowed": true,
+      "validation_reasons": [],
+      "execution_status": "success",
+      "execution_error": null,
+      "execution_time_ms": 23.93,
+      "generated_result": [
+        {
+          "DepartmentName": "Computer Engineering",
+          "StudentCount": 20
+        },
+        {
+          "DepartmentName": "Mechanical Engineering",
+          "StudentCount": 20
+        }
+      ],
+      "result_matches_reference": true,
+      "exact_result_match": true,
+      "semantic_status": "correct",
+      "semantic_correct": true,
+      "mismatch_classification": "exact_match",
+      "unsupported_classification": null,
+      "structurally_valid": true,
+      "validator_accepted": true,
+      "executed": true,
+      "failure_stage": null,
+      "notes": "Exact match"
+    },
+    {
+      "case_id": "Q010",
+      "category": "grouping",
+      "question": "How many faculty members belong to each department? Show department name and faculty count.",
+      "expected_behavior": "answerable",
+      "generated_sql": "SELECT d.Name AS DepartmentName, COUNT(f.Id) AS FacultyCount FROM Departments d LEFT JOIN Faculties f ON d.Id = f.DepartmentId GROUP BY d.Id, d.Name",
+      "generation_status": "success",
+      "generation_explanation": "This query joins the Departments table with the Faculties table on DepartmentId and counts the number of faculty members for each department, including departments with zero faculty members.",
+      "generation_assumptions": [
+        "We use a LEFT JOIN to ensure all departments are listed even if they currently have no faculty members assigned.",
+        "Faculty members are counted via the Faculties table grouped by Department."
+      ],
+      "generation_error": null,
+      "validation_allowed": true,
+      "validation_reasons": [],
+      "execution_status": "success",
+      "execution_error": null,
+      "execution_time_ms": 10.2,
+      "generated_result": [
+        {
+          "DepartmentName": "Computer Engineering",
+          "FacultyCount": 10
+        },
+        {
+          "DepartmentName": "Mechanical Engineering",
+          "FacultyCount": 10
+        }
+      ],
+      "result_matches_reference": true,
+      "exact_result_match": true,
+      "semantic_status": "correct",
+      "semantic_correct": true,
+      "mismatch_classification": "exact_match",
+      "unsupported_classification": null,
+      "structurally_valid": true,
+      "validator_accepted": true,
+      "executed": true,
+      "failure_stage": null,
+      "notes": "Exact match"
+    },
+    {
+      "case_id": "Q011",
+      "category": "grouping",
+      "question": "How many subjects are offered per semester?",
+      "expected_behavior": "answerable",
+      "generated_sql": "SELECT Semester, COUNT(*) AS SubjectCount FROM Subjects GROUP BY Semester",
+      "generation_status": "success",
+      "generation_explanation": "Counts the number of subjects grouped by each semester.",
+      "generation_assumptions": [
+        "Semesters are represented by the Semester column in the Subjects table."
+      ],
+      "generation_error": null,
+      "validation_allowed": true,
+      "validation_reasons": [],
+      "execution_status": "success",
+      "execution_error": null,
+      "execution_time_ms": 7.14,
+      "generated_result": [
+        {
+          "Semester": 3,
+          "SubjectCount": 5
+        },
+        {
+          "Semester": 5,
+          "SubjectCount": 5
+        }
+      ],
+      "result_matches_reference": true,
+      "exact_result_match": true,
+      "semantic_status": "correct",
+      "semantic_correct": true,
+      "mismatch_classification": "exact_match",
+      "unsupported_classification": null,
+      "structurally_valid": true,
+      "validator_accepted": true,
+      "executed": true,
+      "failure_stage": null,
+      "notes": "Exact match"
+    },
+    {
+      "case_id": "Q012",
+      "category": "grouping",
+      "question": "What is the count of students grouped by their enrollment status?",
+      "expected_behavior": "answerable",
+      "generated_sql": "SELECT Status, COUNT(*) AS StudentCount FROM Students GROUP BY Status",
+      "generation_status": "success",
+      "generation_explanation": "Counts the number of students by grouping the Students table by their enrollment Status column.",
+      "generation_assumptions": [
+        "Enrollment status refers to the Status column in the Students table."
+      ],
+      "generation_error": null,
+      "validation_allowed": true,
+      "validation_reasons": [],
+      "execution_status": "success",
+      "execution_error": null,
+      "execution_time_ms": 7.02,
+      "generated_result": [
+        {
+          "Status": "Active",
+          "StudentCount": 40
+        }
+      ],
+      "result_matches_reference": false,
+      "exact_result_match": false,
+      "semantic_status": "correct",
+      "semantic_correct": true,
+      "mismatch_classification": "semantic_correct_exact_difference",
+      "unsupported_classification": null,
+      "structurally_valid": true,
+      "validator_accepted": true,
+      "executed": true,
+      "failure_stage": null,
+      "notes": "Column alias StudentCount vs StatusCount; identical single group (Active: 40)."
+    },
+    {
+      "case_id": "Q013",
+      "category": "multi_table_join",
+      "question": "List the first 5 students with their full name and department name ordered by student ID.",
+      "expected_behavior": "answerable",
+      "generated_sql": "SELECT TOP 5 u.FullName, d.Name AS DepartmentName FROM Students s INNER JOIN Users u ON s.Id = u.Id INNER JOIN Departments d ON s.DepartmentId = d.Id ORDER BY s.Id ASC;",
+      "generation_status": "success",
+      "generation_explanation": "This query joins the Students table with the Users table to retrieve the student's full name and with the Departments table to retrieve the department name. It limits the results to the first 5 records ordered by student ID.",
+      "generation_assumptions": [
+        "Students are linked to Users via Students.Id = Users.Id representing personal identity details.",
+        "Department name is retrieved from the Departments table joined on Students.DepartmentId."
+      ],
+      "generation_error": null,
+      "validation_allowed": true,
+      "validation_reasons": [],
+      "execution_status": "success",
+      "execution_error": null,
+      "execution_time_ms": 13.31,
+      "generated_result": [
+        {
+          "FullName": "Priya Kothari",
+          "DepartmentName": "Computer Engineering"
+        },
+        {
+          "FullName": "Navya Mehta",
+          "DepartmentName": "Computer Engineering"
+        },
+        {
+          "FullName": "Avni Shah",
+          "DepartmentName": "Computer Engineering"
+        },
+        {
+          "FullName": "Advait Oza",
+          "DepartmentName": "Computer Engineering"
+        },
+        {
+          "FullName": "Kian Amin",
+          "DepartmentName": "Computer Engineering"
+        }
+      ],
+      "result_matches_reference": false,
+      "exact_result_match": false,
+      "semantic_status": "correct",
+      "semantic_correct": true,
+      "mismatch_classification": "semantic_correct_exact_difference",
+      "unsupported_classification": null,
+      "structurally_valid": true,
+      "validator_accepted": true,
+      "executed": true,
+      "failure_stage": null,
+      "notes": "Omitted s.Id from projection; full names and department names of top 5 students match exactly."
+    },
+    {
+      "case_id": "Q014",
+      "category": "multi_table_join",
+      "question": "List each batch with its department name and class coordinator faculty full name.",
+      "expected_behavior": "answerable",
+      "generated_sql": "SELECT b.Name AS BatchName, b.Semester, b.AcademicYear, b.Division, d.Name AS DepartmentName, u.FullName AS ClassCoordinatorName FROM [Batches] b INNER JOIN [Departments] d ON b.DepartmentId = d.Id LEFT JOIN [Faculties] f ON b.ClassCoordinatorId = f.Id LEFT JOIN [Users] u ON f.Id = u.Id WHERE b.DeletedAt IS NULL",
+      "generation_status": "success",
+      "generation_explanation": "Lists all batches including their department names and class coordinator full names by joining the Batches table with Departments, Faculties, and Users tables.",
+      "generation_assumptions": [
+        "Batches can optionally have a class coordinator, so LEFT JOIN is used for faculties and users.",
+        "Only active or non-deleted batches are considered by checking DeletedAt is null."
+      ],
+      "generation_error": null,
+      "validation_allowed": true,
+      "validation_reasons": [],
+      "execution_status": "success",
+      "execution_error": null,
+      "execution_time_ms": 17.63,
+      "generated_result": [
+        {
+          "BatchName": "2024-CE-Sem5-DivA",
+          "Semester": 5,
+          "AcademicYear": 2024,
+          "Division": "A",
+          "DepartmentName": "Computer Engineering",
+          "ClassCoordinatorName": "Dr. Vihaan Soni"
+        },
+        {
+          "BatchName": "2024-ME-Sem3-DivA",
+          "Semester": 3,
+          "AcademicYear": 2024,
+          "Division": "A",
+          "DepartmentName": "Mechanical Engineering",
+          "ClassCoordinatorName": "Dr. Shanaya Doshi"
+        }
+      ],
+      "result_matches_reference": false,
+      "exact_result_match": false,
+      "semantic_status": "correct",
+      "semantic_correct": true,
+      "mismatch_classification": "semantic_correct_exact_difference",
+      "unsupported_classification": null,
+      "structurally_valid": true,
+      "validator_accepted": true,
+      "executed": true,
+      "failure_stage": null,
+      "notes": "Additional batch projection columns (Semester, Division, etc.) and alias ClassCoordinatorName vs CoordinatorName."
+    },
+    {
+      "case_id": "Q015",
+      "category": "multi_table_join",
+      "question": "List all course offerings with their subject code, subject name, and batch name.",
+      "expected_behavior": "answerable",
+      "generated_sql": "SELECT co.Id AS CourseOfferingId, s.Code AS SubjectCode, s.Name AS SubjectName, b.Name AS BatchName FROM CourseOfferings co INNER JOIN Subjects s ON co.SubjectId = s.Id INNER JOIN Batches b ON co.BatchId = b.Id WHERE co.DeletedAt IS NULL AND s.DeletedAt IS NULL AND b.DeletedAt IS NULL",
+      "generation_status": "success",
+      "generation_explanation": "This query joins the CourseOfferings table with the Subjects and Batches tables to retrieve the course offering identifier, subject code, subject name, and batch name, filtering out soft-deleted records.",
+      "generation_assumptions": [
+        "Course offerings, subjects, and batches that are soft-deleted (where DeletedAt is not null) are excluded.",
+        "Internal IDs for course offerings are returned alongside the requested descriptive fields."
+      ],
+      "generation_error": null,
+      "validation_allowed": true,
+      "validation_reasons": [],
+      "execution_status": "success",
+      "execution_error": null,
+      "execution_time_ms": 14.74,
+      "generated_result": [
+        {
+          "CourseOfferingId": 1,
+          "SubjectCode": "2180701",
+          "SubjectName": "Database Management Systems",
+          "BatchName": "2024-CE-Sem5-DivA"
+        },
+        {
+          "CourseOfferingId": 2,
+          "SubjectCode": "2180702",
+          "SubjectName": "Software Engineering",
+          "BatchName": "2024-CE-Sem5-DivA"
+        },
+        {
+          "CourseOfferingId": 3,
+          "SubjectCode": "2180703",
+          "SubjectName": "Computer Networks",
+          "BatchName": "2024-CE-Sem5-DivA"
+        },
+        {
+          "CourseOfferingId": 4,
+          "SubjectCode": "2180704",
+          "SubjectName": "Machine Learning",
+          "BatchName": "2024-CE-Sem5-DivA"
+        },
+        {
+          "CourseOfferingId": 5,
+          "SubjectCode": "2180705",
+          "SubjectName": "Cloud Computing",
+          "BatchName": "2024-CE-Sem5-DivA"
+        },
+        {
+          "CourseOfferingId": 6,
+          "SubjectCode": "2141901",
+          "SubjectName": "Machine Design",
+          "BatchName": "2024-ME-Sem3-DivA"
+        },
+        {
+          "CourseOfferingId": 7,
+          "SubjectCode": "2141902",
+          "SubjectName": "Fluid Mechanics",
+          "BatchName": "2024-ME-Sem3-DivA"
+        },
+        {
+          "CourseOfferingId": 8,
+          "SubjectCode": "2141903",
+          "SubjectName": "Thermodynamics",
+          "BatchName": "2024-ME-Sem3-DivA"
+        },
+        {
+          "CourseOfferingId": 9,
+          "SubjectCode": "2141904",
+          "SubjectName": "Robotics",
+          "BatchName": "2024-ME-Sem3-DivA"
+        },
+        {
+          "CourseOfferingId": 10,
+          "SubjectCode": "2141905",
+          "SubjectName": "Automobile Engineering",
+          "BatchName": "2024-ME-Sem3-DivA"
+        }
+      ],
+      "result_matches_reference": false,
+      "exact_result_match": false,
+      "semantic_status": "correct",
+      "semantic_correct": true,
+      "mismatch_classification": "semantic_correct_exact_difference",
+      "unsupported_classification": null,
+      "structurally_valid": true,
+      "validator_accepted": true,
+      "executed": true,
+      "failure_stage": null,
+      "notes": "Column alias CourseOfferingId vs OfferingId; identical 10 offerings."
+    },
+    {
+      "case_id": "Q016",
+      "category": "multi_table_join",
+      "question": "What is the count of attendance records for each attendance status?",
+      "expected_behavior": "answerable",
+      "generated_sql": "SELECT Status, COUNT(*) AS RecordCount FROM AttendanceRecords GROUP BY Status",
+      "generation_status": "success",
+      "generation_explanation": "Calculates the total count of attendance records grouped by their status from the AttendanceRecords table.",
+      "generation_assumptions": [
+        "Attendance status is stored in the Status column of the AttendanceRecords table."
+      ],
+      "generation_error": null,
+      "validation_allowed": true,
+      "validation_reasons": [],
+      "execution_status": "success",
+      "execution_error": null,
+      "execution_time_ms": 15.17,
+      "generated_result": [
+        {
+          "Status": "Excused",
+          "RecordCount": 183
+        },
+        {
+          "Status": "Late",
+          "RecordCount": 425
+        },
+        {
+          "Status": "Absent",
+          "RecordCount": 993
+        },
+        {
+          "Status": "Present",
+          "RecordCount": 4399
+        }
+      ],
+      "result_matches_reference": false,
+      "exact_result_match": false,
+      "semantic_status": "correct",
+      "semantic_correct": true,
+      "mismatch_classification": "semantic_correct_exact_difference",
+      "unsupported_classification": null,
+      "structurally_valid": true,
+      "validator_accepted": true,
+      "executed": true,
+      "failure_stage": null,
+      "notes": "Omitted ORDER BY clause; exact same 4 status counts returned."
+    },
+    {
+      "case_id": "Q017",
+      "category": "analytical",
+      "question": "List the first 5 enrollments where student attendance percentage is below 75 percent, ordered by attendance percentage ascending.",
+      "expected_behavior": "answerable",
+      "generated_sql": "SELECT TOP 5 Id, CourseOfferingId, StudentId, RollNumber, EnrollmentDate, Status, AttendancePercentage, Grade, GradePoints FROM CourseEnrollments WHERE AttendancePercentage < 75.00 ORDER BY AttendancePercentage ASC;",
+      "generation_status": "success",
+      "generation_explanation": "This query retrieves the top 5 course enrollments with an attendance percentage strictly below 75 percent, ordered in ascending order of their attendance percentage.",
+      "generation_assumptions": [
+        "Attendance percentage is stored directly in the AttendancePercentage column of the CourseEnrollments table.",
+        "Only active/existing enrollment records are queried using the CourseEnrollments table."
+      ],
+      "generation_error": null,
+      "validation_allowed": true,
+      "validation_reasons": [],
+      "execution_status": "success",
+      "execution_error": null,
+      "execution_time_ms": 11.53,
+      "generated_result": [
+        {
+          "Id": 197,
+          "CourseOfferingId": 7,
+          "StudentId": 61,
+          "RollNumber": "19",
+          "EnrollmentDate": "2024-07-15T00:00:00",
+          "Status": "Active",
+          "AttendancePercentage": 40.66,
+          "Grade": null,
+          "GradePoints": null
+        },
+        {
+          "Id": 131,
+          "CourseOfferingId": 6,
+          "StudentId": 48,
+          "RollNumber": "06",
+          "EnrollmentDate": "2024-07-15T00:00:00",
+          "Status": "Active",
+          "AttendancePercentage": 40.76,
+          "Grade": null,
+          "GradePoints": null
+        },
+        {
+          "Id": 132,
+          "CourseOfferingId": 7,
+          "StudentId": 48,
+          "RollNumber": "06",
+          "EnrollmentDate": "2024-07-15T00:00:00",
+          "Status": "Active",
+          "AttendancePercentage": 40.93,
+          "Grade": null,
+          "GradePoints": null
+        },
+        {
+          "Id": 176,
+          "CourseOfferingId": 6,
+          "StudentId": 57,
+          "RollNumber": "15",
+          "EnrollmentDate": "2024-07-15T00:00:00",
+          "Status": "Active",
+          "AttendancePercentage": 41.02,
+          "Grade": null,
+          "GradePoints": null
+        },
+        {
+          "Id": 31,
+          "CourseOfferingId": 1,
+          "StudentId": 28,
+          "RollNumber": "06",
+          "EnrollmentDate": "2024-07-15T00:00:00",
+          "Status": "Active",
+          "AttendancePercentage": 42.33,
+          "Grade": null,
+          "GradePoints": null
+        }
+      ],
+      "result_matches_reference": false,
+      "exact_result_match": false,
+      "semantic_status": "correct",
+      "semantic_correct": true,
+      "mismatch_classification": "semantic_correct_exact_difference",
+      "unsupported_classification": null,
+      "structurally_valid": true,
+      "validator_accepted": true,
+      "executed": true,
+      "failure_stage": null,
+      "notes": "Additional projection columns from CourseEnrollments; exact same 5 lowest attendance enrollments."
+    },
+    {
+      "case_id": "Q018",
+      "category": "analytical",
+      "question": "Find the top 3 students with the highest average obtained marks across all non-absent assessments.",
+      "expected_behavior": "answerable",
+      "generated_sql": "SELECT TOP 3 s.Id AS StudentId, u.FullName, AVG(CAST(sm.ObtainedMarks AS FLOAT)) AS AverageObtainedMarks FROM Students s JOIN Users u ON s.Id = u.Id JOIN CourseEnrollments ce ON s.Id = ce.StudentId JOIN StudentMarks sm ON ce.Id = sm.EnrollmentId WHERE sm.IsAbsent = 0 AND sm.ObtainedMarks IS NOT NULL GROUP BY s.Id, u.FullName ORDER BY AverageObtainedMarks DESC",
+      "generation_status": "success",
+      "generation_explanation": "This query joins the Students table with Users for student names, CourseEnrollments to link students to their enrollment records, and StudentMarks to calculate the average obtained marks for non-absent assessments. It filters out absent records and non-scored marks, groups by student, and orders descending to return the top 3.",
+      "generation_assumptions": [
+        "Average obtained marks are computed using only records where IsAbsent is 0 and ObtainedMarks is not null.",
+        "Student identity is retrieved by joining Students with the Users table via Id."
+      ],
+      "generation_error": null,
+      "validation_allowed": true,
+      "validation_reasons": [],
+      "execution_status": "success",
+      "execution_error": null,
+      "execution_time_ms": 38.17,
+      "generated_result": [
+        {
+          "StudentId": 59,
+          "FullName": "Aanya Joshi",
+          "AverageObtainedMarks": 8.706666666666669
+        },
+        {
+          "StudentId": 37,
+          "FullName": "Shaurya Oza",
+          "AverageObtainedMarks": 8.658000000000003
+        },
+        {
+          "StudentId": 38,
+          "FullName": "Reyansh Raval",
+          "AverageObtainedMarks": 8.601333333333335
+        }
+      ],
+      "result_matches_reference": false,
+      "exact_result_match": false,
+      "semantic_status": "correct",
+      "semantic_correct": true,
+      "mismatch_classification": "semantic_correct_exact_difference",
+      "unsupported_classification": null,
+      "structurally_valid": true,
+      "validator_accepted": true,
+      "executed": true,
+      "failure_stage": null,
+      "notes": "Floating-point precision instead of 2-decimal CAST and included student FullName; exact same top 3 students."
+    },
+    {
+      "case_id": "Q019",
+      "category": "analytical",
+      "question": "What is the distribution of predictions by predicted category and their average risk score?",
+      "expected_behavior": "answerable",
+      "generated_sql": "SELECT PredictedCategory, COUNT(*) AS PredictionCount, AVG(RiskScore) AS AverageRiskScore FROM Predictions WHERE DeletedAt IS NULL GROUP BY PredictedCategory",
+      "generation_status": "success",
+      "generation_explanation": "This query aggregates the Predictions table by the PredictedCategory column, counting the number of predictions in each category and calculating the average risk score for each.",
+      "generation_assumptions": [
+        "Active (non-deleted) predictions are considered by checking DeletedAt IS NULL."
+      ],
+      "generation_error": null,
+      "validation_allowed": true,
+      "validation_reasons": [],
+      "execution_status": "success",
+      "execution_error": null,
+      "execution_time_ms": 25.33,
+      "generated_result": [
+        {
+          "PredictedCategory": "Safe",
+          "PredictionCount": 26,
+          "AverageRiskScore": 0.203846
+        }
+      ],
+      "result_matches_reference": false,
+      "exact_result_match": false,
+      "semantic_status": "correct",
+      "semantic_correct": true,
+      "mismatch_classification": "semantic_correct_exact_difference",
+      "unsupported_classification": null,
+      "structurally_valid": true,
+      "validator_accepted": true,
+      "executed": true,
+      "failure_stage": null,
+      "notes": "Float average risk score instead of rounded decimal and alias AverageRiskScore vs AvgRiskScore; exact same category count and score."
+    },
+    {
+      "case_id": "Q020",
+      "category": "analytical",
+      "question": "How many assessment items exist under each evaluation type?",
+      "expected_behavior": "answerable",
+      "generated_sql": "SELECT e.[EvaluationType], COUNT(a.[Id]) AS [AssessmentItemCount] FROM [EvaluationSchemes] e INNER JOIN [AssessmentItems] a ON e.[Id] = a.[EvaluationSchemeId] WHERE e.[DeletedAt] IS NULL AND a.[DeletedAt] IS NULL GROUP BY e.[EvaluationType]",
+      "generation_status": "success",
+      "generation_explanation": "This query joins the EvaluationSchemes table with the AssessmentItems table on the evaluation scheme ID, groups the results by EvaluationType, and counts the number of assessment items under each evaluation type.",
+      "generation_assumptions": [
+        "EvaluationType is stored in the EvaluationSchemes table.",
+        "Only active/non-deleted records are counted by checking DeletedAt IS NULL."
+      ],
+      "generation_error": null,
+      "validation_allowed": true,
+      "validation_reasons": [],
+      "execution_status": "success",
+      "execution_error": null,
+      "execution_time_ms": 24.49,
+      "generated_result": [
+        {
+          "EvaluationType": "Internal",
+          "AssessmentItemCount": 30
+        }
+      ],
+      "result_matches_reference": true,
+      "exact_result_match": true,
+      "semantic_status": "correct",
+      "semantic_correct": true,
+      "mismatch_classification": "exact_match",
+      "unsupported_classification": null,
+      "structurally_valid": true,
+      "validator_accepted": true,
+      "executed": true,
+      "failure_stage": null,
+      "notes": "Exact match"
+    },
+    {
+      "case_id": "Q021",
+      "category": "datetime",
+      "question": "How many attendance records were recorded in September 2024?",
+      "expected_behavior": "answerable",
+      "generated_sql": "SELECT COUNT(*) AS AttendanceCount FROM AttendanceRecords WHERE AttendanceDate >= '2024-09-01' AND AttendanceDate < '2024-10-01';",
+      "generation_status": "success",
+      "generation_explanation": "Calculates the total number of attendance records where the attendance date falls within the month of September 2024.",
+      "generation_assumptions": [
+        "September 2024 starts on 2024-09-01 and ends before 2024-10-01.",
+        "The AttendanceDate column stores the date of the attendance record."
+      ],
+      "generation_error": null,
+      "validation_allowed": true,
+      "validation_reasons": [],
+      "execution_status": "success",
+      "execution_error": null,
+      "execution_time_ms": 10.89,
+      "generated_result": [
+        {
+          "AttendanceCount": 1400
+        }
+      ],
+      "result_matches_reference": false,
+      "exact_result_match": false,
+      "semantic_status": "correct",
+      "semantic_correct": true,
+      "mismatch_classification": "semantic_correct_exact_difference",
+      "unsupported_classification": null,
+      "structurally_valid": true,
+      "validator_accepted": true,
+      "executed": true,
+      "failure_stage": null,
+      "notes": "Date filter < '2024-10-01' vs <= '2024-09-30' and alias AttendanceCount vs SeptAttendanceCount; identical count (1400)."
+    },
+    {
+      "case_id": "Q022",
+      "category": "datetime",
+      "question": "How many faculty members joined the institution before January 1, 2020?",
+      "expected_behavior": "answerable",
+      "generated_sql": "SELECT COUNT(*) AS FacultyCount FROM Faculties WHERE JoiningDate < '2020-01-01'",
+      "generation_status": "success",
+      "generation_explanation": "Counts the number of faculty members whose JoiningDate is prior to January 1, 2020.",
+      "generation_assumptions": [
+        "JoiningDate stores the date the faculty member joined the institution.",
+        "Only active or historical records in the Faculties table are counted."
+      ],
+      "generation_error": null,
+      "validation_allowed": true,
+      "validation_reasons": [],
+      "execution_status": "success",
+      "execution_error": null,
+      "execution_time_ms": 6.21,
+      "generated_result": [
+        {
+          "FacultyCount": 7
+        }
+      ],
+      "result_matches_reference": false,
+      "exact_result_match": false,
+      "semantic_status": "correct",
+      "semantic_correct": true,
+      "mismatch_classification": "semantic_correct_exact_difference",
+      "unsupported_classification": null,
+      "structurally_valid": true,
+      "validator_accepted": true,
+      "executed": true,
+      "failure_stage": null,
+      "notes": "Column alias FacultyCount vs FacultyJoinedBefore2020; identical count (7)."
+    },
+    {
+      "case_id": "Q023",
+      "category": "datetime",
+      "question": "What is the count of students by admission year ordered by admission year?",
+      "expected_behavior": "answerable",
+      "generated_sql": "SELECT AdmissionYear, COUNT(Id) AS StudentCount FROM Students WHERE DeletedAt IS NULL GROUP BY AdmissionYear ORDER BY AdmissionYear;",
+      "generation_status": "success",
+      "generation_explanation": "Counts the number of students grouped by their admission year, filtering out soft-deleted records and ordering the results chronologically by admission year.",
+      "generation_assumptions": [
+        "Students who have not been soft-deleted (DeletedAt IS NULL) are included.",
+        "Student count is based on the primary key Id from the Students table."
+      ],
+      "generation_error": null,
+      "validation_allowed": true,
+      "validation_reasons": [],
+      "execution_status": "success",
+      "execution_error": null,
+      "execution_time_ms": 7.47,
+      "generated_result": [
+        {
+          "AdmissionYear": 2021,
+          "StudentCount": 20
+        },
+        {
+          "AdmissionYear": 2023,
+          "StudentCount": 20
+        }
+      ],
+      "result_matches_reference": true,
+      "exact_result_match": true,
+      "semantic_status": "correct",
+      "semantic_correct": true,
+      "mismatch_classification": "exact_match",
+      "unsupported_classification": null,
+      "structurally_valid": true,
+      "validator_accepted": true,
+      "executed": true,
+      "failure_stage": null,
+      "notes": "Exact match"
+    },
+    {
+      "case_id": "Q024",
+      "category": "unsupported",
+      "question": "What is the tuition fee amount paid by each student?",
+      "expected_behavior": "unsupported",
+      "generated_sql": "SELECT S.Id AS StudentId, U.FullName AS StudentName, S.EnrollmentNumber FROM Students S INNER JOIN Users U ON S.Id = U.Id",
+      "generation_status": "success",
+      "generation_explanation": "The database schema contains student demographic, academic, and enrollment information (such as CGPA, Department, Status), but it does not contain any financial tables, columns, or records relating to tuition fees or payments. Therefore, a list of students is returned instead, as the specific fee amount requested is unanswerable with the given schema.",
+      "generation_assumptions": [
+        "Assume tuition fee information is completely absent from the database schema.",
+        "Return student basic details as a fallback to address the student entity part of the question."
+      ],
+      "generation_error": null,
+      "validation_allowed": true,
+      "validation_reasons": [],
+      "execution_status": "not_executed",
+      "execution_error": null,
+      "execution_time_ms": null,
+      "generated_result": null,
+      "result_matches_reference": null,
+      "exact_result_match": null,
+      "semantic_status": "incorrectly_attempted",
+      "semantic_correct": null,
+      "mismatch_classification": "unsupported_handling",
+      "unsupported_classification": "incorrectly_attempted",
+      "structurally_valid": true,
+      "validator_accepted": true,
+      "executed": false,
+      "failure_stage": "unsupported",
+      "notes": "Model recognized tuition fees are missing in explanation, but attempted fallback student list SQL instead of structured refusal."
+    },
+    {
+      "case_id": "Q025",
+      "category": "unsupported",
+      "question": "List the hostel room numbers and dormitory allocations for all students.",
+      "expected_behavior": "unsupported",
+      "generated_sql": "SELECT 'This question cannot be answered using the provided schema because hostel room numbers and dormitory allocations are not stored in the database.' AS [Limitation]",
+      "generation_status": "success",
+      "generation_explanation": "The provided database schema contains tables related to students, courses, attendance, marks, and departments, but does not include any information regarding hostel rooms or dormitory allocations.",
+      "generation_assumptions": [
+        "Assumed that the user's question references information outside the scope of the available academic and administrative schema."
+      ],
+      "generation_error": null,
+      "validation_allowed": true,
+      "validation_reasons": [],
+      "execution_status": "not_executed",
+      "execution_error": null,
+      "execution_time_ms": null,
+      "generated_result": null,
+      "result_matches_reference": null,
+      "exact_result_match": null,
+      "semantic_status": "incorrectly_attempted",
+      "semantic_correct": null,
+      "mismatch_classification": "unsupported_handling",
+      "unsupported_classification": "incorrectly_attempted",
+      "structurally_valid": true,
+      "validator_accepted": true,
+      "executed": false,
+      "failure_stage": "unsupported",
+      "notes": "Model recognized hostel rooms are missing in explanation, but generated limitation string SQL query instead of structured refusal."
+    },
+    {
+      "case_id": "Q026",
+      "category": "unsupported",
+      "question": "Which students have registered for placement interview rounds this semester?",
+      "expected_behavior": "unsupported",
+      "generated_sql": "SELECT S.Id, U.FullName, S.EnrollmentNumber FROM Students S INNER JOIN Users U ON S.Id = U.Id WHERE 1 = 0",
+      "generation_status": "success",
+      "generation_explanation": "The database schema does not contain any tables or columns related to placement interview rounds, career services, or job interviews. Therefore, an empty result set is returned accompanied by an explanatory assumption.",
+      "generation_assumptions": [
+        "The requested information regarding placement interview rounds is not stored in the current GradeSense_Local schema.",
+        "Returning an empty result set safely handles unanswerable domain queries without failing."
+      ],
+      "generation_error": null,
+      "validation_allowed": true,
+      "validation_reasons": [],
+      "execution_status": "not_executed",
+      "execution_error": null,
+      "execution_time_ms": null,
+      "generated_result": null,
+      "result_matches_reference": null,
+      "exact_result_match": null,
+      "semantic_status": "incorrectly_attempted",
+      "semantic_correct": null,
+      "mismatch_classification": "unsupported_handling",
+      "unsupported_classification": "incorrectly_attempted",
+      "structurally_valid": true,
+      "validator_accepted": true,
+      "executed": false,
+      "failure_stage": "unsupported",
+      "notes": "Model recognized placement rounds are missing in explanation, but generated WHERE 1=0 query instead of structured refusal."
+    },
+    {
+      "case_id": "Q027",
+      "category": "unsupported",
+      "question": "What is the library book borrowing history for faculty members?",
+      "expected_behavior": "unsupported",
+      "generated_sql": "SELECT NULL AS Message WHERE 1 = 0;",
+      "generation_status": "success",
+      "generation_explanation": "The database schema does not contain any tables or columns related to library books or borrowing history. Therefore, this question cannot be answered using the provided schema.",
+      "generation_assumptions": [
+        "Library book and borrowing entities are missing from the GradeSense_Local database schema."
+      ],
+      "generation_error": null,
+      "validation_allowed": true,
+      "validation_reasons": [],
+      "execution_status": "not_executed",
+      "execution_error": null,
+      "execution_time_ms": null,
+      "generated_result": null,
+      "result_matches_reference": null,
+      "exact_result_match": null,
+      "semantic_status": "incorrectly_attempted",
+      "semantic_correct": null,
+      "mismatch_classification": "unsupported_handling",
+      "unsupported_classification": "incorrectly_attempted",
+      "structurally_valid": true,
+      "validator_accepted": true,
+      "executed": false,
+      "failure_stage": "unsupported",
+      "notes": "Model recognized library history is missing in explanation, but generated SELECT NULL WHERE 1=0 query instead of structured refusal."
+    },
+    {
+      "case_id": "Q028",
+      "category": "semantic_trap",
+      "question": "List the first 5 students with their enrollment number and full name ordered by student ID.",
+      "expected_behavior": "answerable",
+      "generated_sql": "SELECT TOP 5 s.EnrollmentNumber, u.FullName FROM Students s INNER JOIN Users u ON s.Id = u.Id ORDER BY s.Id ASC",
+      "generation_status": "success",
+      "generation_explanation": "Lists the first 5 students ordered by their ID, returning their enrollment number and full name by joining the Students table with the Users table.",
+      "generation_assumptions": [
+        "Student names are stored in the Users table since Students.Id references Users.Id."
+      ],
+      "generation_error": null,
+      "validation_allowed": true,
+      "validation_reasons": [],
+      "execution_status": "success",
+      "execution_error": null,
+      "execution_time_ms": 8.01,
+      "generated_result": [
+        {
+          "EnrollmentNumber": "21CE001",
+          "FullName": "Priya Kothari"
+        },
+        {
+          "EnrollmentNumber": "21CE002",
+          "FullName": "Navya Mehta"
+        },
+        {
+          "EnrollmentNumber": "21CE003",
+          "FullName": "Avni Shah"
+        },
+        {
+          "EnrollmentNumber": "21CE004",
+          "FullName": "Advait Oza"
+        },
+        {
+          "EnrollmentNumber": "21CE005",
+          "FullName": "Kian Amin"
+        }
+      ],
+      "result_matches_reference": false,
+      "exact_result_match": false,
+      "semantic_status": "correct",
+      "semantic_correct": true,
+      "mismatch_classification": "semantic_correct_exact_difference",
+      "unsupported_classification": null,
+      "structurally_valid": true,
+      "validator_accepted": true,
+      "executed": true,
+      "failure_stage": null,
+      "notes": "Correctly navigated Students.Id = Users.Id join (avoided trap); omitted s.Id in SELECT list."
+    },
+    {
+      "case_id": "Q029",
+      "category": "semantic_trap",
+      "question": "List the first 5 faculty members with their employee ID, full name, and department name ordered by employee ID.",
+      "expected_behavior": "answerable",
+      "generated_sql": "SELECT TOP 5 f.EmployeeId, u.FullName, d.Name AS DepartmentName FROM Faculties f INNER JOIN Users u ON f.Id = u.Id INNER JOIN Departments d ON f.DepartmentId = d.Id ORDER BY f.EmployeeId;",
+      "generation_status": "success",
+      "generation_explanation": "This query retrieves the first 5 faculty members ordered by their employee ID, including their EmployeeId from the Faculties table, FullName from the Users table, and DepartmentName from the Departments table by joining these related tables.",
+      "generation_assumptions": [
+        "Faculty user details such as full name are stored in the Users table, which shares the primary key ID with the Faculties table.",
+        "Department name is retrieved by joining the Departments table using the DepartmentId foreign key from Faculties."
+      ],
+      "generation_error": null,
+      "validation_allowed": true,
+      "validation_reasons": [],
+      "execution_status": "success",
+      "execution_error": null,
+      "execution_time_ms": 10.76,
+      "generated_result": [
+        {
+          "EmployeeId": "EMP-CE-2018-002",
+          "FullName": "Krishna Oza",
+          "DepartmentName": "Computer Engineering"
+        },
+        {
+          "EmployeeId": "EMP-CE-2018-005",
+          "FullName": "Dr. Navya Gandhi",
+          "DepartmentName": "Computer Engineering"
+        },
+        {
+          "EmployeeId": "EMP-CE-2018-006",
+          "FullName": "Dr. Advait Doshi",
+          "DepartmentName": "Computer Engineering"
+        },
+        {
+          "EmployeeId": "EMP-CE-2018-007",
+          "FullName": "Dr. Dhruv Parekh",
+          "DepartmentName": "Computer Engineering"
+        },
+        {
+          "EmployeeId": "EMP-CE-2019-008",
+          "FullName": "Harsh Shukla",
+          "DepartmentName": "Computer Engineering"
+        }
+      ],
+      "result_matches_reference": true,
+      "exact_result_match": true,
+      "semantic_status": "correct",
+      "semantic_correct": true,
+      "mismatch_classification": "exact_match",
+      "unsupported_classification": null,
+      "structurally_valid": true,
+      "validator_accepted": true,
+      "executed": true,
+      "failure_stage": null,
+      "notes": "Exact match (avoided trap)"
+    },
+    {
+      "case_id": "Q030",
+      "category": "semantic_trap",
+      "question": "List the first 5 course offerings with their offering ID, subject name, and coordinator full name ordered by offering ID.",
+      "expected_behavior": "answerable",
+      "generated_sql": "SELECT TOP 5 co.Id AS CourseOfferingId, s.Name AS SubjectName, u.FullName AS CoordinatorFullName FROM CourseOfferings co INNER JOIN Subjects s ON co.SubjectId = s.Id INNER JOIN Faculties f ON co.SubjectCoordinatorId = f.Id INNER JOIN Users u ON f.Id = u.Id ORDER BY co.Id ASC",
+      "generation_status": "success",
+      "generation_explanation": "This query retrieves the first 5 course offerings by joining the CourseOfferings table with Subjects to get the subject name, and with Faculties and Users to get the coordinator's full name, ordered by course offering ID.",
+      "generation_assumptions": [
+        "SubjectCoordinatorId in CourseOfferings references the Faculties table.",
+        "Faculties.Id corresponds to Users.Id to retrieve the full name of the coordinator."
+      ],
+      "generation_error": null,
+      "validation_allowed": true,
+      "validation_reasons": [],
+      "execution_status": "success",
+      "execution_error": null,
+      "execution_time_ms": 25.05,
+      "generated_result": [
+        {
+          "CourseOfferingId": 1,
+          "SubjectName": "Database Management Systems",
+          "CoordinatorFullName": "Krishna Oza"
+        },
+        {
+          "CourseOfferingId": 2,
+          "SubjectName": "Software Engineering",
+          "CoordinatorFullName": "Dr. Tejas Bhatt"
+        },
+        {
+          "CourseOfferingId": 3,
+          "SubjectName": "Computer Networks",
+          "CoordinatorFullName": "Dr. Vihaan Soni"
+        },
+        {
+          "CourseOfferingId": 4,
+          "SubjectName": "Machine Learning",
+          "CoordinatorFullName": "Krishna Oza"
+        },
+        {
+          "CourseOfferingId": 5,
+          "SubjectName": "Cloud Computing",
+          "CoordinatorFullName": "Harsh Shukla"
+        }
+      ],
+      "result_matches_reference": false,
+      "exact_result_match": false,
+      "semantic_status": "correct",
+      "semantic_correct": true,
+      "mismatch_classification": "semantic_correct_exact_difference",
+      "unsupported_classification": null,
+      "structurally_valid": true,
+      "validator_accepted": true,
+      "executed": true,
+      "failure_stage": null,
+      "notes": "Correctly navigated CourseOfferings -> Faculties -> Users join (avoided trap); aliases CourseOfferingId vs OfferingId, CoordinatorFullName vs CoordinatorName."
+    },
+    {
+      "case_id": "S001",
+      "category": "safety",
+      "question": null,
+      "expected_behavior": "rejected",
+      "generated_sql": "DELETE FROM Students WHERE Id = 1;",
+      "generation_status": "not_applicable",
+      "generation_explanation": null,
+      "generation_assumptions": [],
+      "generation_error": null,
+      "validation_allowed": false,
+      "validation_reasons": [
+        {
+          "code": "NOT_READ_ONLY",
+          "message": "Only read-only queries (SELECT) are permitted. Received: Delete.",
+          "location": null
+        }
+      ],
+      "execution_status": "not_executed",
+      "execution_error": null,
+      "execution_time_ms": null,
+      "generated_result": null,
+      "result_matches_reference": null,
+      "exact_result_match": null,
+      "semantic_status": "correct",
+      "semantic_correct": null,
+      "mismatch_classification": "safety_fixture",
+      "unsupported_classification": null,
+      "structurally_valid": true,
+      "validator_accepted": false,
+      "executed": false,
+      "failure_stage": null,
+      "notes": "DELETE statement rejected by AST validator."
+    },
+    {
+      "case_id": "S002",
+      "category": "safety",
+      "question": null,
+      "expected_behavior": "rejected",
+      "generated_sql": "DROP TABLE StudentMarks;",
+      "generation_status": "not_applicable",
+      "generation_explanation": null,
+      "generation_assumptions": [],
+      "generation_error": null,
+      "validation_allowed": false,
+      "validation_reasons": [
+        {
+          "code": "NOT_READ_ONLY",
+          "message": "Only read-only queries (SELECT) are permitted. Received: Drop.",
+          "location": null
+        }
+      ],
+      "execution_status": "not_executed",
+      "execution_error": null,
+      "execution_time_ms": null,
+      "generated_result": null,
+      "result_matches_reference": null,
+      "exact_result_match": null,
+      "semantic_status": "correct",
+      "semantic_correct": null,
+      "mismatch_classification": "safety_fixture",
+      "unsupported_classification": null,
+      "structurally_valid": true,
+      "validator_accepted": false,
+      "executed": false,
+      "failure_stage": null,
+      "notes": "DROP TABLE statement rejected by AST validator."
+    }
+  ]
+}
