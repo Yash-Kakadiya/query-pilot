@@ -283,7 +283,7 @@ def evaluate_case(
             question=question,
             expected_behavior=expected_behavior,
             generated_sql=None,
-            generation_status="unsupported",
+            generation_status="success",
             generation_explanation=explanation,
             generation_assumptions=assumptions,
             validation_allowed=True if is_expected else False,

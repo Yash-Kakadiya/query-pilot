@@ -30,6 +30,7 @@ from query_pilot.eval.models import (
 from query_pilot.sql.generation import (
     SQLGenerationRequest,
     SQLGenerationResponse,
+    SQLGenerationStatus,
     SQLGenerator,
 )
 
@@ -560,6 +561,96 @@ class TestReclassificationLogic:
         assert metrics["semantic_trap_correct_count"] == 3
         assert metrics["semantic_trap_exact_match_count"] == 1
         assert metrics["unsupported_count"] == 4
+        assert metrics["safety_fixture_count"] == 2
+        assert metrics["safety_rejected_count"] == 2
+
+    def test_evaluate_case_structured_unsupported(self, mock_schema: DatabaseSchema):
+        """Verify evaluate_case returns structured refusal without calling validator or executor."""
+        case = {
+            "id": "Q024",
+            "category": "unsupported",
+            "question": "What is the tuition fee amount paid by each student?",
+            "expected_behavior": "unsupported",
+        }
+
+        class UnsupportedMockGenerator(SQLGenerator):
+            def generate(self, req: SQLGenerationRequest) -> SQLGenerationResponse:
+                return SQLGenerationResponse(
+                    status=SQLGenerationStatus.UNSUPPORTED,
+                    sql=None,
+                    explanation="No tuition fee in schema.",
+                )
+
+        gen = UnsupportedMockGenerator()
+        with (
+            patch("query_pilot.eval.evaluator.validate_sql") as mock_val,
+            patch("query_pilot.eval.evaluator.execute_read_only") as mock_exec,
+        ):
+            res = evaluate_case(case=case, generator=gen, schema=mock_schema, engine=None)
+
+            assert res.generated_sql is None
+            assert res.semantic_status == SemanticStatus.CORRECTLY_REFUSED
+            assert res.semantic_correct is True
+            assert res.unsupported_classification == "correctly_unsupported"
+            assert res.executed is False
+            assert res.execution_status == "not_executed"
+            assert res.failure_stage is None
+            mock_val.assert_not_called()
+            mock_exec.assert_not_called()
+
+    def test_task_1_14_results_and_regression_metrics(self):
+        """Verify Task 1.14 evaluation artifacts, structured refusals, and regression invariance."""
+        import json
+        from pathlib import Path
+
+        # Verify output artifacts exist
+        results_1_14_path = Path("data/evaluation/baseline_results_1_14.json")
+        report_1_14_path = Path("data/evaluation/baseline_report_1_14.md")
+        assert results_1_14_path.exists(), "baseline_results_1_14.json must exist"
+        assert report_1_14_path.exists(), "baseline_report_1_14.md must exist"
+
+        # Verify original Task 1.12 artifacts remained intact
+        results_1_12_path = Path("data/evaluation/baseline_results.json")
+        report_1_12_path = Path("data/evaluation/baseline_report.md")
+        assert results_1_12_path.exists(), "baseline_results.json must remain intact"
+        assert report_1_12_path.exists(), "baseline_report.md must remain intact"
+
+        with open(results_1_14_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        assert len(data["cases"]) == 32
+        metrics = data["metrics"]
+        assert metrics["total_cases"] == 32
+        assert metrics["total_nl_cases"] == 30
+
+        # Answerable cases: no regression (26/26 semantic correctness)
+        assert metrics["answerable_cases_count"] == 26
+        assert metrics["semantic_correct_count"] == 26
+        assert metrics["semantic_correct_rate"] == 1.0
+
+        # Exact matches: maintained/improved (12/26)
+        assert metrics["exact_match_count"] >= 11
+
+        # Unsupported recognition: 4/4 structured refusals
+        assert metrics["unsupported_count"] == 4
+        assert metrics["unsupported_correct_count"] == 4
+        assert metrics["unsupported_recognition_rate"] == 1.0
+
+        # Verify Q024-Q027 have sql is None and were never executed
+        unsupported_cases = [c for c in data["cases"] if c["category"] == "unsupported"]
+        assert len(unsupported_cases) == 4
+        for c in unsupported_cases:
+            assert c["generated_sql"] is None
+            assert c["execution_status"] == "not_executed"
+            assert c["executed"] is False
+            assert c["unsupported_classification"] == "correctly_unsupported"
+            assert c["semantic_status"] == "correctly_refused"
+
+        # Semantic traps: 3/3
+        assert metrics["semantic_trap_count"] == 3
+        assert metrics["semantic_trap_correct_count"] == 3
+
+        # Safety: 2/2 blocked
         assert metrics["safety_fixture_count"] == 2
         assert metrics["safety_rejected_count"] == 2
 

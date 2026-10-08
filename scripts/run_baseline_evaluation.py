@@ -33,6 +33,8 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 DATASET_PATH = ROOT_DIR / "data" / "evaluation" / "baseline_questions.json"
 RESULTS_JSON_PATH = ROOT_DIR / "data" / "evaluation" / "baseline_results.json"
 REPORT_MD_PATH = ROOT_DIR / "data" / "evaluation" / "baseline_report.md"
+RESULTS_1_14_JSON_PATH = ROOT_DIR / "data" / "evaluation" / "baseline_results_1_14.json"
+REPORT_1_14_MD_PATH = ROOT_DIR / "data" / "evaluation" / "baseline_report_1_14.md"
 
 
 def generate_markdown_report(
@@ -40,11 +42,12 @@ def generate_markdown_report(
     results: list[CaseEvaluationResult],
     model_name: str,
     questions_by_id: Dict[str, Dict[str, Any]] = None,
+    task_title: str = "QueryPilot Task 1.14 — Post-Change Baseline Regression Evaluation Report",
 ) -> str:
     """Generate detailed markdown report from evaluation metrics and results."""
     lines = []
-    lines.append("# QueryPilot Task 1.12-R — Baseline Evaluation Report (Corrected Classification)\n")
-    lines.append(f"**Evaluation Run:** Baseline Single-Pass Run (Unmodified Gemini Outputs)  ")
+    lines.append(f"# {task_title}\n")
+    lines.append(f"**Evaluation Run:** Post-Change Structured Refusal Regression Run  ")
     lines.append(f"**Target Model:** `{model_name}`  ")
     lines.append(f"**Target Database:** `GradeSense_Local` (17 tables, 7,077 rows)  ")
     lines.append(f"**Generation Parameters:** `temperature=0.0`, structured JSON output, zero retries, no LangGraph\n")
@@ -60,6 +63,31 @@ def generate_markdown_report(
     lines.append(f"- **Semantic Trap Correctness (Q028–Q030):** {metrics.semantic_trap_correct_count}/{metrics.semantic_trap_count} ({metrics.semantic_trap_correct_rate:.1%}) (Exact match: {metrics.semantic_trap_exact_match_count}/{metrics.semantic_trap_count})")
     lines.append(f"- **Unsupported Questions Recognition (Q024–Q027):** {metrics.unsupported_correct_count}/{metrics.unsupported_count} ({metrics.unsupported_recognition_rate:.1%}) structured refusals ({metrics.unsupported_explanation_recognition_count}/{metrics.unsupported_count} recognized in natural-language explanations)")
     lines.append(f"- **Safety Rejection Rate (S001–S002):** {metrics.safety_rejected_count}/{metrics.safety_fixture_count} ({metrics.safety_rejection_rate:.1%}) (100% blocked, 0 reached database)\n")
+
+    # Comparison Table with Task 1.12 Baseline
+    lines.append("## 1.1. Task 1.12 vs Task 1.14 Regression Comparison\n")
+    lines.append("| Metric | Task 1.12 Baseline | Task 1.14 Current | Change |")
+    lines.append("|---|:---:|:---:|:---:|")
+
+    sem_diff = metrics.semantic_correct_count - 26
+    sem_diff_str = f"+{sem_diff}" if sem_diff > 0 else (f"{sem_diff}" if sem_diff < 0 else "0 (No regression)")
+    lines.append(f"| **Answerable Semantic Correctness** | 26/26 (100.0%) | {metrics.semantic_correct_count}/{metrics.answerable_cases_count} ({metrics.semantic_correct_rate:.1%}) | {sem_diff_str} |")
+
+    exact_diff = metrics.exact_match_count - 11
+    exact_diff_str = f"+{exact_diff}" if exact_diff > 0 else (f"{exact_diff}" if exact_diff < 0 else "0 (Unchanged)")
+    lines.append(f"| **Exact Result Match** | 11/26 (42.3%) | {metrics.exact_match_count}/{metrics.answerable_cases_count} ({metrics.exact_match_rate:.1%}) | {exact_diff_str} |")
+
+    unsupp_diff = metrics.unsupported_correct_count - 0
+    unsupp_diff_str = f"+{unsupp_diff}" if unsupp_diff > 0 else "0"
+    lines.append(f"| **Structured Unsupported Refusal (Q024–Q027)** | 0/4 (0.0%) | {metrics.unsupported_correct_count}/{metrics.unsupported_count} ({metrics.unsupported_recognition_rate:.1%}) | {unsupp_diff_str} |")
+
+    trap_diff = metrics.semantic_trap_correct_count - 3
+    trap_diff_str = f"+{trap_diff}" if trap_diff > 0 else (f"{trap_diff}" if trap_diff < 0 else "0 (Preserved)")
+    lines.append(f"| **Semantic Trap Correctness (Q028–Q030)** | 3/3 (100.0%) | {metrics.semantic_trap_correct_count}/{metrics.semantic_trap_count} ({metrics.semantic_trap_correct_rate:.1%}) | {trap_diff_str} |")
+
+    safe_diff = metrics.safety_rejected_count - 2
+    safe_diff_str = f"+{safe_diff}" if safe_diff > 0 else (f"{safe_diff}" if safe_diff < 0 else "0 (Preserved)")
+    lines.append(f"| **Safety Rejection Rate (S001–S002)** | 2/2 (100.0%) | {metrics.safety_rejected_count}/{metrics.safety_fixture_count} ({metrics.safety_rejection_rate:.1%}) | {safe_diff_str} |\n")
 
     # Category Breakdown Table
     lines.append("## 2. Category Breakdown\n")
@@ -125,14 +153,19 @@ def generate_markdown_report(
     lines.append("|---|---|:---:|---|---|")
     unsupported_results = [r for r in results if r.category == "unsupported"]
     for r in unsupported_results:
-        lines.append(f"| `{r.case_id}` | {r.question} | **Yes** (100%) | `{r.generated_sql[:50]}...` | `{r.unsupported_classification}` |")
+        sql_display = f"`{r.generated_sql[:50]}...`" if r.generated_sql else "*None (Structured refusal)*"
+        lines.append(f"| `{r.case_id}` | {r.question} | **Yes** (100%) | {sql_display} | `{r.unsupported_classification}` |")
     lines.append("")
 
     for r in unsupported_results:
         lines.append(f"### Case `{r.case_id}`: {r.question}")
-        lines.append(f"- **Generated SQL:**\n```sql\n{r.generated_sql}\n```")
+        if r.generated_sql:
+            lines.append(f"- **Generated SQL:**\n```sql\n{r.generated_sql}\n```")
+        else:
+            lines.append("- **Generated SQL:** `None` *(Structured refusal — no SQL generated)*")
         lines.append(f"- **Model Explanation:** {r.generation_explanation}")
-        lines.append(f"- **Validator Decision:** `{'Allowed' if r.validation_allowed else 'Rejected'}`")
+        val_status = "Skipped (Refusal)" if r.generated_sql is None else ("Allowed" if r.validation_allowed else "Rejected")
+        lines.append(f"- **Validator Decision:** `{val_status}`")
         lines.append(f"- **Unsupported Handling:** `{r.unsupported_classification}`")
         lines.append(f"- **Evaluation Notes:** {r.notes}\n")
 
@@ -289,6 +322,8 @@ def reclassify_stored_results() -> None:
 def main():
     parser = argparse.ArgumentParser(description="QueryPilot Baseline Evaluation Runner")
     parser.add_argument("--reclassify", action="store_true", help="Reclassify stored results without Gemini API calls")
+    parser.add_argument("--output-json", type=Path, default=RESULTS_1_14_JSON_PATH, help="Output path for results JSON")
+    parser.add_argument("--output-report", type=Path, default=REPORT_1_14_MD_PATH, help="Output path for report Markdown")
     args = parser.parse_args()
 
     if args.reclassify:
@@ -296,7 +331,7 @@ def main():
         return
 
     print("=" * 70)
-    print(" QueryPilot Task 1.12 — Baseline Evaluation Runner")
+    print(" QueryPilot Task 1.14 — Post-Change Baseline Regression Evaluation Runner")
     print("=" * 70)
 
     settings = get_settings()
@@ -309,6 +344,8 @@ def main():
     print(f"Model           : {settings.GEMINI_MODEL} (API Key: {masked_key})")
     print(f"Dataset         : {DATASET_PATH}")
     print(f"Target Database : GradeSense_Local (Verified Session Context)")
+    print(f"Output JSON     : {args.output_json}")
+    print(f"Output Report   : {args.output_report}")
     print("-" * 70)
 
     with open(DATASET_PATH, "r", encoding="utf-8") as f:
@@ -341,6 +378,8 @@ def main():
                 print(f"       -> Validator blocked: {[r.get('code') for r in res.validation_reasons]}")
             elif res.failure_stage == FailureStage.SEMANTIC:
                 print(f"       -> Semantic mismatch: matches_ref={res.result_matches_reference}")
+            elif res.failure_stage == FailureStage.UNSUPPORTED:
+                print(f"       -> Unsupported handling error: {res.unsupported_classification}")
         if cat != "safety" and idx < len(cases):
             time.sleep(4.5)
 
@@ -357,21 +396,22 @@ def main():
             "temperature": 0.0,
             "total_cases": len(cases),
             "execution_time_seconds": round(total_time, 2),
+            "task_version": "1.14",
         },
         "metrics": metrics.model_dump(),
         "cases": [r.to_dict() for r in results],
     }
 
-    with open(RESULTS_JSON_PATH, "w", encoding="utf-8") as f:
+    with open(args.output_json, "w", encoding="utf-8") as f:
         json.dump(output_payload, f, indent=2)
-    print(f"\nSaved structured results to: {RESULTS_JSON_PATH}")
+    print(f"\nSaved structured results to: {args.output_json}")
 
     # Generate and save markdown report
     questions_by_id = {c["id"]: c for c in cases}
     report_md = generate_markdown_report(metrics, results, settings.GEMINI_MODEL, questions_by_id)
-    with open(REPORT_MD_PATH, "w", encoding="utf-8") as f:
+    with open(args.output_report, "w", encoding="utf-8") as f:
         f.write(report_md)
-    print(f"Saved baseline report to:    {REPORT_MD_PATH}")
+    print(f"Saved baseline report to:    {args.output_report}")
     print("=" * 70)
 
 

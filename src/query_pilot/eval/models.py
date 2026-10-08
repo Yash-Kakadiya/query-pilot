@@ -70,8 +70,8 @@ class CaseEvaluationResult(BaseModel):
     semantic_correct: Optional[bool] = None
     mismatch_classification: Optional[str] = None
     unsupported_classification: Optional[str] = None
-    structurally_valid: bool = True
-    validator_accepted: bool = True
+    structurally_valid: Optional[bool] = True
+    validator_accepted: Optional[bool] = True
     executed: bool = False
     failure_stage: Optional[FailureStage] = None
     notes: Optional[str] = None
