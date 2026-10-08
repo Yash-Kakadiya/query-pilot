@@ -36,6 +36,8 @@ from query_pilot.db.models import DatabaseSchema
 from query_pilot.sql.generation import (
     SQLGenerationError,
     SQLGenerationRequest,
+    SQLGenerationResponse,
+    SQLGenerationStatus,
     SQLGenerator,
 )
 from query_pilot.sql.models import ValidationResult
@@ -48,6 +50,7 @@ class PipelineStatus(str, Enum):
     """Execution status codes for the QueryPilot pipeline."""
 
     SUCCESS = "SUCCESS"
+    UNSUPPORTED = "UNSUPPORTED"
     GENERATION_FAILED = "GENERATION_FAILED"
     VALIDATION_REJECTED = "VALIDATION_REJECTED"
     EXECUTION_FAILED = "EXECUTION_FAILED"
@@ -66,9 +69,13 @@ class PipelineResult(BaseModel):
         ...,
         description="The terminal status code of the pipeline.",
     )
+    generation_status: Optional[SQLGenerationStatus] = Field(
+        default=None,
+        description="The generation status from the model ('answerable' or 'unsupported').",
+    )
     generated_sql: Optional[str] = Field(
         default=None,
-        description="The candidate SQL produced by the generator, if generation succeeded.",
+        description="The candidate SQL produced by the generator, if generation succeeded and was answerable.",
     )
     generation_explanation: Optional[str] = Field(
         default=None,
@@ -96,11 +103,17 @@ class PipelineResult(BaseModel):
         """Return True if pipeline successfully completed generation, validation, and execution."""
         return self.status == PipelineStatus.SUCCESS
 
+    @property
+    def is_unsupported(self) -> bool:
+        """Return True if question was identified as unsupported by the database schema."""
+        return self.status == PipelineStatus.UNSUPPORTED
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert pipeline result to a serializable dictionary."""
         return {
             "question": self.question,
             "status": self.status.value,
+            "generation_status": self.generation_status.value if self.generation_status else None,
             "generated_sql": self.generated_sql,
             "generation_explanation": self.generation_explanation,
             "generation_assumptions": self.generation_assumptions,
@@ -231,6 +244,20 @@ class QueryPipeline:
         explanation = gen_resp.explanation
         assumptions = gen_resp.assumptions or []
 
+        # Stage B.1: Check if question is unsupported by schema
+        if gen_resp.status == SQLGenerationStatus.UNSUPPORTED:
+            logger.info(f"Question is unsupported by database schema: {question}")
+            return PipelineResult(
+                question=question,
+                status=PipelineStatus.UNSUPPORTED,
+                generation_status=gen_resp.status,
+                generated_sql=None,
+                generation_explanation=explanation,
+                generation_assumptions=assumptions,
+                validation_result=None,
+                execution_result=None,
+            )
+
         # Stage C: Deterministic validation
         try:
             val_result = validate_sql(
@@ -243,6 +270,7 @@ class QueryPipeline:
             return PipelineResult(
                 question=question,
                 status=PipelineStatus.VALIDATION_REJECTED,
+                generation_status=gen_resp.status,
                 generated_sql=candidate_sql,
                 generation_explanation=explanation,
                 generation_assumptions=assumptions,
@@ -255,6 +283,7 @@ class QueryPipeline:
             return PipelineResult(
                 question=question,
                 status=PipelineStatus.VALIDATION_REJECTED,
+                generation_status=gen_resp.status,
                 generated_sql=candidate_sql,
                 generation_explanation=explanation,
                 generation_assumptions=assumptions,
@@ -275,6 +304,7 @@ class QueryPipeline:
             return PipelineResult(
                 question=question,
                 status=PipelineStatus.EXECUTION_FAILED,
+                generation_status=gen_resp.status,
                 generated_sql=candidate_sql,
                 generation_explanation=explanation,
                 generation_assumptions=assumptions,
@@ -286,6 +316,7 @@ class QueryPipeline:
             return PipelineResult(
                 question=question,
                 status=PipelineStatus.EXECUTION_FAILED,
+                generation_status=gen_resp.status,
                 generated_sql=candidate_sql,
                 generation_explanation=explanation,
                 generation_assumptions=assumptions,
@@ -297,6 +328,7 @@ class QueryPipeline:
         return PipelineResult(
             question=question,
             status=PipelineStatus.SUCCESS,
+            generation_status=gen_resp.status,
             generated_sql=candidate_sql,
             generation_explanation=explanation,
             generation_assumptions=assumptions,

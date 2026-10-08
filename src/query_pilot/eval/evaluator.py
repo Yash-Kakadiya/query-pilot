@@ -19,6 +19,7 @@ from query_pilot.eval.models import (
 from query_pilot.sql.generation import (
     SQLGenerationError,
     SQLGenerationRequest,
+    SQLGenerationStatus,
     SQLGenerator,
 )
 from query_pilot.sql.validator import validate_sql
@@ -265,6 +266,41 @@ def evaluate_case(
     candidate_sql = gen_resp.sql
     explanation = gen_resp.explanation
     assumptions = gen_resp.assumptions or []
+
+    # Handle structured refusal (SQLGenerationStatus.UNSUPPORTED)
+    if gen_resp.status == SQLGenerationStatus.UNSUPPORTED:
+        is_expected = (expected_behavior == "unsupported")
+        sem_stat = SemanticStatus.CORRECTLY_REFUSED if is_expected else SemanticStatus.INCORRECT
+        unsupp_class = "correctly_unsupported" if is_expected else "incorrectly_unsupported"
+        mismatch_type = (
+            MismatchClassification.UNSUPPORTED_HANDLING.value
+            if is_expected
+            else MismatchClassification.SEMANTIC_INCORRECT.value
+        )
+        return CaseEvaluationResult(
+            case_id=case_id,
+            category=category,
+            question=question,
+            expected_behavior=expected_behavior,
+            generated_sql=None,
+            generation_status="unsupported",
+            generation_explanation=explanation,
+            generation_assumptions=assumptions,
+            validation_allowed=True if is_expected else False,
+            validation_reasons=[],
+            execution_status="not_executed",
+            result_matches_reference=None,
+            exact_result_match=None,
+            semantic_status=sem_stat,
+            semantic_correct=True if is_expected else False,
+            mismatch_classification=mismatch_type,
+            unsupported_classification=unsupp_class,
+            structurally_valid=True,
+            validator_accepted=None,
+            executed=False,
+            failure_stage=None if is_expected else FailureStage.GENERATION,
+            notes=notes or "Structured refusal from generator.",
+        )
 
     # Boundary 3: Deterministic Validation
     val_res = validate_sql(candidate_sql, schema)

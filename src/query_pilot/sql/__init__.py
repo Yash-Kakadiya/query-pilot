@@ -9,6 +9,7 @@ from query_pilot.sql.generation import (
     SQLGenerationError,
     SQLGenerationRequest,
     SQLGenerationResponse,
+    SQLGenerationStatus,
     SQLGenerator,
     format_schema_context,
 )
@@ -26,6 +27,7 @@ __all__ = [
     # Generation Contract
     "SQLGenerationRequest",
     "SQLGenerationResponse",
+    "SQLGenerationStatus",
     "SQLGenerator",
     "SQLGenerationError",
     "ConfigurationError",

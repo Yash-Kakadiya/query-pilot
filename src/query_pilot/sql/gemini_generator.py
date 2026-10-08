@@ -18,6 +18,7 @@ from query_pilot.sql.generation import (
     ProviderAPIError,
     SQLGenerationRequest,
     SQLGenerationResponse,
+    SQLGenerationStatus,
     SQLGenerator,
 )
 from query_pilot.sql.prompt import SYSTEM_INSTRUCTION, build_sql_generation_prompt
@@ -128,7 +129,8 @@ class GeminiSQLGenerator(SQLGenerator):
                 f"Raw output: {response.text[:200]}"
             ) from exc
 
-        if not parsed.sql or not parsed.sql.strip():
-            raise EmptySQLError("Gemini generated an empty SQL string.")
+        if parsed.status == SQLGenerationStatus.ANSWERABLE:
+            if not parsed.sql or not parsed.sql.strip():
+                raise EmptySQLError("Gemini marked question as answerable but returned an empty SQL string.")
 
         return parsed

@@ -15,6 +15,7 @@ from query_pilot.sql.generation import (
     SQLGenerationError,
     SQLGenerationRequest,
     SQLGenerationResponse,
+    SQLGenerationStatus,
     SQLGenerator,
     format_schema_context,
 )
@@ -209,6 +210,99 @@ def test_response_rejects_empty_sql(empty_sql):
     """Verify that empty or whitespace SQL is rejected."""
     with pytest.raises(ValidationError):
         SQLGenerationResponse(sql=empty_sql)
+
+
+def test_response_answerable_valid():
+    """Verify answerable response with non-empty SQL."""
+    resp = SQLGenerationResponse(
+        status=SQLGenerationStatus.ANSWERABLE,
+        sql="SELECT COUNT(*) FROM Students;",
+        explanation="Counts all students.",
+        assumptions=["Active students only"],
+    )
+    assert resp.status == SQLGenerationStatus.ANSWERABLE
+    assert resp.sql == "SELECT COUNT(*) FROM Students;"
+    assert resp.explanation == "Counts all students."
+    assert resp.assumptions == ["Active students only"]
+
+
+def test_response_unsupported_valid():
+    """Verify unsupported response with None sql."""
+    resp = SQLGenerationResponse(
+        status=SQLGenerationStatus.UNSUPPORTED,
+        sql=None,
+        explanation="Tuition fees are not stored in the database.",
+        assumptions=[],
+    )
+    assert resp.status == SQLGenerationStatus.UNSUPPORTED
+    assert resp.sql is None
+    assert "Tuition fees" in resp.explanation
+    assert resp.assumptions == []
+
+
+def test_response_rejects_unsupported_with_sql():
+    """Verify unsupported response rejects non-null SQL."""
+    with pytest.raises(ValidationError) as exc_info:
+        SQLGenerationResponse(
+            status=SQLGenerationStatus.UNSUPPORTED,
+            sql="SELECT * FROM Students;",
+        )
+    assert "Unsupported response must not contain SQL" in str(exc_info.value)
+
+
+def test_response_rejects_answerable_with_none_or_empty_sql():
+    """Verify answerable response rejects None or empty SQL."""
+    with pytest.raises(ValidationError) as exc_info1:
+        SQLGenerationResponse(
+            status=SQLGenerationStatus.ANSWERABLE,
+            sql=None,
+        )
+    assert "Answerable response requires a non-empty SQL query" in str(exc_info1.value)
+
+    with pytest.raises(ValidationError) as exc_info2:
+        SQLGenerationResponse(
+            status=SQLGenerationStatus.ANSWERABLE,
+            sql="",
+        )
+    assert "Answerable response requires a non-empty SQL query" in str(exc_info2.value)
+
+    with pytest.raises(ValidationError) as exc_info3:
+        SQLGenerationResponse(
+            status=SQLGenerationStatus.ANSWERABLE,
+            sql="   ",
+        )
+    assert "Answerable response requires a non-empty SQL query" in str(exc_info3.value)
+
+
+def test_response_serialization_deserialization():
+    """Verify JSON round-trip serialization and deserialization for both statuses."""
+    # Answerable round-trip
+    ans_orig = SQLGenerationResponse(
+        status=SQLGenerationStatus.ANSWERABLE,
+        sql="SELECT * FROM Departments;",
+        explanation="Departments list",
+        assumptions=["All departments"],
+    )
+    ans_json = ans_orig.model_dump_json()
+    ans_data = json.loads(ans_json)
+    assert ans_data["status"] == "answerable"
+    assert ans_data["sql"] == "SELECT * FROM Departments;"
+    ans_restored = SQLGenerationResponse.model_validate_json(ans_json)
+    assert ans_restored == ans_orig
+
+    # Unsupported round-trip
+    unsupp_orig = SQLGenerationResponse(
+        status=SQLGenerationStatus.UNSUPPORTED,
+        sql=None,
+        explanation="Data not available in schema.",
+        assumptions=[],
+    )
+    unsupp_json = unsupp_orig.model_dump_json()
+    unsupp_data = json.loads(unsupp_json)
+    assert unsupp_data["status"] == "unsupported"
+    assert unsupp_data["sql"] is None
+    unsupp_restored = SQLGenerationResponse.model_validate_json(unsupp_json)
+    assert unsupp_restored == unsupp_orig
 
 
 # ==============================================================================

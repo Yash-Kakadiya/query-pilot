@@ -47,6 +47,7 @@ from query_pilot.sql.generation import (
     ProviderAPIError,
     SQLGenerationRequest,
     SQLGenerationResponse,
+    SQLGenerationStatus,
     SQLGenerator,
 )
 from query_pilot.sql.models import ValidationReasonCode
@@ -129,6 +130,28 @@ class DeterministicFakeGenerator(SQLGenerator):
         self.calls.append(request)
         return SQLGenerationResponse(
             sql=self.sql,
+            explanation=self.explanation,
+            assumptions=self.assumptions,
+        )
+
+
+class UnsupportedFakeGenerator(SQLGenerator):
+    """Fake SQL generator returning a structured unsupported refusal."""
+
+    def __init__(
+        self,
+        explanation: str = "This information is not tracked in the database schema.",
+        assumptions: Optional[List[str]] = None,
+    ):
+        self.explanation = explanation
+        self.assumptions = assumptions or []
+        self.calls: List[SQLGenerationRequest] = []
+
+    def generate(self, request: SQLGenerationRequest) -> SQLGenerationResponse:
+        self.calls.append(request)
+        return SQLGenerationResponse(
+            status=SQLGenerationStatus.UNSUPPORTED,
+            sql=None,
             explanation=self.explanation,
             assumptions=self.assumptions,
         )
@@ -314,6 +337,63 @@ class TestPipelineUnitBoundaries:
         assert d["status"] == "SUCCESS"
         assert d["generated_sql"] == "SELECT COUNT(*) FROM Students;"
         assert d["generation_explanation"] == "Counts all students"
+
+    def test_pipeline_unsupported_question_skips_validation_and_execution(
+        self,
+        test_schema: DatabaseSchema,
+    ):
+        """Test I: Unsupported question stops immediately without calling validator or executor."""
+        generator = UnsupportedFakeGenerator(
+            explanation="Tuition fees are not tracked in the schema.",
+            assumptions=["No financial tables available"],
+        )
+        pipeline = QueryPipeline(generator=generator, schema=test_schema)
+
+        with (
+            patch("query_pilot.pipeline.validate_sql") as mock_val,
+            patch("query_pilot.pipeline.execute_read_only") as mock_exec,
+        ):
+            result = pipeline.run("What is the tuition fee amount paid by each student?")
+
+            # 1. Pipeline result status is UNSUPPORTED
+            assert result.status == PipelineStatus.UNSUPPORTED
+            assert result.is_unsupported is True
+            assert result.is_success is False
+            assert result.generation_status == SQLGenerationStatus.UNSUPPORTED
+
+            # 2. SQL, validation_result, and execution_result are all None
+            assert result.generated_sql is None
+            assert result.validation_result is None
+            assert result.execution_result is None
+            assert result.generation_explanation == "Tuition fees are not tracked in the schema."
+            assert result.generation_assumptions == ["No financial tables available"]
+
+            # 3. Validator was NEVER called
+            mock_val.assert_not_called()
+
+            # 4. Executor was NEVER called
+            mock_exec.assert_not_called()
+
+    def test_pipeline_result_to_dict_unsupported(self):
+        """Test serializability of PipelineResult for UNSUPPORTED status."""
+        result = PipelineResult(
+            question="What is the tuition fee?",
+            status=PipelineStatus.UNSUPPORTED,
+            generation_status=SQLGenerationStatus.UNSUPPORTED,
+            generated_sql=None,
+            generation_explanation="Tuition fees are not in the schema.",
+            generation_assumptions=[],
+            validation_result=None,
+            execution_result=None,
+        )
+        d = result.to_dict()
+        assert d["question"] == "What is the tuition fee?"
+        assert d["status"] == "UNSUPPORTED"
+        assert d["generation_status"] == "unsupported"
+        assert d["generated_sql"] is None
+        assert d["validation_result"] is None
+        assert d["execution_result"] is None
+        assert d["generation_explanation"] == "Tuition fees are not in the schema."
 
 
 # ==============================================================================

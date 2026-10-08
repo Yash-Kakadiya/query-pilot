@@ -5,8 +5,9 @@ Ensures provider independence, deterministic model-facing schema formatting, and
 structured response validation. The LLM layer never executes SQL.
 """
 
+from enum import Enum
 from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from query_pilot.db.models import DatabaseSchema
 
@@ -43,6 +44,13 @@ class EmptySQLError(SQLGenerationError):
 # ==============================================================================
 # Generation Contract Models
 # ==============================================================================
+
+class SQLGenerationStatus(str, Enum):
+    """Status indicating whether a question is supported by the schema or unsupported."""
+
+    ANSWERABLE = "answerable"
+    UNSUPPORTED = "unsupported"
+
 
 class SQLGenerationRequest(BaseModel):
     """Typed request representing a user question and model-facing schema context."""
@@ -88,39 +96,54 @@ class SQLGenerationRequest(BaseModel):
 
 
 class SQLGenerationResponse(BaseModel):
-    """Structured response expected from the LLM SQL generator."""
+    """Structured response expected from the LLM SQL generator.
 
-    sql: str = Field(
-        ...,
-        description="The candidate read-only SQL query answering the user question.",
+    Invariants:
+    - If status == 'answerable': sql must be a non-empty read-only SQL string.
+    - If status == 'unsupported': sql must be None/null.
+    """
+
+    status: SQLGenerationStatus = Field(
+        default=SQLGenerationStatus.ANSWERABLE,
+        description="Indicates whether the question is answerable using the schema ('answerable') or unsupported ('unsupported').",
+    )
+    sql: Optional[str] = Field(
+        default=None,
+        description="The candidate read-only SQL query answering the user question (non-empty when status is 'answerable', null when status is 'unsupported').",
     )
     explanation: Optional[str] = Field(
         default=None,
-        description="Brief natural language explanation of how the query answers the question.",
+        description="Brief natural language explanation of how the query answers the user question, or why the question is unsupported.",
     )
-    assumptions: Optional[List[str]] = Field(
-        default=None,
+    assumptions: List[str] = Field(
+        default_factory=list,
         description="Any assumptions made regarding business logic, joins, or filters.",
     )
 
-    @field_validator("sql")
-    @classmethod
-    def validate_sql_not_empty(cls, v: str) -> str:
-        """Ensure SQL string is not empty or whitespace."""
-        val = v.strip()
-        if not val:
-            raise ValueError("Generated SQL cannot be empty or whitespace.")
-        # Strip markdown code blocks if the model wrapped them in ```sql ... ```
-        if val.startswith("```"):
-            lines = val.splitlines()
-            if lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines and lines[-1].startswith("```"):
-                lines = lines[:-1]
-            val = "\n".join(lines).strip()
-            if not val:
-                raise ValueError("Generated SQL cannot be empty after stripping code fences.")
-        return val
+    @model_validator(mode="after")
+    def validate_status_and_sql(self) -> "SQLGenerationResponse":
+        """Enforce contract invariants between status and SQL presence."""
+        if self.status == SQLGenerationStatus.ANSWERABLE:
+            if self.sql is None or not self.sql.strip():
+                raise ValueError("Answerable response requires a non-empty SQL query.")
+            val = self.sql.strip()
+            # Strip markdown code blocks if the model wrapped them in ```sql ... ```
+            if val.startswith("```"):
+                lines = val.splitlines()
+                if lines[0].startswith("```"):
+                    lines = lines[1:]
+                if lines and lines[-1].startswith("```"):
+                    lines = lines[:-1]
+                val = "\n".join(lines).strip()
+                if not val:
+                    raise ValueError("Generated SQL cannot be empty after stripping code fences.")
+            self.sql = val
+        elif self.status == SQLGenerationStatus.UNSUPPORTED:
+            if self.sql is not None:
+                raise ValueError(
+                    f"Unsupported response must not contain SQL (sql must be null/None, received: {self.sql!r})."
+                )
+        return self
 
 
 # ==============================================================================
