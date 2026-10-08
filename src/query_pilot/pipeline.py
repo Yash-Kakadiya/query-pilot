@@ -122,6 +122,13 @@ class PipelineResult(BaseModel):
             "error_message": self.error_message,
         }
 
+    def present(self) -> Any:
+        """Convert this pipeline result into a deterministic presentation representation."""
+        from query_pilot.presentation.formatter import format_pipeline_result
+
+        return format_pipeline_result(self)
+
+
 
 class QueryPipeline:
     """Thin orchestration pipeline coordinating SQL generation, validation, and execution.
