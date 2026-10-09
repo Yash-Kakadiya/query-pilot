@@ -11,6 +11,14 @@ from query_pilot.eval.models import (
     FailureStage,
     SemanticStatus,
 )
+from query_pilot.eval.report import (
+    EvaluationReportData,
+    analyze_failures,
+    compute_operational_metrics,
+    format_rate,
+    generate_markdown_report,
+    load_evaluation_artifact,
+)
 
 __all__ = [
     "CaseEvaluationResult",
@@ -20,4 +28,10 @@ __all__ = [
     "evaluate_case",
     "compute_evaluation_metrics",
     "compare_results",
+    "EvaluationReportData",
+    "analyze_failures",
+    "compute_operational_metrics",
+    "format_rate",
+    "generate_markdown_report",
+    "load_evaluation_artifact",
 ]
