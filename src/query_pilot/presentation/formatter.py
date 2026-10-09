@@ -144,6 +144,10 @@ class PresentationResult(BaseModel):
         ...,
         description="Presentation status: 'success', 'unsupported', 'validation_rejected', 'generation_failed', 'execution_failed'.",
     )
+    request_id: Optional[str] = Field(
+        default=None,
+        description="Correlated unique pipeline request ID.",
+    )
     title: Optional[str] = Field(
         default=None,
         description="User question or presentation title.",
@@ -203,6 +207,7 @@ def format_query_result(
     question: Optional[str] = None,
     explanation: Optional[str] = None,
     generated_sql: Optional[str] = None,
+    request_id: Optional[str] = None,
 ) -> PresentationResult:
     """Format an executed QueryResult into a PresentationResult.
 
@@ -211,6 +216,7 @@ def format_query_result(
         question: Optional natural-language question.
         explanation: Optional generator explanation.
         generated_sql: Optional candidate SQL statement.
+        request_id: Optional unique request correlation ID.
 
     Returns:
         A structured PresentationResult.
@@ -233,6 +239,7 @@ def format_query_result(
 
     return PresentationResult(
         status="success",
+        request_id=request_id,
         title=question,
         message=msg,
         columns=cols,
@@ -268,6 +275,7 @@ def format_pipeline_result(pipeline_result: PipelineResult) -> PresentationResul
     question = pipeline_result.question
     explanation = pipeline_result.generation_explanation
     sql = pipeline_result.generated_sql
+    req_id = getattr(pipeline_result, "request_id", None)
 
     if status == PipelineStatus.SUCCESS:
         if pipeline_result.execution_result is not None:
@@ -276,9 +284,11 @@ def format_pipeline_result(pipeline_result: PipelineResult) -> PresentationResul
                 question=question,
                 explanation=explanation,
                 generated_sql=sql,
+                request_id=req_id,
             )
         return PresentationResult(
             status="success",
+            request_id=req_id,
             title=question,
             message="Query executed successfully. No rows returned.",
             columns=[],
@@ -292,6 +302,7 @@ def format_pipeline_result(pipeline_result: PipelineResult) -> PresentationResul
     if status == PipelineStatus.UNSUPPORTED:
         return PresentationResult(
             status="unsupported",
+            request_id=req_id,
             title=question,
             message="The database schema does not contain the information required to answer this question.",
             columns=[],
@@ -310,6 +321,7 @@ def format_pipeline_result(pipeline_result: PipelineResult) -> PresentationResul
         )
         return PresentationResult(
             status="validation_rejected",
+            request_id=req_id,
             title=question,
             message="Query rejected by the SQL safety/policy validator.",
             columns=[],
@@ -325,6 +337,7 @@ def format_pipeline_result(pipeline_result: PipelineResult) -> PresentationResul
         safe_msg = sanitize_message(pipeline_result.error_message) or "Failed to generate SQL query for the question."
         return PresentationResult(
             status="generation_failed",
+            request_id=req_id,
             title=question,
             message=safe_msg,
             columns=[],
@@ -339,6 +352,7 @@ def format_pipeline_result(pipeline_result: PipelineResult) -> PresentationResul
         safe_msg = sanitize_message(pipeline_result.error_message) or "Query execution failed in the database."
         return PresentationResult(
             status="execution_failed",
+            request_id=req_id,
             title=question,
             message=safe_msg,
             columns=[],
@@ -352,6 +366,7 @@ def format_pipeline_result(pipeline_result: PipelineResult) -> PresentationResul
     # Fallback for unexpected status codes
     return PresentationResult(
         status=str(status).lower(),
+        request_id=req_id,
         title=question,
         message=sanitize_message(pipeline_result.error_message) or "Pipeline processing encountered an unhandled state.",
         columns=[],
