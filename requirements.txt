@@ -14,3 +14,6 @@ langsmith>=0.1.0
 
 # Testing
 pytest>=8.0.0
+
+# Agent Workflow & Orchestration (Phase 2)
+langgraph>=1.0.0
