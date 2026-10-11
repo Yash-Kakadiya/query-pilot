@@ -6,12 +6,20 @@ from query_pilot.pipeline import (
     QueryPipeline,
     run_question,
 )
+from query_pilot.runner import (
+    ExecutionMode,
+    QueryRunner,
+    run_query,
+)
 
 __version__ = "0.1.0"
 
 __all__ = [
-    "QueryPipeline",
+    "ExecutionMode",
     "PipelineResult",
     "PipelineStatus",
+    "QueryPipeline",
+    "QueryRunner",
+    "run_query",
     "run_question",
 ]
