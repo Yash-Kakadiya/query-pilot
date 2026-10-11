@@ -1,5 +1,15 @@
-"""QueryPilot evaluation and benchmarking module."""
-
+from query_pilot.eval.comparison import (
+    ComparativeEvaluationArtifact,
+    ComparativeMetrics,
+    PairedCaseClassification,
+    PairedCaseComparison,
+    classify_paired_case,
+    evaluate_case_with_runner,
+    evaluate_comparative,
+    generate_comparative_markdown_report,
+    is_case_passing,
+    save_comparative_evaluation,
+)
 from query_pilot.eval.evaluator import (
     compare_results,
     compute_evaluation_metrics,
@@ -34,4 +44,15 @@ __all__ = [
     "format_rate",
     "generate_markdown_report",
     "load_evaluation_artifact",
+    "PairedCaseClassification",
+    "PairedCaseComparison",
+    "ComparativeMetrics",
+    "ComparativeEvaluationArtifact",
+    "is_case_passing",
+    "classify_paired_case",
+    "evaluate_case_with_runner",
+    "evaluate_comparative",
+    "generate_comparative_markdown_report",
+    "save_comparative_evaluation",
 ]
+
