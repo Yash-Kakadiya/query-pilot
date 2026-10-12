@@ -237,7 +237,7 @@
   {
     "id": "Q012",
     "category": "grouping",
-    "question": "What is the count of students grouped by their enrollment status?",
+    "question": "What is the count of students grouped by their student status?",
     "expected_behavior": "answerable",
     "reference_sql": "SELECT Status, COUNT(*) AS StatusCount FROM Students GROUP BY Status ORDER BY Status ASC;",
     "reference_result": [
@@ -246,42 +246,37 @@
         "StatusCount": 40
       }
     ],
-    "notes": "Categorical grouping by Status on Students."
+    "notes": "Categorical grouping by student status on Students."
   },
   {
     "id": "Q013",
     "category": "multi_table_join",
     "question": "List the first 5 students with their full name and department name ordered by student ID.",
     "expected_behavior": "answerable",
-    "reference_sql": "SELECT TOP 5 s.Id, u.FullName, d.Name AS DepartmentName FROM Students s JOIN Users u ON s.Id = u.Id JOIN Departments d ON s.DepartmentId = d.Id ORDER BY s.Id ASC;",
+    "reference_sql": "SELECT TOP 5 u.FullName, d.Name AS DepartmentName FROM Students s JOIN Users u ON s.Id = u.Id JOIN Departments d ON s.DepartmentId = d.Id ORDER BY s.Id ASC;",
     "reference_result": [
       {
-        "Id": 22,
         "FullName": "Priya Kothari",
         "DepartmentName": "Computer Engineering"
       },
       {
-        "Id": 23,
         "FullName": "Navya Mehta",
         "DepartmentName": "Computer Engineering"
       },
       {
-        "Id": 24,
         "FullName": "Avni Shah",
         "DepartmentName": "Computer Engineering"
       },
       {
-        "Id": 25,
         "FullName": "Advait Oza",
         "DepartmentName": "Computer Engineering"
       },
       {
-        "Id": 26,
         "FullName": "Kian Amin",
         "DepartmentName": "Computer Engineering"
       }
     ],
-    "notes": "3-table join across Students, Users (table inheritance via Id), and Departments."
+    "notes": "3-table join across Students, Users (table inheritance via Id), and Departments projecting requested full name and department name ordered deterministically by student ID."
   },
   {
     "id": "Q014",
@@ -437,39 +432,45 @@
   {
     "id": "Q018",
     "category": "analytical",
-    "question": "Find the top 3 students with the highest average obtained marks across all non-absent assessments.",
+    "question": "Find the top 3 students with their student ID, full name, enrollment number, and average obtained marks across all non-absent assessments ordered by average marks descending.",
     "expected_behavior": "answerable",
-    "reference_sql": "SELECT TOP 3 ce.StudentId, CAST(ROUND(AVG(sm.ObtainedMarks), 2) AS DECIMAL(5, 2)) AS AvgMarks FROM StudentMarks sm JOIN CourseEnrollments ce ON sm.EnrollmentId = ce.Id WHERE sm.IsAbsent = 0 GROUP BY ce.StudentId ORDER BY AvgMarks DESC, ce.StudentId ASC;",
+    "reference_sql": "SELECT TOP 3 s.Id AS StudentId, u.FullName, s.EnrollmentNumber, AVG(sm.ObtainedMarks) AS AvgMarks FROM StudentMarks sm JOIN CourseEnrollments ce ON sm.EnrollmentId = ce.Id JOIN Students s ON ce.StudentId = s.Id JOIN Users u ON s.Id = u.Id WHERE sm.IsAbsent = 0 GROUP BY s.Id, u.FullName, s.EnrollmentNumber ORDER BY AvgMarks DESC, s.Id ASC;",
     "reference_result": [
       {
         "StudentId": 59,
-        "AvgMarks": 8.71
+        "FullName": "Aanya Joshi",
+        "EnrollmentNumber": "23ME018",
+        "AvgMarks": 8.706666
       },
       {
         "StudentId": 37,
-        "AvgMarks": 8.66
+        "FullName": "Shaurya Oza",
+        "EnrollmentNumber": "21CE016",
+        "AvgMarks": 8.658
       },
       {
         "StudentId": 38,
-        "AvgMarks": 8.6
+        "FullName": "Reyansh Raval",
+        "EnrollmentNumber": "21CE017",
+        "AvgMarks": 8.601333
       }
     ],
-    "notes": "Multi-table analytical query computing average marks per student with TOP 3 and rounding."
+    "notes": "Multi-table analytical query computing unrounded average marks per student with student identification attributes, TOP 3, and deterministic tie-breaking."
   },
   {
     "id": "Q019",
     "category": "analytical",
     "question": "What is the distribution of predictions by predicted category and their average risk score?",
     "expected_behavior": "answerable",
-    "reference_sql": "SELECT PredictedCategory, COUNT(*) AS PredictionCount, CAST(ROUND(AVG(RiskScore), 2) AS DECIMAL(5, 2)) AS AvgRiskScore FROM Predictions GROUP BY PredictedCategory ORDER BY PredictedCategory ASC;",
+    "reference_sql": "SELECT PredictedCategory, COUNT(*) AS PredictionCount, AVG(RiskScore) AS AvgRiskScore FROM Predictions GROUP BY PredictedCategory ORDER BY PredictedCategory ASC;",
     "reference_result": [
       {
         "PredictedCategory": "Safe",
         "PredictionCount": 26,
-        "AvgRiskScore": 0.2
+        "AvgRiskScore": 0.203846
       }
     ],
-    "notes": "ML predictions analysis aggregating category frequency and risk score."
+    "notes": "ML predictions analysis aggregating category frequency and unrounded average risk score."
   },
   {
     "id": "Q020",

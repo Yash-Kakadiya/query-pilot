@@ -730,6 +730,78 @@ def test_markdown_report_formatting() -> None:
     assert "| `Q002` | simple_retrieval | answerable | ✅ | ❌ | ⚠️ | `sequential_only_pass` |" in report_md
 
 
+def test_reclassified_markdown_report_discloses_provenance_and_q018_context() -> None:
+    """Verify that generate_comparative_markdown_report includes provenance notes when audit_reclassified is True."""
+    paired = [
+        PairedCaseComparison(
+            case_id="Q018",
+            category="analytical",
+            question="Find the top 3 students...",
+            expected_behavior="answerable",
+            classification=PairedCaseClassification.BOTH_FAIL,
+            sequential_passed=False,
+            graph_passed=False,
+            exact_match_agree=True,
+            difference_summary="Both modes produced semantically incorrect answers.",
+            sequential_result=CaseEvaluationResult(
+                case_id="Q018", category="analytical", expected_behavior="answerable",
+                generation_status="success", validation_allowed=True, execution_status="success",
+                semantic_correct=False, exact_result_match=False,
+            ),
+            graph_result=CaseEvaluationResult(
+                case_id="Q018", category="analytical", expected_behavior="answerable",
+                generation_status="success", validation_allowed=True, execution_status="success",
+                semantic_correct=False, exact_result_match=False,
+            ),
+        ),
+    ]
+
+    from query_pilot.eval.evaluator import compute_evaluation_metrics
+    eval_m_seq = compute_evaluation_metrics([p.sequential_result for p in paired])
+    eval_m_graph = compute_evaluation_metrics([p.graph_result for p in paired])
+
+    artifact = ComparativeEvaluationArtifact(
+        metadata={
+            "timestamp": "2026-10-11T10:00:00Z",
+            "audit_reclassified": True,
+            "reclassification_notes": "Reclassified from Task 1.22 saved model outputs.",
+        },
+        metrics=ComparativeMetrics(
+            total_cases=1,
+            total_nl_cases=1,
+            answerable_cases_count=1,
+            unsupported_cases_count=0,
+            safety_cases_count=0,
+            sequential_metrics=eval_m_seq,
+            graph_metrics=eval_m_graph,
+            both_pass_count=0,
+            sequential_only_count=0,
+            graph_only_count=0,
+            both_fail_count=1,
+            incomparable_count=0,
+            agreement_rate=1.0,
+            regression_rate=0.0,
+            improvement_rate=0.0,
+            unexpected_errors_sequential=0,
+            unexpected_errors_graph=0,
+        ),
+        paired_cases=paired,
+        sequential_cases=[p.sequential_result for p in paired],
+        graph_cases=[p.graph_result for p in paired],
+    )
+
+    report_md = generate_comparative_markdown_report(artifact)
+
+    # Must disclose offline reclassification provenance
+    assert "Evaluation Provenance (Offline Reclassification)" in report_md
+    assert "Reclassified from Task 1.22 saved model outputs." in report_md
+
+    # Must disclose Q018 historical prompt mismatch nuance
+    assert "Note on Historical Provenance:" in report_md
+    assert "earlier question wording, which did not request `StudentId`" in report_md
+    assert "fresh model evaluation would be required" in report_md
+
+
 # ==============================================================================
 # 11. Status Agreement Alone Does Not Imply Semantic Equivalence
 # ==============================================================================

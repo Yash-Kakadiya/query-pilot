@@ -57,6 +57,8 @@ PROTECTED_EVALUATION_FILES: Set[str] = {
     "comparison_1_22_audited_report.md",
     "recovery_evaluation.json",
     "recovery_evaluation_report.md",
+    "semantic_audit_1_25.json",
+    "semantic_audit_1_25_report.md",
 }
 
 # Domain entity word mappings for GradeSense_Local to detect entity mismatch in projections
@@ -948,6 +950,20 @@ def generate_comparative_markdown_report(artifact: ComparativeEvaluationArtifact
         "> [!IMPORTANT]",
         "> This report provides a paired, evidence-based reliability comparison between the",
         "> existing sequential `QueryPipeline` (baseline) and the `QueryPilotWorkflow` (LangGraph).",
+    ]
+
+    if meta.get("audit_reclassified"):
+        reclass_notes = meta.get(
+            "reclassification_notes",
+            "This report is an offline semantic reclassification of saved Task 1.22 model outputs against the benchmark dataset, not a fresh live evaluation run.",
+        )
+        lines.extend([
+            ">",
+            "> **Evaluation Provenance (Offline Reclassification):**",
+            f"> {reclass_notes}",
+        ])
+
+    lines.extend([
         "",
         "## 1. Executive Summary & Agreement Overview",
         "",
@@ -982,7 +998,7 @@ def generate_comparative_markdown_report(artifact: ComparativeEvaluationArtifact
         "",
         "## 3. Paired Regression & Difference Analysis",
         "",
-    ]
+    ])
 
     regressions = [c for c in artifact.paired_cases if c.classification == PairedCaseClassification.SEQUENTIAL_ONLY_PASS]
     improvements = [c for c in artifact.paired_cases if c.classification == PairedCaseClassification.GRAPH_ONLY_PASS]
@@ -1015,6 +1031,15 @@ def generate_comparative_markdown_report(artifact: ComparativeEvaluationArtifact
         lines.append("")
         for bf in both_fails:
             lines.append(f"- **`{bf.case_id}`** ({bf.category}): Expected `{bf.expected_behavior}`, difference: {bf.difference_summary}")
+            if bf.case_id == "Q018" and meta.get("audit_reclassified"):
+                lines.append(
+                    "  - *Note on Historical Provenance:* The model output was generated in Task 1.22 "
+                    "against the earlier question wording, which did not request `StudentId`. Under the revised "
+                    "contract, Q018 explicitly requests `StudentId`, `FullName`, `EnrollmentNumber`, and `AvgMarks`. "
+                    "Because the historical response did not include `StudentId`, this mismatch reflects a contract "
+                    "revision across benchmark versions rather than a measured failure of the model on the revised prompt. "
+                    "A fresh model evaluation would be required to measure performance on the revised Q018 question."
+                )
         lines.append("")
 
     lines.extend([
@@ -1134,6 +1159,7 @@ def save_comparative_evaluation(
 def reclassify_comparative_artifact(
     artifact_path: Union[Path, str],
     questions_path: Optional[Union[Path, str]] = None,
+    reclassification_notes: Optional[str] = None,
 ) -> ComparativeEvaluationArtifact:
     """Deterministically reclassify a saved comparative evaluation JSON artifact without external calls.
 
@@ -1223,6 +1249,8 @@ def reclassify_comparative_artifact(
     metadata = dict(data.get("metadata", {}))
     metadata["audit_reclassified"] = True
     metadata["reclassification_timestamp"] = datetime.now(timezone.utc).isoformat()
+    if reclassification_notes:
+        metadata["reclassification_notes"] = reclassification_notes
 
     return ComparativeEvaluationArtifact(
         metadata=metadata,

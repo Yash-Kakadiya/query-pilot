@@ -27,7 +27,8 @@ from query_pilot.sql.validator import validate_sql
 
 logger = logging.getLogger(__name__)
 
-# Authoritative baseline case classifications established for Task 1.12-R
+# Historical baseline case classifications established for Task 1.12-R.
+# Preserved for contextual fallback notes; never used to gate dynamic semantic correctness.
 BASELINE_CLASSIFICATIONS: Dict[str, Dict[str, Any]] = {
     "Q001": {"mismatch": MismatchClassification.EXACT_MATCH, "semantic_correct": True, "notes": "Exact match"},
     "Q002": {"mismatch": MismatchClassification.EXACT_MATCH, "semantic_correct": True, "notes": "Exact match"},
