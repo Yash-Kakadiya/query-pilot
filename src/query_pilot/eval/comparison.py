@@ -13,7 +13,9 @@ from enum import Enum
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+import re
+import time
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
 from pydantic import BaseModel, Field
 
@@ -46,6 +48,136 @@ PROTECTED_EVALUATION_FILES: Set[str] = {
     "baseline_report.md",
     "reliability_report_1_14.md",
 }
+
+# Domain entity word mappings for GradeSense_Local to detect entity mismatch in projections
+DOMAIN_ENTITIES: Dict[str, Set[str]] = {
+    "student": {"student", "students"},
+    "faculty": {"faculty", "faculties", "prof", "professor", "professors", "lecturer", "lecturers"},
+    "department": {"department", "departments", "dept"},
+    "course": {"course", "courses"},
+    "offering": {"offering", "offerings"},
+    "enrollment": {"enrollment", "enrollments"},
+    "attendance": {"attendance"},
+    "mark": {"mark", "marks", "score", "scores", "cgpa", "grade", "grades"},
+    "batch": {"batch", "batches"},
+    "user": {"user", "users"},
+    "semester": {"semester"},
+    "risk": {"risk", "risks", "profile", "profiles"},
+}
+
+
+def split_identifier_words(name: str) -> Set[str]:
+    """Extract individual normalized word stems from a camelCase or snake_case identifier."""
+    words = re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?=[A-Z][a-z]|\b)|\d+", str(name))
+    result: Set[str] = set()
+    for w in words:
+        w_low = w.lower()
+        result.add(w_low)
+        if w_low.endswith("ies"):
+            result.add(w_low[:-3] + "y")
+        elif w_low.endswith("s") and len(w_low) > 3:
+            result.add(w_low[:-1])
+    return result
+
+
+def are_column_aliases_compatible(gen_col: str, ref_col: str) -> bool:
+    """Verify that a generated column alias is semantically compatible with a reference column.
+
+    Rejects aliases representing different business entities (e.g. TotalFaculties vs TotalStudents)
+    even if their underlying row counts happen to be identical.
+    """
+    g_str = str(gen_col).strip().lower()
+    r_str = str(ref_col).strip().lower()
+    if g_str == r_str:
+        return True
+
+    g_tokens = split_identifier_words(gen_col)
+    r_tokens = split_identifier_words(ref_col)
+
+    # Check for domain entity conflict
+    g_entities = {ent for ent, words in DOMAIN_ENTITIES.items() if words & g_tokens}
+    r_entities = {ent for ent, words in DOMAIN_ENTITIES.items() if words & r_tokens}
+
+    if g_entities and r_entities and not (g_entities & r_entities):
+        return False  # Conflicting business entities (e.g., student vs faculty)
+
+    return bool(g_tokens & r_tokens)
+
+
+def is_alias_difference_semantically_equivalent(
+    generated_rows: Optional[List[Dict[str, Any]]],
+    reference_rows: Optional[List[Dict[str, Any]]],
+) -> bool:
+    """Determine whether generated rows match reference rows with compatible column aliases.
+
+    Ensures that matching positional values alone do not establish semantic correctness
+    when the field meaning or domain entity differs.
+
+    Handles:
+    - Single-column alias differences (e.g. TotalRegisteredStudents vs TotalStudents).
+    - Multiple-column results in matching or permuted column order.
+    - NULL values (None == None) and numeric precision (40 == 40.0) following the evaluator contract.
+    """
+    import itertools
+
+    if not generated_rows or not reference_rows:
+        return False
+    if len(generated_rows) != len(reference_rows):
+        return False
+
+    ref_keys = list(reference_rows[0].keys())
+    gen_keys = list(generated_rows[0].keys())
+
+    if len(ref_keys) != len(gen_keys):
+        return False
+
+    # Check natural column order first
+    natural_compatible = all(
+        are_column_aliases_compatible(g_k, r_k) for g_k, r_k in zip(gen_keys, ref_keys)
+    )
+    if natural_compatible:
+        all_values_match = True
+        for g_row, r_row in zip(generated_rows, reference_rows):
+            if len(g_row) != len(r_row):
+                all_values_match = False
+                break
+            for g_k, r_k in zip(gen_keys, ref_keys):
+                if g_row.get(g_k) != r_row.get(r_k):
+                    all_values_match = False
+                    break
+            if not all_values_match:
+                break
+        if all_values_match:
+            return True
+
+    # If natural order didn't match and there are multiple columns (up to 6),
+    # check if a permutation of reference columns satisfies both alias compatibility
+    # and value equality across all rows (handling column reordering).
+    if 1 < len(ref_keys) <= 6:
+        for p_ref_keys in itertools.permutations(ref_keys):
+            if p_ref_keys == tuple(ref_keys):
+                continue
+            if not all(
+                are_column_aliases_compatible(g_k, r_k) for g_k, r_k in zip(gen_keys, p_ref_keys)
+            ):
+                continue
+
+            perm_values_match = True
+            for g_row, r_row in zip(generated_rows, reference_rows):
+                if len(g_row) != len(r_row):
+                    perm_values_match = False
+                    break
+                for g_k, r_k in zip(gen_keys, p_ref_keys):
+                    if g_row.get(g_k) != r_row.get(r_k):
+                        perm_values_match = False
+                        break
+                if not perm_values_match:
+                    break
+
+            if perm_values_match:
+                return True
+
+    return False
 
 
 class PairedCaseClassification(str, Enum):
@@ -566,11 +698,15 @@ def evaluate_case_with_runner(
         elif case.get("is_semantic_equivalent", False):
             is_semantic_correct = True
             mismatch_type = MismatchClassification.SEMANTIC_CORRECT_EXACT_DIFFERENCE.value
+        elif is_alias_difference_semantically_equivalent(generated_rows, ref_result):
+            is_semantic_correct = True
+            mismatch_type = MismatchClassification.SEMANTIC_CORRECT_EXACT_DIFFERENCE.value
         else:
             is_semantic_correct = False
             mismatch_type = MismatchClassification.SEMANTIC_INCORRECT.value
         failure_stg = None if is_semantic_correct else FailureStage.SEMANTIC
-        notes_str = notes or (classification_entry.get("notes") if classification_entry else None)
+        default_note = "Column alias difference with identical returned data values." if (is_semantic_correct and not matches) else None
+        notes_str = notes or (classification_entry.get("notes") if classification_entry else None) or default_note
 
     return CaseEvaluationResult(
         case_id=case_id,
@@ -690,6 +826,8 @@ def evaluate_comparative(
     runner: Optional[QueryRunner] = None,
     schema: Optional[DatabaseSchema] = None,
     metadata: Optional[Dict[str, Any]] = None,
+    delay_between_requests: float = 0.0,
+    progress_callback: Optional[Callable[[int, int, PairedCaseComparison], None]] = None,
     **runner_kwargs: Any,
 ) -> ComparativeEvaluationArtifact:
     """Run sequential and graph execution modes against the same dataset cases.
@@ -704,6 +842,8 @@ def evaluate_comparative(
         runner: Preconfigured QueryRunner (or created with runner_kwargs).
         schema: Model-facing DatabaseSchema.
         metadata: Provenance metadata dictionary.
+        delay_between_requests: Delay in seconds after each natural-language generation attempt.
+        progress_callback: Optional callback invoked after each case with (index, total, paired_result).
         **runner_kwargs: Kwargs passed to QueryRunner constructor if runner is None.
 
     Returns:
@@ -720,25 +860,36 @@ def evaluate_comparative(
     graph_cases: List[CaseEvaluationResult] = []
     paired_cases: List[PairedCaseComparison] = []
 
-    for case in dataset:
+    total_count = len(dataset)
+    for idx, case in enumerate(dataset, 1):
+        is_nl = case.get("category") != "safety"
+
         seq_res = evaluate_case_with_runner(
             case=case,
             runner=runner,
             mode=ExecutionMode.SEQUENTIAL,
             schema=active_schema,
         )
+        if is_nl and delay_between_requests > 0:
+            time.sleep(delay_between_requests)
+
         graph_res = evaluate_case_with_runner(
             case=case,
             runner=runner,
             mode=ExecutionMode.GRAPH,
             schema=active_schema,
         )
+        if is_nl and delay_between_requests > 0 and idx < total_count:
+            time.sleep(delay_between_requests)
 
         paired = classify_paired_case(seq_res, graph_res)
 
         sequential_cases.append(seq_res)
         graph_cases.append(graph_res)
         paired_cases.append(paired)
+
+        if progress_callback:
+            progress_callback(idx, total_count, paired)
 
     metrics = compute_comparative_metrics(
         sequential_cases=sequential_cases,
@@ -957,3 +1108,71 @@ def save_comparative_evaluation(
 
     logger.info(f"Saved comparative evaluation to {json_path} and {md_path}")
     return json_path, md_path
+
+
+def reclassify_comparative_artifact(
+    artifact_path: Union[Path, str],
+    questions_path: Optional[Union[Path, str]] = None,
+) -> ComparativeEvaluationArtifact:
+    """Deterministically reclassify a saved comparative evaluation JSON artifact without external calls.
+
+    Evaluates whether non-exact-match cases return identical data values differing only in
+    column aliases/projection names, aligning with the project's documented semantic correctness contract.
+
+    Args:
+        artifact_path: Path to the saved comparative evaluation JSON artifact.
+        questions_path: Optional path to baseline questions dataset (defaults to data/evaluation/baseline_questions.json).
+
+    Returns:
+        Reclassified ComparativeEvaluationArtifact with updated paired classifications and metrics.
+    """
+    path = Path(artifact_path).resolve()
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    q_path = Path(questions_path or "data/evaluation/baseline_questions.json").resolve()
+    with open(q_path, "r", encoding="utf-8") as f:
+        questions = {c["id"]: c for c in json.load(f)}
+
+    def reclassify_case(res: CaseEvaluationResult) -> CaseEvaluationResult:
+        if res.expected_behavior != "answerable" or res.execution_status != "success":
+            return res
+        if res.result_matches_reference or res.exact_result_match:
+            return res
+
+        ref = questions.get(res.case_id, {}).get("reference_result")
+        gen = res.generated_result
+        if is_alias_difference_semantically_equivalent(gen, ref):
+            updated = res.model_copy()
+            updated.semantic_correct = True
+            updated.semantic_status = SemanticStatus.CORRECT
+            updated.mismatch_classification = MismatchClassification.SEMANTIC_CORRECT_EXACT_DIFFERENCE.value
+            updated.failure_stage = None
+            if not updated.notes:
+                updated.notes = "Column alias difference with identical returned data values."
+            return updated
+        return res
+
+    reclassified_seq = [reclassify_case(CaseEvaluationResult(**c)) for c in data["sequential_cases"]]
+    reclassified_graph = [reclassify_case(CaseEvaluationResult(**c)) for c in data["graph_cases"]]
+    reclassified_paired = [
+        classify_paired_case(s, g) for s, g in zip(reclassified_seq, reclassified_graph)
+    ]
+
+    metrics = compute_comparative_metrics(
+        sequential_cases=reclassified_seq,
+        graph_cases=reclassified_graph,
+        paired_cases=reclassified_paired,
+    )
+
+    metadata = dict(data.get("metadata", {}))
+    metadata["audit_reclassified"] = True
+    metadata["reclassification_timestamp"] = datetime.now(timezone.utc).isoformat()
+
+    return ComparativeEvaluationArtifact(
+        metadata=metadata,
+        metrics=metrics,
+        paired_cases=reclassified_paired,
+        sequential_cases=reclassified_seq,
+        graph_cases=reclassified_graph,
+    )

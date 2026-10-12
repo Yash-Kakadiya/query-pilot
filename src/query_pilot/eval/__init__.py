@@ -8,6 +8,8 @@ from query_pilot.eval.comparison import (
     evaluate_comparative,
     generate_comparative_markdown_report,
     is_case_passing,
+    is_alias_difference_semantically_equivalent,
+    reclassify_comparative_artifact,
     save_comparative_evaluation,
 )
 from query_pilot.eval.evaluator import (
@@ -49,9 +51,11 @@ __all__ = [
     "ComparativeMetrics",
     "ComparativeEvaluationArtifact",
     "is_case_passing",
+    "is_alias_difference_semantically_equivalent",
     "classify_paired_case",
     "evaluate_case_with_runner",
     "evaluate_comparative",
+    "reclassify_comparative_artifact",
     "generate_comparative_markdown_report",
     "save_comparative_evaluation",
 ]

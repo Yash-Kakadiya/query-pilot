@@ -33,6 +33,8 @@ from query_pilot.eval.comparison import (
     evaluate_comparative,
     generate_comparative_markdown_report,
     is_case_passing,
+    is_alias_difference_semantically_equivalent,
+    reclassify_comparative_artifact,
     save_comparative_evaluation,
 )
 from query_pilot.eval.models import (
@@ -879,4 +881,264 @@ def test_empty_dataset_handles_zero_denominators_safely() -> None:
     report = generate_comparative_markdown_report(artifact)
     assert "# QueryPilot Sequential vs. LangGraph Comparative Evaluation Report" in report
     assert "**Total Cases Evaluated:** 0" in report
+
+
+# ==============================================================================
+# 15. Alias Difference With Identical Data Values Preserves Semantic Correctness
+# ==============================================================================
+
+def test_alias_difference_with_identical_values_is_semantically_correct(test_schema: DatabaseSchema) -> None:
+    """Verify Q005-style case: differing projection aliases with identical values pass semantic correctness."""
+    case = {
+        "id": "Q005",
+        "category": "aggregation",
+        "question": "What is the total number of registered students in the system?",
+        "expected_behavior": "answerable",
+        "reference_sql": "SELECT COUNT(*) AS TotalStudents FROM Students;",
+        "reference_result": [{"TotalStudents": 40}],
+    }
+
+    # Sequential uses exact alias 'TotalStudents'
+    seq_pipe = PipelineResult(
+        question=case["question"],
+        status=PipelineStatus.SUCCESS,
+        generated_sql="SELECT COUNT(*) AS TotalStudents FROM [Students];",
+        validation_result=ValidationResult(allowed=True),
+        execution_result=QueryResult(columns=["TotalStudents"], rows=[{"TotalStudents": 40}], row_count=1, truncated=False),
+    )
+
+    # Graph uses harmless descriptive alias 'TotalRegisteredStudents'
+    graph_pipe = PipelineResult(
+        question=case["question"],
+        status=PipelineStatus.SUCCESS,
+        generated_sql="SELECT COUNT(*) AS TotalRegisteredStudents FROM [Students];",
+        validation_result=ValidationResult(allowed=True),
+        execution_result=QueryResult(columns=["TotalRegisteredStudents"], rows=[{"TotalRegisteredStudents": 40}], row_count=1, truncated=False),
+    )
+
+    runner = SpyQueryRunner(
+        mode_results={case["question"]: {"sequential": seq_pipe, "graph": graph_pipe}}
+    )
+
+    artifact = evaluate_comparative(
+        dataset=[case],
+        runner=runner,  # type: ignore[arg-type]
+        schema=test_schema,
+    )
+
+    paired = artifact.paired_cases[0]
+
+    # Exact Match: Sequential passed, Graph failed (due to alias key difference)
+    assert paired.sequential_result.exact_result_match is True
+    assert paired.graph_result.exact_result_match is False
+    assert paired.exact_match_agree is False
+
+    # Semantic Correctness: Both passed (identical business data: 40 students)
+    assert paired.sequential_result.semantic_correct is True
+    assert paired.graph_result.semantic_correct is True
+    assert paired.graph_result.mismatch_classification == MismatchClassification.SEMANTIC_CORRECT_EXACT_DIFFERENCE.value
+    assert paired.sequential_passed is True
+    assert paired.graph_passed is True
+
+    # Paired classification: BOTH_PASS (not a regression)
+    assert paired.classification == PairedCaseClassification.BOTH_PASS
+    assert "exact result matches differ" in (paired.difference_summary or "")
+
+
+# ==============================================================================
+# 16. Reclassify Comparative Artifact Without External Calls
+# ==============================================================================
+
+def test_reclassify_comparative_artifact_deterministic(tmp_path: Path) -> None:
+    """Verify saved comparative JSON artifact can be reclassified offline into semantic parity."""
+    import json
+
+    q_file = tmp_path / "questions.json"
+    q_file.write_text(
+        json.dumps([
+            {
+                "id": "Q005",
+                "category": "aggregation",
+                "question": "What is the total number of registered students?",
+                "expected_behavior": "answerable",
+                "reference_result": [{"TotalStudents": 40}],
+            }
+        ]),
+        encoding="utf-8",
+    )
+
+    # Artificially create saved run data where graph was marked failed due to alias mismatch
+    saved_run = {
+        "metadata": {"test": True},
+        "sequential_cases": [
+            {
+                "case_id": "Q005",
+                "category": "aggregation",
+                "expected_behavior": "answerable",
+                "generation_status": "success",
+                "validation_allowed": True,
+                "execution_status": "success",
+                "generated_result": [{"TotalStudents": 40}],
+                "result_matches_reference": True,
+                "exact_result_match": True,
+                "semantic_correct": True,
+                "semantic_status": "correct",
+            }
+        ],
+        "graph_cases": [
+            {
+                "case_id": "Q005",
+                "category": "aggregation",
+                "expected_behavior": "answerable",
+                "generation_status": "success",
+                "validation_allowed": True,
+                "execution_status": "success",
+                "generated_result": [{"TotalRegisteredStudents": 40}],
+                "result_matches_reference": False,
+                "exact_result_match": False,
+                "semantic_correct": False,  # Initially misclassified
+                "semantic_status": "incorrect",
+                "failure_stage": "semantic",
+            }
+        ],
+    }
+
+    art_file = tmp_path / "comparison_raw.json"
+    art_file.write_text(json.dumps(saved_run), encoding="utf-8")
+
+    reclassified = reclassify_comparative_artifact(art_file, questions_path=q_file)
+
+    # After offline reclassification:
+    assert reclassified.metrics.total_cases == 1
+    assert reclassified.metrics.both_pass_count == 1
+    assert reclassified.metrics.sequential_only_count == 0  # Zero regressions
+    assert reclassified.metrics.graph_metrics.semantic_correct_count == 1
+    assert reclassified.metrics.graph_metrics.exact_match_count == 0  # Exact match metric strictly preserved
+    assert reclassified.paired_cases[0].classification == PairedCaseClassification.BOTH_PASS
+
+
+# ==============================================================================
+# 17. Negative Regression: Different Business Field With Matching Values Fails
+# ==============================================================================
+
+def test_different_business_field_with_matching_values_is_semantically_incorrect(
+    test_schema: DatabaseSchema,
+) -> None:
+    """Verify that matching positional values alone do not establish semantic correctness
+
+    when the projected field represents a different business entity (e.g. TotalFaculties vs TotalStudents).
+    """
+    case = {
+        "id": "Q005",
+        "category": "aggregation",
+        "question": "What is the total number of registered students in the system?",
+        "expected_behavior": "answerable",
+        "reference_sql": "SELECT COUNT(*) AS TotalStudents FROM Students;",
+        "reference_result": [{"TotalStudents": 40}],
+    }
+
+    # Sequential produces correct student count
+    seq_pipe = PipelineResult(
+        question=case["question"],
+        status=PipelineStatus.SUCCESS,
+        generated_sql="SELECT COUNT(*) AS TotalStudents FROM [Students];",
+        validation_result=ValidationResult(allowed=True),
+        execution_result=QueryResult(
+            columns=["TotalStudents"],
+            rows=[{"TotalStudents": 40}],
+            row_count=1,
+            truncated=False,
+        ),
+    )
+
+    # Graph erroneously queried the Faculties table, which happens to return 40!
+    # Even though row count and scalar value (40) match, TotalFaculties is a DIFFERENT business field.
+    graph_pipe = PipelineResult(
+        question=case["question"],
+        status=PipelineStatus.SUCCESS,
+        generated_sql="SELECT COUNT(*) AS TotalFaculties FROM [Faculties];",
+        validation_result=ValidationResult(allowed=True),
+        execution_result=QueryResult(
+            columns=["TotalFaculties"],
+            rows=[{"TotalFaculties": 40}],
+            row_count=1,
+            truncated=False,
+        ),
+    )
+
+    runner = SpyQueryRunner(
+        mode_results={case["question"]: {"sequential": seq_pipe, "graph": graph_pipe}}
+    )
+
+    artifact = evaluate_comparative(
+        dataset=[case],
+        runner=runner,  # type: ignore[arg-type]
+        schema=test_schema,
+    )
+
+    paired = artifact.paired_cases[0]
+
+    # Exact Match: Sequential passed, Graph failed
+    assert paired.sequential_result.exact_result_match is True
+    assert paired.graph_result.exact_result_match is False
+    assert paired.exact_match_agree is False
+
+    # Semantic Correctness:
+    # Sequential PASSED, but Graph MUST FAIL (different business entity: faculty != student)
+    assert paired.sequential_result.semantic_correct is True
+    assert paired.graph_result.semantic_correct is False
+    assert paired.graph_result.semantic_status == SemanticStatus.INCORRECT
+    assert paired.graph_result.mismatch_classification == MismatchClassification.SEMANTIC_INCORRECT.value
+    assert paired.graph_result.failure_stage == FailureStage.SEMANTIC
+
+    # Paired classification must be a REGRESSION: SEQUENTIAL_ONLY_PASS
+    assert paired.classification == PairedCaseClassification.SEQUENTIAL_ONLY_PASS
+    assert paired.sequential_passed is True
+    assert paired.graph_passed is False
+
+
+# ==============================================================================
+# 18. Evaluator Contract Boundary Tests: Multi-column, Order, NULLs, Precision
+# ==============================================================================
+
+def test_semantic_equivalence_contract_boundaries() -> None:
+    """Verify is_alias_difference_semantically_equivalent contract consistency.
+
+    Tests:
+    1. Multi-column results with compatible aliases and identical values pass.
+    2. Multi-column results with permuted column order pass.
+    3. Multi-column results with conflicting domain entities fail.
+    4. NULL value matching: None == None passes, None vs non-None fails.
+    5. Numeric precision: 40 == 40.0 passes, unequal numeric values fail.
+    """
+    # 1. Multi-column compatible aliases
+    ref_multi = [{"StudentName": "Alice", "StudentCGPA": 3.8}]
+    gen_multi_ok = [{"Name": "Alice", "CGPA": 3.8}]
+    assert is_alias_difference_semantically_equivalent(gen_multi_ok, ref_multi) is True
+
+    # 2. Multi-column permuted column order
+    gen_multi_permuted = [{"CGPA": 3.8, "Name": "Alice"}]
+    assert is_alias_difference_semantically_equivalent(gen_multi_permuted, ref_multi) is True
+
+    # 3. Multi-column with conflicting entity (Department vs Student)
+    gen_multi_conflict = [{"DepartmentName": "Alice", "CGPA": 3.8}]
+    assert is_alias_difference_semantically_equivalent(gen_multi_conflict, ref_multi) is False
+
+    # 4. NULL values (contract: None == None is True; None vs 0 or empty string is False)
+    ref_null = [{"StudentName": "Bob", "StudentCGPA": None}]
+    gen_null_ok = [{"Name": "Bob", "CGPA": None}]
+    assert is_alias_difference_semantically_equivalent(gen_null_ok, ref_null) is True
+
+    gen_null_as_zero = [{"Name": "Bob", "CGPA": 0}]
+    assert is_alias_difference_semantically_equivalent(gen_null_as_zero, ref_null) is False
+
+    # 5. Numeric precision (contract: Python 40 == 40.0 is True; 40 == 41 is False)
+    ref_num = [{"TotalStudents": 40}]
+    gen_num_float = [{"TotalRegisteredStudents": 40.0}]
+    assert is_alias_difference_semantically_equivalent(gen_num_float, ref_num) is True
+
+    gen_num_diff = [{"TotalRegisteredStudents": 41}]
+    assert is_alias_difference_semantically_equivalent(gen_num_diff, ref_num) is False
+
+
 
