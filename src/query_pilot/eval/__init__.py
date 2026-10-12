@@ -43,6 +43,12 @@ from query_pilot.eval.report import (
     generate_markdown_report,
     load_evaluation_artifact,
 )
+from query_pilot.eval.semantic import (
+    SemanticComparisonResult,
+    SemanticOutcome,
+    compare_results_semantically,
+    is_order_constrained,
+)
 
 __all__ = [
     "CaseEvaluationResult",
@@ -80,5 +86,9 @@ __all__ = [
     "run_recovery_evaluation",
     "generate_recovery_markdown_report",
     "save_recovery_evaluation",
+    "SemanticOutcome",
+    "SemanticComparisonResult",
+    "compare_results_semantically",
+    "is_order_constrained",
 ]
 

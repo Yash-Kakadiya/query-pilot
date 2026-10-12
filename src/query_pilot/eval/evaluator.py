@@ -22,6 +22,7 @@ from query_pilot.sql.generation import (
     SQLGenerationStatus,
     SQLGenerator,
 )
+from query_pilot.eval.semantic import SemanticOutcome, compare_results_semantically
 from query_pilot.sql.validator import validate_sql
 
 logger = logging.getLogger(__name__)
@@ -449,27 +450,44 @@ def evaluate_case(
 
     generated_rows = exec_res.rows
     ref_result = case.get("reference_result")
-    matches = compare_results(generated_rows, ref_result)
+    ref_sql = case.get("reference_sql")
+
+    comp_res = compare_results_semantically(
+        generated_rows=generated_rows,
+        reference_rows=ref_result,
+        reference_sql=ref_sql,
+        question=question,
+    )
 
     classification_entry = BASELINE_CLASSIFICATIONS.get(case_id)
-    if matches:
+    historical_notes = classification_entry.get("notes") if classification_entry else None
+
+    if comp_res.outcome == SemanticOutcome.EXACT_MATCH:
         is_semantic_correct = True
+        matches = True
         mismatch_type = MismatchClassification.EXACT_MATCH.value
-    elif (
-        classification_entry
-        and classification_entry.get("mismatch") == MismatchClassification.SEMANTIC_CORRECT_EXACT_DIFFERENCE
-        and ref_result is not None
-        and len(generated_rows) == len(ref_result)
-        and len(generated_rows) > 0
-    ):
+        sem_status = SemanticStatus.CORRECT
+        fail_stage = None
+    elif comp_res.outcome == SemanticOutcome.EQUIVALENT_MATCH:
         is_semantic_correct = True
+        matches = False
         mismatch_type = MismatchClassification.SEMANTIC_CORRECT_EXACT_DIFFERENCE.value
-    elif case.get("is_semantic_equivalent", False):
-        is_semantic_correct = True
-        mismatch_type = MismatchClassification.SEMANTIC_CORRECT_EXACT_DIFFERENCE.value
-    else:
+        sem_status = SemanticStatus.CORRECT
+        fail_stage = None
+    elif comp_res.outcome == SemanticOutcome.MISMATCH:
         is_semantic_correct = False
+        matches = False
         mismatch_type = MismatchClassification.SEMANTIC_INCORRECT.value
+        sem_status = SemanticStatus.INCORRECT
+        fail_stage = FailureStage.SEMANTIC
+    else:  # INCONCLUSIVE
+        is_semantic_correct = None
+        matches = False
+        mismatch_type = MismatchClassification.INCONCLUSIVE.value
+        sem_status = SemanticStatus.INCONCLUSIVE
+        fail_stage = FailureStage.SEMANTIC
+
+    notes_str = notes or historical_notes or comp_res.reason
 
     return CaseEvaluationResult(
         case_id=case_id,
@@ -487,14 +505,14 @@ def evaluate_case(
         generated_result=generated_rows,
         result_matches_reference=matches,
         exact_result_match=matches,
-        semantic_status=SemanticStatus.CORRECT if is_semantic_correct else SemanticStatus.INCORRECT,
+        semantic_status=sem_status,
         semantic_correct=is_semantic_correct,
         mismatch_classification=mismatch_type,
         structurally_valid=True,
         validator_accepted=True,
         executed=True,
-        failure_stage=None if is_semantic_correct else FailureStage.SEMANTIC,
-        notes=notes or (classification_entry.get("notes") if classification_entry else None),
+        failure_stage=fail_stage,
+        notes=notes_str,
     )
 
 

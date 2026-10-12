@@ -34,6 +34,10 @@ from query_pilot.eval.models import (
 )
 from query_pilot.eval.report import format_rate
 from query_pilot.pipeline import PipelineResult, PipelineStatus
+from query_pilot.eval.semantic import (
+    SemanticOutcome,
+    compare_results_semantically,
+)
 from query_pilot.runner import ExecutionMode, QueryRunner
 from query_pilot.sql.validator import validate_sql
 
@@ -47,6 +51,12 @@ PROTECTED_EVALUATION_FILES: Set[str] = {
     "baseline_report_1_14.md",
     "baseline_report.md",
     "reliability_report_1_14.md",
+    "comparison_1_22.json",
+    "comparison_1_22_report.md",
+    "comparison_1_22_audited.json",
+    "comparison_1_22_audited_report.md",
+    "recovery_evaluation.json",
+    "recovery_evaluation_report.md",
 }
 
 # Domain entity word mappings for GradeSense_Local to detect entity mismatch in projections
@@ -678,35 +688,46 @@ def evaluate_case_with_runner(
         matches = None
         is_semantic_correct = None
         mismatch_type = None
+        sem_status = SemanticStatus.NOT_APPLICABLE
         failure_stg = None
         notes_str = (notes or "") + " [Missing reference result in evaluation dataset]"
     else:
-        matches = compare_results(generated_rows, ref_result)
+        ref_sql = case.get("reference_sql")
+        comp_res = compare_results_semantically(
+            generated_rows=generated_rows,
+            reference_rows=ref_result,
+            reference_sql=ref_sql,
+            question=question,
+        )
         classification_entry = BASELINE_CLASSIFICATIONS.get(case_id)
-        if matches:
+        historical_notes = classification_entry.get("notes") if classification_entry else None
+
+        if comp_res.outcome == SemanticOutcome.EXACT_MATCH:
+            matches = True
             is_semantic_correct = True
             mismatch_type = MismatchClassification.EXACT_MATCH.value
-        elif (
-            classification_entry
-            and classification_entry.get("mismatch") == MismatchClassification.SEMANTIC_CORRECT_EXACT_DIFFERENCE
-            and ref_result is not None
-            and len(generated_rows) == len(ref_result)
-            and len(generated_rows) > 0
-        ):
+            sem_status = SemanticStatus.CORRECT
+            failure_stg = None
+        elif comp_res.outcome == SemanticOutcome.EQUIVALENT_MATCH:
+            matches = False
             is_semantic_correct = True
             mismatch_type = MismatchClassification.SEMANTIC_CORRECT_EXACT_DIFFERENCE.value
-        elif case.get("is_semantic_equivalent", False):
-            is_semantic_correct = True
-            mismatch_type = MismatchClassification.SEMANTIC_CORRECT_EXACT_DIFFERENCE.value
-        elif is_alias_difference_semantically_equivalent(generated_rows, ref_result):
-            is_semantic_correct = True
-            mismatch_type = MismatchClassification.SEMANTIC_CORRECT_EXACT_DIFFERENCE.value
-        else:
+            sem_status = SemanticStatus.CORRECT
+            failure_stg = None
+        elif comp_res.outcome == SemanticOutcome.MISMATCH:
+            matches = False
             is_semantic_correct = False
             mismatch_type = MismatchClassification.SEMANTIC_INCORRECT.value
-        failure_stg = None if is_semantic_correct else FailureStage.SEMANTIC
-        default_note = "Column alias difference with identical returned data values." if (is_semantic_correct and not matches) else None
-        notes_str = notes or (classification_entry.get("notes") if classification_entry else None) or default_note
+            sem_status = SemanticStatus.INCORRECT
+            failure_stg = FailureStage.SEMANTIC
+        else:  # INCONCLUSIVE
+            matches = False
+            is_semantic_correct = None
+            mismatch_type = MismatchClassification.INCONCLUSIVE.value
+            sem_status = SemanticStatus.INCONCLUSIVE
+            failure_stg = FailureStage.SEMANTIC
+
+        notes_str = notes or historical_notes or comp_res.reason
 
     return CaseEvaluationResult(
         case_id=case_id,
@@ -724,7 +745,7 @@ def evaluate_case_with_runner(
         generated_result=generated_rows,
         result_matches_reference=matches,
         exact_result_match=matches,
-        semantic_status=SemanticStatus.CORRECT if is_semantic_correct else (SemanticStatus.NOT_APPLICABLE if is_semantic_correct is None else SemanticStatus.INCORRECT),
+        semantic_status=sem_status,
         semantic_correct=is_semantic_correct,
         mismatch_classification=mismatch_type,
         structurally_valid=True,
@@ -1137,21 +1158,55 @@ def reclassify_comparative_artifact(
     def reclassify_case(res: CaseEvaluationResult) -> CaseEvaluationResult:
         if res.expected_behavior != "answerable" or res.execution_status != "success":
             return res
-        if res.result_matches_reference or res.exact_result_match:
-            return res
 
-        ref = questions.get(res.case_id, {}).get("reference_result")
+        q_entry = questions.get(res.case_id, {})
+        ref = q_entry.get("reference_result")
+        ref_sql = q_entry.get("reference_sql")
+        q_text = res.question or q_entry.get("question")
         gen = res.generated_result
-        if is_alias_difference_semantically_equivalent(gen, ref):
-            updated = res.model_copy()
+
+        comp_res = compare_results_semantically(
+            generated_rows=gen,
+            reference_rows=ref,
+            reference_sql=ref_sql,
+            question=q_text,
+        )
+
+        updated = res.model_copy()
+        if comp_res.outcome == SemanticOutcome.EXACT_MATCH:
+            updated.exact_result_match = True
+            updated.result_matches_reference = True
+            updated.semantic_correct = True
+            updated.semantic_status = SemanticStatus.CORRECT
+            updated.mismatch_classification = MismatchClassification.EXACT_MATCH.value
+            updated.failure_stage = None
+        elif comp_res.outcome == SemanticOutcome.EQUIVALENT_MATCH:
+            updated.exact_result_match = False
+            updated.result_matches_reference = False
             updated.semantic_correct = True
             updated.semantic_status = SemanticStatus.CORRECT
             updated.mismatch_classification = MismatchClassification.SEMANTIC_CORRECT_EXACT_DIFFERENCE.value
             updated.failure_stage = None
-            if not updated.notes:
-                updated.notes = "Column alias difference with identical returned data values."
-            return updated
-        return res
+            if not updated.notes or "mismatch" in updated.notes.lower():
+                updated.notes = comp_res.reason
+        elif comp_res.outcome == SemanticOutcome.MISMATCH:
+            updated.exact_result_match = False
+            updated.result_matches_reference = False
+            updated.semantic_correct = False
+            updated.semantic_status = SemanticStatus.INCORRECT
+            updated.mismatch_classification = MismatchClassification.SEMANTIC_INCORRECT.value
+            updated.failure_stage = FailureStage.SEMANTIC
+            updated.notes = comp_res.reason
+        else:  # INCONCLUSIVE
+            updated.exact_result_match = False
+            updated.result_matches_reference = False
+            updated.semantic_correct = None
+            updated.semantic_status = SemanticStatus.INCONCLUSIVE
+            updated.mismatch_classification = MismatchClassification.INCONCLUSIVE.value
+            updated.failure_stage = FailureStage.SEMANTIC
+            updated.notes = comp_res.reason
+
+        return updated
 
     reclassified_seq = [reclassify_case(CaseEvaluationResult(**c)) for c in data["sequential_cases"]]
     reclassified_graph = [reclassify_case(CaseEvaluationResult(**c)) for c in data["graph_cases"]]

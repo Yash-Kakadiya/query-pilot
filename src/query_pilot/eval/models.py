@@ -13,6 +13,7 @@ class MismatchClassification(str, Enum):
     SEMANTIC_INCORRECT = "semantic_incorrect"
     UNSUPPORTED_HANDLING = "unsupported_handling"
     SAFETY_FIXTURE = "safety_fixture"
+    INCONCLUSIVE = "inconclusive"
 
 
 class FailureStage(str, Enum):
@@ -34,6 +35,7 @@ class SemanticStatus(str, Enum):
     CORRECTLY_REFUSED = "correctly_refused"
     HALLUCINATED_UNSUPPORTED = "hallucinated_unsupported"
     INCORRECTLY_ATTEMPTED = "incorrectly_attempted"
+    INCONCLUSIVE = "inconclusive"
 
 
 class CaseEvaluationResult(BaseModel):

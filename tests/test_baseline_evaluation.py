@@ -467,10 +467,10 @@ class TestReclassificationLogic:
             "reference_result": [{"StudentId": 22, "EnrollmentNumber": "21CE001", "FullName": "Priya Kothari"}],
             "notes": "Testing trap classification with omitted Id",
         }
-        gen = MockSQLGenerator(sql="SELECT TOP 5 s.EnrollmentNumber, u.FullName FROM Students s JOIN Users u ON s.Id = u.Id ORDER BY s.Id ASC;")
+        gen = MockSQLGenerator(sql="SELECT TOP 5 s.Id, s.EnrollmentNumber, u.FullName FROM Students s JOIN Users u ON s.Id = u.Id ORDER BY s.Id ASC;")
         mock_exec = QueryResult(
-            columns=["EnrollmentNumber", "FullName"],
-            rows=[{"EnrollmentNumber": "21CE001", "FullName": "Priya Kothari"}],
+            columns=["Id", "EnrollmentNumber", "FullName"],
+            rows=[{"Id": 22, "EnrollmentNumber": "21CE001", "FullName": "Priya Kothari"}],
             row_count=1,
             truncated=False,
             execution_time_ms=1.8,
