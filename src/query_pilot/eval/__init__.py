@@ -23,6 +23,18 @@ from query_pilot.eval.models import (
     FailureStage,
     SemanticStatus,
 )
+from query_pilot.eval.recovery import (
+    RecoveryEvaluationArtifact,
+    RecoveryEvaluationMetrics,
+    RecoveryScenarioCategory,
+    ScenarioDefinition,
+    ScenarioEvaluationResult,
+    build_recovery_scenarios,
+    execute_scenario,
+    generate_recovery_markdown_report,
+    run_recovery_evaluation,
+    save_recovery_evaluation,
+)
 from query_pilot.eval.report import (
     EvaluationReportData,
     analyze_failures,
@@ -58,5 +70,15 @@ __all__ = [
     "reclassify_comparative_artifact",
     "generate_comparative_markdown_report",
     "save_comparative_evaluation",
+    "RecoveryScenarioCategory",
+    "ScenarioDefinition",
+    "ScenarioEvaluationResult",
+    "RecoveryEvaluationMetrics",
+    "RecoveryEvaluationArtifact",
+    "build_recovery_scenarios",
+    "execute_scenario",
+    "run_recovery_evaluation",
+    "generate_recovery_markdown_report",
+    "save_recovery_evaluation",
 ]
 
