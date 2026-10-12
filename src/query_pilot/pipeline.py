@@ -35,12 +35,20 @@ from query_pilot.db.introspection import DatabaseIntrospector
 from query_pilot.db.models import DatabaseSchema
 from query_pilot.observability import (
     ErrorCategory,
+    LLMUsageMetadata,
     PipelineObserver,
+    PipelineRunTelemetry,
     PipelineStage,
     StageStatus,
     classify_error,
 )
+from query_pilot.presentation.synthesizer import (
+    AnswerSynthesisService,
+    GroundedAnswer,
+    GroundedAnswerStatus,
+)
 from query_pilot.sql.generation import (
+
     SQLGenerationError,
     SQLGenerationRequest,
     SQLGenerationResponse,
@@ -120,6 +128,14 @@ class PipelineResult(BaseModel):
         default=None,
         description="Deterministic presentation result.",
     )
+    grounded_answer: Optional[Any] = Field(
+        default=None,
+        description="Structured natural-language answer if synthesized or templated.",
+    )
+    telemetry: Optional[Any] = Field(
+        default=None,
+        description="Request-level LLM token usage and latency telemetry.",
+    )
 
     @property
     def is_success(self) -> bool:
@@ -149,8 +165,15 @@ class PipelineResult(BaseModel):
         if self.duration_ms is not None:
             d["duration_ms"] = self.duration_ms
         if self.stage_durations:
-            d["stage_durations"] = self.stage_durations
+            d["stage_durations"] = dict(self.stage_durations)
+        if self.presentation is not None:
+            d["presentation"] = self.presentation.to_dict() if hasattr(self.presentation, "to_dict") else self.presentation
+        if self.grounded_answer is not None:
+            d["grounded_answer"] = self.grounded_answer.model_dump() if hasattr(self.grounded_answer, "model_dump") else self.grounded_answer
+        if self.telemetry is not None:
+            d["telemetry"] = self.telemetry.to_dict() if hasattr(self.telemetry, "to_dict") else self.telemetry
         return d
+
 
     def present(self) -> Any:
         """Convert this pipeline result into a deterministic presentation representation."""
@@ -182,6 +205,7 @@ class QueryPipeline:
         additional_instructions: Optional[str] = None,
         enable_observability: bool = True,
         observer_factory: Optional[Callable[..., PipelineObserver]] = None,
+        synthesizer: Optional[AnswerSynthesisService] = None,
     ):
         """Initialize the pipeline with configurable components and dependency injection.
 
@@ -196,6 +220,7 @@ class QueryPipeline:
             additional_instructions: Optional context passed to generator prompt.
             enable_observability: Whether structured lifecycle observability is enabled.
             observer_factory: Optional custom factory for creating PipelineObserver instances.
+            synthesizer: Optional AnswerSynthesisService for answer formatting.
         """
         self._generator = generator
         self._engine = engine
@@ -207,6 +232,7 @@ class QueryPipeline:
         self.additional_instructions = additional_instructions
         self.enable_observability = enable_observability
         self.observer_factory = observer_factory
+        self._synthesizer = synthesizer
 
     @property
     def generator(self) -> SQLGenerator:
@@ -217,11 +243,19 @@ class QueryPipeline:
         return self._generator
 
     @property
+    def synthesizer(self) -> AnswerSynthesisService:
+        """Lazily initialize default answer synthesizer if none was injected."""
+        if self._synthesizer is None:
+            self._synthesizer = AnswerSynthesisService(enabled=False)
+        return self._synthesizer
+
+    @property
     def engine(self) -> Engine:
         """Lazily initialize default database engine if none was injected."""
         if self._engine is None:
             self._engine = create_db_engine()
         return self._engine
+
 
     def get_schema(self) -> DatabaseSchema:
         """Obtain model-facing schema, using injected schema or introspecting from engine."""
@@ -259,12 +293,14 @@ class QueryPipeline:
             else PipelineObserver(request_id=request_id, enabled=self.enable_observability)
         )
         observer.start_pipeline()
+        telemetry = PipelineRunTelemetry(request_id=request_id or observer.request_id)
 
         def _finalize(
             pipe_res: PipelineResult,
             terminal_status: str,
             stage_status: Optional[str] = None,
         ) -> PipelineResult:
+            pipe_res.telemetry = telemetry
             # Stage: Result presentation
             observer.start_stage(PipelineStage.RESULT_PRESENTATION)
             try:
@@ -325,7 +361,13 @@ class QueryPipeline:
                 instructions=self.additional_instructions,
             )
             gen_resp = self.generator.generate(request)
+            if getattr(gen_resp, "usage_metadata", None):
+                telemetry.add_invocation(gen_resp.usage_metadata)
         except SQLGenerationError as exc:
+            usage = getattr(exc, "usage_metadata", None) or getattr(self.generator, "last_usage", None)
+            if usage is not None and isinstance(usage, LLMUsageMetadata):
+                telemetry.add_invocation(usage)
+
             err_code, err_type = classify_error(exc, PipelineStage.SQL_GENERATION)
             observer.end_stage(
                 PipelineStage.SQL_GENERATION,
@@ -344,6 +386,10 @@ class QueryPipeline:
                 StageStatus.FAILED,
             )
         except Exception as exc:
+            usage = getattr(self.generator, "last_usage", None)
+            if usage is not None and isinstance(usage, LLMUsageMetadata):
+                telemetry.add_invocation(usage)
+
             err_code, err_type = classify_error(exc, PipelineStage.SQL_GENERATION)
             observer.end_stage(
                 PipelineStage.SQL_GENERATION,
@@ -510,7 +556,26 @@ class QueryPipeline:
                 StageStatus.FAILED,
             )
 
-        # Stage E: Structured pipeline result
+        # Stage E: Grounded Answer Synthesis (only on successful execution)
+        grounded_ans = None
+        try:
+            grounded_ans = self.synthesizer.synthesize(
+                question=question,
+                query_result=exec_result,
+                request_id=observer.request_id,
+            )
+            if getattr(grounded_ans, "usage_metadata", None):
+                telemetry.add_invocation(grounded_ans.usage_metadata)
+        except Exception as synth_exc:
+            logger.warning("Answer synthesis encountered unexpected error.")
+            grounded_ans = GroundedAnswer(
+                text="Query executed successfully. Refer to the data table for results.",
+                status=GroundedAnswerStatus.SYNTHESIS_FAILED,
+                is_mechanically_verified=False,
+                verification_notes=["Answer synthesis provider call failed."],
+            )
+
+        # Stage F: Structured pipeline result
         return _finalize(
             PipelineResult(
                 question=question,
@@ -521,10 +586,12 @@ class QueryPipeline:
                 generation_assumptions=assumptions,
                 validation_result=val_result,
                 execution_result=exec_result,
+                grounded_answer=grounded_ans,
             ),
             PipelineStatus.SUCCESS.value,
             StageStatus.SUCCEEDED,
         )
+
 
 
 def run_question(

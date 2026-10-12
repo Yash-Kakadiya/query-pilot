@@ -321,3 +321,155 @@ class PipelineObserver:
             pass
 
         return duration_ms
+
+
+# ==============================================================================
+# Model Invocation & Token Usage Telemetry (Task 1.28)
+# ==============================================================================
+
+class LLMUsageMetadata(BaseModel):
+    """Structured telemetry metadata for an individual LLM invocation.
+
+    Invariants:
+    - prompt_tokens, completion_tokens, and total_tokens are Optional[int].
+      Missing values remain None and are never converted to zero.
+    - estimated_cost_usd is strictly None in this task (unverified pricing).
+    - Contains strictly telemetry: zero prompts, SQL, schema text, rows, or secrets.
+    """
+
+    stage: str = Field(..., description="Stage name: 'sql_generation' or 'answer_synthesis'.")
+    model_name: str = Field(..., description="Configured model identifier.")
+    model_version: Optional[str] = Field(default=None, description="Provider-reported model version string.")
+    prompt_tokens: Optional[int] = Field(default=None, description="Input/prompt token count.")
+    completion_tokens: Optional[int] = Field(default=None, description="Candidate/output token count.")
+    total_tokens: Optional[int] = Field(default=None, description="Total token count reported by provider.")
+    latency_ms: float = Field(..., description="Monotonic elapsed time in milliseconds.")
+    estimated_cost_usd: Optional[float] = Field(default=None, description="Estimated cost in USD (strictly None if unverified).")
+
+
+class PipelineRunTelemetry(BaseModel):
+    """Aggregate telemetry container for an end-to-end pipeline run.
+
+    SECURITY GUARANTEE:
+    Explicitly contains zero natural-language questions, SQL queries, database rows,
+    table schemas, or authentication secrets.
+    """
+
+    request_id: Optional[str] = Field(default=None, description="Correlated request identifier.")
+    invocations: List[LLMUsageMetadata] = Field(default_factory=list, description="Per-invocation usage records.")
+    total_prompt_tokens: Optional[int] = Field(default=None, description="Sum of prompt tokens if all invocations are known.")
+    total_completion_tokens: Optional[int] = Field(default=None, description="Sum of completion tokens if all invocations are known.")
+    total_tokens: Optional[int] = Field(default=None, description="Sum of total tokens if all invocations are known.")
+    total_llm_latency_ms: float = Field(default=0.0, description="Sum of all monotonic LLM call latencies.")
+    total_estimated_cost_usd: Optional[float] = Field(default=None, description="Total estimated cost (None if any invocation is None or unverified).")
+
+    def add_invocation(self, usage: Optional[LLMUsageMetadata]) -> None:
+        """Add an invocation record and update aggregates with strict null-safety."""
+        if usage is None:
+            return
+        self.invocations.append(usage)
+        self._recompute_aggregates()
+
+    def _recompute_aggregates(self) -> None:
+        """Recompute aggregate token counts and latency."""
+        self.total_llm_latency_ms = round(sum(inv.latency_ms for inv in self.invocations), 2)
+
+        # Prompt tokens: sum only if all invocations have known non-None integer counts
+        if self.invocations and all(inv.prompt_tokens is not None for inv in self.invocations):
+            self.total_prompt_tokens = sum(inv.prompt_tokens for inv in self.invocations if inv.prompt_tokens is not None)
+        else:
+            self.total_prompt_tokens = None
+
+        # Completion tokens: sum only if all invocations have known non-None integer counts
+        if self.invocations and all(inv.completion_tokens is not None for inv in self.invocations):
+            self.total_completion_tokens = sum(inv.completion_tokens for inv in self.invocations if inv.completion_tokens is not None)
+        else:
+            self.total_completion_tokens = None
+
+        # Total tokens: sum only if all invocations have known non-None integer counts
+        if self.invocations and all(inv.total_tokens is not None for inv in self.invocations):
+            self.total_tokens = sum(inv.total_tokens for inv in self.invocations if inv.total_tokens is not None)
+        else:
+            self.total_tokens = None
+
+        # Cost remains strictly None in Task 1.28
+        self.total_estimated_cost_usd = None
+
+    @property
+    def total_latency_ms(self) -> float:
+        """Alias for total_llm_latency_ms."""
+        return self.total_llm_latency_ms
+
+    @property
+    def estimated_cost_usd(self) -> Optional[float]:
+        """Alias for total_estimated_cost_usd."""
+        return self.total_estimated_cost_usd
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert telemetry to a clean dictionary guaranteed free of prompts, queries, or rows."""
+        data = self.model_dump()
+        data["total_latency_ms"] = self.total_llm_latency_ms
+        data["estimated_cost_usd"] = self.total_estimated_cost_usd
+        return data
+
+
+def extract_llm_usage(
+    response: Any,
+    stage: str = "sql_generation",
+    model_name: str = "gemini-2.0-flash",
+    latency_ms: float = 0.0,
+) -> LLMUsageMetadata:
+    """Safely extract token usage and metadata from provider response.
+
+    Fails open on missing, partial, or malformed usage metadata without raising exceptions.
+    Never converts unknown token counts to zero.
+    """
+    prompt_tokens: Optional[int] = None
+    completion_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+    model_version: Optional[str] = None
+
+    if response is not None:
+        mv = getattr(response, "model_version", None)
+        if isinstance(mv, str):
+            model_version = mv
+        usage = getattr(response, "usage_metadata", None)
+        if usage is not None:
+            # Handle object attributes (e.g. google.genai types)
+            if hasattr(usage, "prompt_token_count"):
+                pt = getattr(usage, "prompt_token_count", None)
+                if isinstance(pt, int) and pt >= 0:
+                    prompt_tokens = pt
+            elif isinstance(usage, dict):
+                pt = usage.get("prompt_token_count")
+                if isinstance(pt, int) and pt >= 0:
+                    prompt_tokens = pt
+
+            if hasattr(usage, "candidates_token_count"):
+                ct = getattr(usage, "candidates_token_count", None)
+                if isinstance(ct, int) and ct >= 0:
+                    completion_tokens = ct
+            elif isinstance(usage, dict):
+                ct = usage.get("candidates_token_count")
+                if isinstance(ct, int) and ct >= 0:
+                    completion_tokens = ct
+
+            if hasattr(usage, "total_token_count"):
+                tt = getattr(usage, "total_token_count", None)
+                if isinstance(tt, int) and tt >= 0:
+                    total_tokens = tt
+            elif isinstance(usage, dict):
+                tt = usage.get("total_token_count")
+                if isinstance(tt, int) and tt >= 0:
+                    total_tokens = tt
+
+    return LLMUsageMetadata(
+        stage=stage,
+        model_name=model_name,
+        model_version=model_version,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=total_tokens,
+        latency_ms=round(latency_ms, 2),
+        estimated_cost_usd=None,
+    )

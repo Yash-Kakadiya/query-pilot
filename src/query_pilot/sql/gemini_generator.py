@@ -5,12 +5,15 @@ the SQLGenerationResponse model. Strictly generates candidate SQL without execut
 """
 
 import logging
-from typing import Optional
+import time
+from typing import List, Optional
 
 from google import genai
 from google.genai import types
+from pydantic import BaseModel, Field
 
 from query_pilot.config import Settings, get_settings
+from query_pilot.observability import LLMUsageMetadata, extract_llm_usage
 from query_pilot.sql.generation import (
     ConfigurationError,
     EmptySQLError,
@@ -24,6 +27,18 @@ from query_pilot.sql.generation import (
 from query_pilot.sql.prompt import SYSTEM_INSTRUCTION, build_sql_generation_prompt
 
 logger = logging.getLogger(__name__)
+
+
+class _GeminiSQLPayloadSchema(BaseModel):
+    """Internal Pydantic schema for Gemini structured output.
+
+    Guarantees that telemetry fields are never exposed to the LLM prompt schema.
+    """
+
+    status: SQLGenerationStatus = SQLGenerationStatus.ANSWERABLE
+    sql: Optional[str] = None
+    explanation: Optional[str] = None
+    assumptions: List[str] = Field(default_factory=list)
 
 
 class GeminiSQLGenerator(SQLGenerator):
@@ -70,6 +85,7 @@ class GeminiSQLGenerator(SQLGenerator):
             )
 
         self.model_name = model_name or resolved_model
+        self.last_usage: Optional[LLMUsageMetadata] = None
 
         try:
             # Note: Do NOT log the API key
@@ -89,22 +105,25 @@ class GeminiSQLGenerator(SQLGenerator):
             request: SQLGenerationRequest containing question and model-facing schema.
 
         Returns:
-            SQLGenerationResponse with candidate SQL and optional explanations.
+            SQLGenerationResponse with candidate SQL, optional explanations, and usage telemetry.
 
         Raises:
             ProviderAPIError: If the Gemini API request fails.
             MalformedResponseError: If the response cannot be parsed into structured format.
             EmptySQLError: If the returned SQL is empty or whitespace.
         """
+        self.last_usage = None
         prompt = build_sql_generation_prompt(request)
 
         config = types.GenerateContentConfig(
             system_instruction=SYSTEM_INSTRUCTION,
             response_mime_type="application/json",
-            response_schema=SQLGenerationResponse,
+            response_schema=_GeminiSQLPayloadSchema,
             temperature=0.0,
         )
 
+        start_time = time.perf_counter()
+        response = None
         try:
             response = self.client.models.generate_content(
                 model=self.model_name,
@@ -112,25 +131,44 @@ class GeminiSQLGenerator(SQLGenerator):
                 config=config,
             )
         except Exception as exc:
+            self.last_usage = None
             raise ProviderAPIError(
                 f"Gemini API request failed: {exc}"
             ) from exc
+        finally:
+            elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+
+        usage_meta = extract_llm_usage(
+            response=response,
+            stage="sql_generation",
+            model_name=self.model_name,
+            latency_ms=elapsed_ms,
+        )
+        self.last_usage = usage_meta
 
         if not response or not response.text:
-            raise MalformedResponseError(
+            err = MalformedResponseError(
                 "Gemini API returned an empty or null content response."
             )
+            err.usage_metadata = usage_meta
+            raise err
 
         try:
             parsed = SQLGenerationResponse.model_validate_json(response.text)
         except Exception as exc:
-            raise MalformedResponseError(
+            err = MalformedResponseError(
                 f"Failed to parse Gemini response into SQLGenerationResponse: {exc}. "
                 f"Raw output: {response.text[:200]}"
-            ) from exc
+            )
+            err.usage_metadata = usage_meta
+            raise err from exc
+
+        parsed.usage_metadata = usage_meta
 
         if parsed.status == SQLGenerationStatus.ANSWERABLE:
             if not parsed.sql or not parsed.sql.strip():
-                raise EmptySQLError("Gemini marked question as answerable but returned an empty SQL string.")
+                err = EmptySQLError("Gemini marked question as answerable but returned an empty SQL string.")
+                err.usage_metadata = usage_meta
+                raise err
 
         return parsed

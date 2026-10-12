@@ -10,6 +10,12 @@ from query_pilot.presentation.formatter import (
     format_query_result,
     sanitize_message,
 )
+from query_pilot.presentation.synthesizer import (
+    AnswerSynthesisService,
+    GroundedAnswer,
+    GroundedAnswerStatus,
+    format_scalar_template,
+)
 
 __all__ = [
     "PresentationResult",
@@ -20,4 +26,8 @@ __all__ = [
     "format_pipeline_result",
     "format_query_result",
     "sanitize_message",
+    "AnswerSynthesisService",
+    "GroundedAnswer",
+    "GroundedAnswerStatus",
+    "format_scalar_template",
 ]

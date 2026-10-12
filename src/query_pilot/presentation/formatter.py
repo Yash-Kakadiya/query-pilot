@@ -8,13 +8,15 @@ or secondary LLM calls.
 from decimal import Decimal
 import datetime
 import re
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 import uuid
 
 from pydantic import BaseModel, Field
 
 from query_pilot.db.executor import QueryResult
-from query_pilot.pipeline import PipelineResult, PipelineStatus
+
+if TYPE_CHECKING:
+    from query_pilot.pipeline import PipelineResult, PipelineStatus
 
 
 # Regex patterns for sanitizing sensitive credentials or tokens from messages
@@ -196,6 +198,14 @@ class PresentationResult(BaseModel):
         default_factory=list,
         description="Structured validation rejection reasons if rejected.",
     )
+    grounded_answer: Optional[Any] = Field(
+        default=None,
+        description="Structured natural-language answer if synthesized or templated.",
+    )
+    telemetry: Optional[Any] = Field(
+        default=None,
+        description="Request-level LLM token usage and latency telemetry.",
+    )
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert presentation result to JSON-compatible dictionary."""
@@ -208,6 +218,8 @@ def format_query_result(
     explanation: Optional[str] = None,
     generated_sql: Optional[str] = None,
     request_id: Optional[str] = None,
+    grounded_answer: Optional[Any] = None,
+    telemetry: Optional[Any] = None,
 ) -> PresentationResult:
     """Format an executed QueryResult into a PresentationResult.
 
@@ -217,6 +229,8 @@ def format_query_result(
         explanation: Optional generator explanation.
         generated_sql: Optional candidate SQL statement.
         request_id: Optional unique request correlation ID.
+        grounded_answer: Optional structured GroundedAnswer.
+        telemetry: Optional PipelineRunTelemetry.
 
     Returns:
         A structured PresentationResult.
@@ -252,10 +266,13 @@ def format_query_result(
         explanation=explanation,
         generated_sql=generated_sql,
         validation_reasons=[],
+        grounded_answer=grounded_answer,
+        telemetry=telemetry,
     )
 
 
-def format_pipeline_result(pipeline_result: PipelineResult) -> PresentationResult:
+
+def format_pipeline_result(pipeline_result: "PipelineResult") -> PresentationResult:
     """Format an end-to-end PipelineResult into a clean PresentationResult.
 
     Deterministic handling across all terminal pipeline states:
@@ -271,11 +288,15 @@ def format_pipeline_result(pipeline_result: PipelineResult) -> PresentationResul
     Returns:
         Structured PresentationResult.
     """
+    from query_pilot.pipeline import PipelineStatus
+
     status = pipeline_result.status
     question = pipeline_result.question
     explanation = pipeline_result.generation_explanation
     sql = pipeline_result.generated_sql
     req_id = getattr(pipeline_result, "request_id", None)
+    answer = getattr(pipeline_result, "grounded_answer", None)
+    telemetry = getattr(pipeline_result, "telemetry", None)
 
     if status == PipelineStatus.SUCCESS:
         if pipeline_result.execution_result is not None:
@@ -285,6 +306,8 @@ def format_pipeline_result(pipeline_result: PipelineResult) -> PresentationResul
                 explanation=explanation,
                 generated_sql=sql,
                 request_id=req_id,
+                grounded_answer=answer,
+                telemetry=telemetry,
             )
         return PresentationResult(
             status="success",
@@ -297,6 +320,8 @@ def format_pipeline_result(pipeline_result: PipelineResult) -> PresentationResul
             truncated=False,
             explanation=explanation,
             generated_sql=sql,
+            grounded_answer=answer,
+            telemetry=telemetry,
         )
 
     if status == PipelineStatus.UNSUPPORTED:
@@ -311,6 +336,8 @@ def format_pipeline_result(pipeline_result: PipelineResult) -> PresentationResul
             truncated=False,
             explanation=explanation,
             generated_sql=None,
+            grounded_answer=answer,
+            telemetry=telemetry,
         )
 
     if status == PipelineStatus.VALIDATION_REJECTED:
@@ -331,6 +358,8 @@ def format_pipeline_result(pipeline_result: PipelineResult) -> PresentationResul
             explanation=explanation,
             generated_sql=sql,
             validation_reasons=reasons,
+            grounded_answer=answer,
+            telemetry=telemetry,
         )
 
     if status == PipelineStatus.GENERATION_FAILED:
@@ -346,6 +375,8 @@ def format_pipeline_result(pipeline_result: PipelineResult) -> PresentationResul
             truncated=False,
             explanation=explanation,
             generated_sql=None,
+            grounded_answer=answer,
+            telemetry=telemetry,
         )
 
     if status == PipelineStatus.EXECUTION_FAILED:
@@ -361,6 +392,8 @@ def format_pipeline_result(pipeline_result: PipelineResult) -> PresentationResul
             truncated=False,
             explanation=explanation,
             generated_sql=sql,
+            grounded_answer=answer,
+            telemetry=telemetry,
         )
 
     # Fallback for unexpected status codes
@@ -375,4 +408,6 @@ def format_pipeline_result(pipeline_result: PipelineResult) -> PresentationResul
         truncated=False,
         explanation=explanation,
         generated_sql=sql,
+        grounded_answer=answer,
+        telemetry=telemetry,
     )

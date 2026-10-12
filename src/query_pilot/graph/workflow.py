@@ -42,9 +42,20 @@ from query_pilot.graph.state import (
     create_initial_state,
     validate_initial_state,
 )
-from query_pilot.observability import ErrorCategory, PipelineStage, classify_error
+from query_pilot.observability import (
+    ErrorCategory,
+    LLMUsageMetadata,
+    PipelineRunTelemetry,
+    PipelineStage,
+    classify_error,
+)
 from query_pilot.pipeline import PipelineResult, PipelineStatus
 from query_pilot.presentation.formatter import format_pipeline_result, sanitize_message
+from query_pilot.presentation.synthesizer import (
+    AnswerSynthesisService,
+    GroundedAnswer,
+    GroundedAnswerStatus,
+)
 from query_pilot.sql.generation import (
     EmptySQLError,
     MalformedResponseError,
@@ -231,6 +242,7 @@ class QueryPilotWorkflow:
         timeout_seconds: Optional[int] = None,
         dialect: str = "T-SQL",
         additional_instructions: Optional[str] = None,
+        synthesizer: Optional[AnswerSynthesisService] = None,
     ):
         self._generator = generator
         self._engine = engine
@@ -240,7 +252,15 @@ class QueryPilotWorkflow:
         self.timeout_seconds = timeout_seconds
         self.dialect = dialect
         self.additional_instructions = additional_instructions
+        self._synthesizer = synthesizer
         self._compiled_app: Optional[CompiledStateGraph] = None
+
+    @property
+    def synthesizer(self) -> AnswerSynthesisService:
+        """Lazily initialize shared answer synthesizer if none was injected."""
+        if self._synthesizer is None:
+            self._synthesizer = AnswerSynthesisService(enabled=False)
+        return self._synthesizer
 
     @property
     def generator(self) -> SQLGenerator:
@@ -333,9 +353,29 @@ class QueryPilotWorkflow:
             instructions=instructions,
         )
 
+        # Track telemetry across initial and recovery invocations
+        existing_telemetry = state.get("telemetry")
+        if existing_telemetry is None:
+            telemetry = PipelineRunTelemetry()
+        else:
+            telemetry = PipelineRunTelemetry(
+                invocations=list(existing_telemetry.invocations),
+                total_prompt_tokens=existing_telemetry.total_prompt_tokens,
+                total_completion_tokens=existing_telemetry.total_completion_tokens,
+                total_tokens=existing_telemetry.total_tokens,
+                total_latency_ms=existing_telemetry.total_latency_ms,
+            )
+
         try:
             gen_resp = self.generator.generate(request)
+            usage = getattr(gen_resp, "usage_metadata", None) or getattr(self.generator, "last_usage", None)
+            if usage is not None and isinstance(usage, LLMUsageMetadata):
+                telemetry.add_invocation(usage)
         except SQLGenerationError as exc:
+            usage = getattr(exc, "usage_metadata", None) or getattr(self.generator, "last_usage", None)
+            if usage is not None and isinstance(usage, LLMUsageMetadata):
+                if not telemetry.invocations or telemetry.invocations[-1] is not usage:
+                    telemetry.add_invocation(usage)
             logger.warning(f"Graph SQL generation failed with controlled error: {exc}")
             is_rec = is_recoverable_generation_error(exc) and can_retry
             feedback = (
@@ -360,16 +400,22 @@ class QueryPilotWorkflow:
                 "generation_attempts": current_attempts,
                 "retry_count": retry_count,
                 "recovery_feedback": feedback,
+                "telemetry": telemetry,
                 "status": PipelineStatus.GENERATION_FAILED,
                 "error_category": ErrorCategory.SQL_GENERATION_FAILED,
                 "error_message": sanitize_message(str(exc)),
             }
         except Exception as exc:
+            usage = getattr(self.generator, "last_usage", None)
+            if usage is not None and isinstance(usage, LLMUsageMetadata):
+                if not telemetry.invocations or telemetry.invocations[-1] is not usage:
+                    telemetry.add_invocation(usage)
             logger.error(f"Graph SQL generation encountered unexpected error: {exc}")
             return {
                 "generation_attempts": current_attempts,
                 "retry_count": retry_count,
                 "recovery_feedback": None,
+                "telemetry": telemetry,
                 "status": PipelineStatus.GENERATION_FAILED,
                 "error_category": ErrorCategory.SQL_GENERATION_FAILED,
                 "error_message": sanitize_message(f"SQL generation error: {exc}"),
@@ -382,6 +428,7 @@ class QueryPilotWorkflow:
                 "retry_count": retry_count,
                 "recovery_feedback": None,
                 "generation_response": gen_resp,
+                "telemetry": telemetry,
                 "status": PipelineStatus.UNSUPPORTED,
                 "error_category": ErrorCategory.UNSUPPORTED_QUESTION,
             }
@@ -391,6 +438,7 @@ class QueryPilotWorkflow:
             "retry_count": retry_count,
             "recovery_feedback": None,
             "generation_response": gen_resp,
+            "telemetry": telemetry,
             "status": None,
             "error_category": None,
             "error_message": None,
@@ -549,6 +597,29 @@ class QueryPilotWorkflow:
         gen_resp = state.get("generation_response")
         val_result = state.get("validation_result")
         exec_result = state.get("execution_result")
+        telemetry = state.get("telemetry")
+        grounded_answer = state.get("grounded_answer")
+
+        # Synthesize answer only after successful SQL execution
+        if status == PipelineStatus.SUCCESS and exec_result is not None and grounded_answer is None:
+            try:
+                grounded_answer = self.synthesizer.synthesize(
+                    question=state["question"],
+                    query_result=exec_result,
+                    request_id=state.get("request_id"),
+                )
+                if getattr(grounded_answer, "usage_metadata", None):
+                    if telemetry is None:
+                        telemetry = PipelineRunTelemetry(request_id=state.get("request_id"))
+                    telemetry.add_invocation(grounded_answer.usage_metadata)
+            except Exception as exc:
+                logger.warning("LangGraph answer synthesis failed gracefully.")
+                grounded_answer = GroundedAnswer(
+                    text="Query executed successfully. Refer to the data table for results.",
+                    status=GroundedAnswerStatus.SYNTHESIS_FAILED,
+                    is_mechanically_verified=False,
+                    verification_notes=["LangGraph answer synthesis encountered an error."],
+                )
 
         pipe_res = PipelineResult(
             question=state["question"],
@@ -561,10 +632,14 @@ class QueryPilotWorkflow:
             execution_result=exec_result,
             error_message=state.get("error_message"),
             request_id=state.get("request_id"),
+            grounded_answer=grounded_answer,
+            telemetry=telemetry,
         )
 
         presentation = format_pipeline_result(pipe_res)
         return {
+            "grounded_answer": grounded_answer,
+            "telemetry": telemetry,
             "presentation_result": presentation,
             "status": status,
         }
@@ -719,6 +794,7 @@ def create_query_graph(
     timeout_seconds: Optional[int] = None,
     dialect: str = "T-SQL",
     additional_instructions: Optional[str] = None,
+    synthesizer: Optional[AnswerSynthesisService] = None,
 ) -> CompiledStateGraph:
     """Construct and compile an executable QueryPilot LangGraph workflow.
 
@@ -731,6 +807,7 @@ def create_query_graph(
         timeout_seconds: Optional execution timeout in seconds.
         dialect: SQL dialect for generation (default: 'T-SQL').
         additional_instructions: Optional context passed to generator.
+        synthesizer: Optional shared AnswerSynthesisService instance.
 
     Returns:
         CompiledStateGraph ready for execution.
@@ -744,6 +821,7 @@ def create_query_graph(
         timeout_seconds=timeout_seconds,
         dialect=dialect,
         additional_instructions=additional_instructions,
+        synthesizer=synthesizer,
     )
     return workflow.compile()
 

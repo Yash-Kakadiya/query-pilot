@@ -151,6 +151,8 @@ def graph_state_to_pipeline_result(state: QueryPilotState) -> PipelineResult:
         error_message=err_msg,
         request_id=state.get("request_id"),
         presentation=presentation,
+        grounded_answer=state.get("grounded_answer"),
+        telemetry=state.get("telemetry"),
     )
 
     # If presentation was not already generated, format it deterministically
@@ -183,6 +185,7 @@ class QueryRunner:
         additional_instructions: Optional[str] = None,
         enable_observability: bool = True,
         observer_factory: Optional[Callable[..., PipelineObserver]] = None,
+        synthesizer: Optional[Any] = None,
     ):
         """Initialize the unified QueryRunner.
 
@@ -198,6 +201,7 @@ class QueryRunner:
             additional_instructions: Optional context passed to generator prompt.
             enable_observability: Whether structured lifecycle observability is enabled (sequential mode).
             observer_factory: Optional custom factory for PipelineObserver instances.
+            synthesizer: Optional shared AnswerSynthesisService instance.
 
         Raises:
             ValueError: If mode is not a supported execution mode.
@@ -214,6 +218,7 @@ class QueryRunner:
         self.additional_instructions = additional_instructions
         self.enable_observability = enable_observability
         self.observer_factory = observer_factory
+        self.synthesizer = synthesizer
 
     def _create_pipeline(self) -> QueryPipeline:
         """Instantiate the sequential QueryPipeline with configured dependencies."""
@@ -228,6 +233,7 @@ class QueryRunner:
             additional_instructions=self.additional_instructions,
             enable_observability=self.enable_observability,
             observer_factory=self.observer_factory,
+            synthesizer=self.synthesizer,
         )
 
     def _create_workflow(self) -> Any:
@@ -243,6 +249,7 @@ class QueryRunner:
             timeout_seconds=self.timeout_seconds,
             dialect=self.dialect,
             additional_instructions=self.additional_instructions,
+            synthesizer=self.synthesizer,
         )
 
     def run(

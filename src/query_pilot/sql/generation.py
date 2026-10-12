@@ -18,7 +18,11 @@ from query_pilot.db.models import DatabaseSchema
 
 class SQLGenerationError(Exception):
     """Base exception for all SQL generation errors."""
-    pass
+
+    def __init__(self, message: str, usage_metadata: Optional[Any] = None):
+        super().__init__(message)
+        self.usage_metadata = usage_metadata
+
 
 
 class ConfigurationError(SQLGenerationError):
@@ -118,6 +122,10 @@ class SQLGenerationResponse(BaseModel):
     assumptions: List[str] = Field(
         default_factory=list,
         description="Any assumptions made regarding business logic, joins, or filters.",
+    )
+    usage_metadata: Optional[Any] = Field(
+        default=None,
+        description="Provider token usage and latency telemetry for this generation invocation.",
     )
 
     @model_validator(mode="after")

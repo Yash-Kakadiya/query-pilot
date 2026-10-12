@@ -59,9 +59,10 @@ from typing import Any, Dict, List, NotRequired, Optional, Required, TypedDict
 
 from query_pilot.db.executor import QueryResult
 from query_pilot.db.models import DatabaseSchema
-from query_pilot.observability import ErrorCategory
+from query_pilot.observability import ErrorCategory, PipelineRunTelemetry
 from query_pilot.pipeline import PipelineStatus
 from query_pilot.presentation.formatter import PresentationResult
+from query_pilot.presentation.synthesizer import GroundedAnswer
 from query_pilot.sql.generation import SQLGenerationResponse
 from query_pilot.sql.models import ValidationResult
 
@@ -81,6 +82,8 @@ INTERMEDIATE_RESULT_FIELDS: tuple[str, ...] = (
     "error_category",
     "error_message",
     "recovery_feedback",
+    "grounded_answer",
+    "telemetry",
 )
 
 
@@ -166,6 +169,15 @@ class QueryPilotState(TypedDict):
 
     error_message: NotRequired[Optional[str]]
     """Sanitized human-readable error description, free of stack traces or credentials."""
+
+    # -------------------------------------------------------------------------
+    # 6. Observability & Grounded Answer Synthesis (Populated downstream)
+    # -------------------------------------------------------------------------
+    grounded_answer: NotRequired[Optional[GroundedAnswer]]
+    """Grounded natural language answer model or None if unavailable/unsupported."""
+
+    telemetry: NotRequired[Optional[PipelineRunTelemetry]]
+    """Aggregated LLM invocation usage metadata and execution latency."""
 
 
 # Convenience alias
