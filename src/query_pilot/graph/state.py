@@ -65,8 +65,11 @@ from query_pilot.presentation.formatter import PresentationResult
 from query_pilot.sql.generation import SQLGenerationResponse
 from query_pilot.sql.models import ValidationResult
 
-# Default bounded recovery retry limit
-DEFAULT_MAX_RETRIES: int = 2
+# Fixed maximum generation attempts ceiling for bounded recovery (1 initial + at most 1 recovery)
+MAX_GENERATION_ATTEMPTS: int = 2
+
+# Default bounded recovery retry limit (excluding initial attempt)
+DEFAULT_MAX_RETRIES: int = 1
 
 # Intermediate result fields that must remain absent from initial state
 INTERMEDIATE_RESULT_FIELDS: tuple[str, ...] = (
@@ -77,6 +80,7 @@ INTERMEDIATE_RESULT_FIELDS: tuple[str, ...] = (
     "status",
     "error_category",
     "error_message",
+    "recovery_feedback",
 )
 
 
@@ -117,17 +121,24 @@ class QueryPilotState(TypedDict):
     """Correlated unique request ID for structured observability across stages."""
 
     # -------------------------------------------------------------------------
-    # 3. Bounded Recovery Retry Counters
+    # 3. Bounded Recovery Attempt & Retry Counters
     #
     # SEMANTICS:
+    # - `generation_attempts`: Authoritative count of SQL generation attempts begun (initial=0, max=2).
     # - `retry_count`: Number of recovery retries already performed, excluding the initial attempt.
-    # - `max_retries`: Maximum permitted recovery retries (default: 2).
+    # - `max_retries`: Maximum permitted recovery retries (default: 1).
     # -------------------------------------------------------------------------
+    generation_attempts: NotRequired[int]
+    """Authoritative count of SQL generation attempts begun so far (initialized to 0)."""
+
     retry_count: NotRequired[int]
     """Number of recovery retries already performed, excluding the initial attempt."""
 
     max_retries: NotRequired[int]
     """Maximum permitted recovery retries."""
+
+    recovery_feedback: NotRequired[Optional[str]]
+    """Sanitized diagnostic guidance provided to next generation attempt."""
 
     # -------------------------------------------------------------------------
     # 4. Intermediate Stage Outputs (Populated by graph nodes; absent initially)
@@ -204,6 +215,7 @@ def create_initial_state(
 
     state: QueryPilotState = {
         "question": cleaned_question,
+        "generation_attempts": 0,
         "retry_count": 0,
         "max_retries": max_retries,
     }
@@ -224,7 +236,7 @@ def validate_initial_state(state: object) -> QueryPilotState:
     Enforces runtime validation of:
     - Dict container type.
     - Presence of non-empty string `question`.
-    - Non-negative `max_retries` and `retry_count`.
+    - Non-negative `max_retries`, `retry_count`, and `generation_attempts`.
     - `retry_count <= max_retries`.
     - Strict absence of intermediate result fields in initial state.
 
@@ -274,6 +286,13 @@ def validate_initial_state(state: object) -> QueryPilotState:
             raise ValueError(
                 f"retry_count ({val}) cannot exceed max_retries ({max_retries})."
             )
+
+    if "generation_attempts" in state:
+        val = state["generation_attempts"]
+        if not isinstance(val, int) or isinstance(val, bool):
+            raise TypeError(f"Field 'generation_attempts' must be an integer, got {type(val).__name__}.")
+        if val < 0:
+            raise ValueError(f"generation_attempts cannot be negative, got {val}.")
 
     # Ensure intermediate result fields remain absent in initial state
     for field_name in INTERMEDIATE_RESULT_FIELDS:

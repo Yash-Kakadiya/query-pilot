@@ -6,6 +6,7 @@ LangGraph workflow orchestration.
 
 from query_pilot.graph.state import (
     DEFAULT_MAX_RETRIES,
+    MAX_GENERATION_ATTEMPTS,
     ConversationTurn,
     GraphState,
     QueryPilotState,
@@ -20,6 +21,7 @@ from query_pilot.graph.workflow import (
 
 __all__ = [
     "DEFAULT_MAX_RETRIES",
+    "MAX_GENERATION_ATTEMPTS",
     "ConversationTurn",
     "GraphState",
     "QueryPilotState",

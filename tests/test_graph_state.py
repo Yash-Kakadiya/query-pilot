@@ -11,6 +11,7 @@ from query_pilot.db.executor import QueryResult
 from query_pilot.db.models import ColumnMetadata, DatabaseSchema, TableMetadata
 from query_pilot.graph.state import (
     DEFAULT_MAX_RETRIES,
+    MAX_GENERATION_ATTEMPTS,
     ConversationTurn,
     GraphState,
     QueryPilotState,
@@ -43,6 +44,7 @@ def test_minimal_initial_state_representation() -> None:
 
     factory_state = create_initial_state("How many courses are active?")
     assert factory_state["question"] == "How many courses are active?"
+    assert factory_state["generation_attempts"] == 0
     assert factory_state["retry_count"] == 0
     assert factory_state["max_retries"] == DEFAULT_MAX_RETRIES
 
@@ -93,6 +95,7 @@ def test_intermediate_fields_absent_initially() -> None:
         "status",
         "error_category",
         "error_message",
+        "recovery_feedback",
     ]
     for key in forbidden_initial_keys:
         assert key not in state, f"Intermediate key '{key}' must not be fabricated at initialization."
@@ -400,3 +403,39 @@ def test_no_credentials_or_tracebacks_in_schema() -> None:
             assert forbidden not in field_name.lower(), (
                 f"Field '{field_name}' violates security isolation constraints."
             )
+
+
+# ==============================================================================
+# 8. Bounded Recovery Constants & Validation
+# ==============================================================================
+
+def test_bounded_recovery_constants_and_validation() -> None:
+    """Verify MAX_GENERATION_ATTEMPTS and generation_attempts validation rules."""
+    assert MAX_GENERATION_ATTEMPTS == 2
+    assert DEFAULT_MAX_RETRIES == 1
+
+    # Valid state with generation_attempts
+    valid_state: dict = {
+        "question": "Count students",
+        "generation_attempts": 1,
+        "retry_count": 0,
+        "max_retries": 1,
+    }
+    validated = validate_initial_state(valid_state)
+    assert validated["generation_attempts"] == 1
+
+    # Negative generation_attempts rejected
+    neg_attempts_state: dict = {
+        "question": "Count students",
+        "generation_attempts": -1,
+    }
+    with pytest.raises(ValueError, match="generation_attempts cannot be negative"):
+        validate_initial_state(neg_attempts_state)
+
+    # Non-integer generation_attempts rejected
+    non_int_attempts_state: dict = {
+        "question": "Count students",
+        "generation_attempts": "one",
+    }
+    with pytest.raises(TypeError, match="must be an integer"):
+        validate_initial_state(non_int_attempts_state)

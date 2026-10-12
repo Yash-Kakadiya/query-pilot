@@ -5,13 +5,16 @@ safeguard enforcement, and call-count assertions entirely offline without live
 Gemini API calls or database connections.
 """
 
-from typing import List, Optional
+from typing import Any, List, Optional
 from unittest.mock import MagicMock, patch
 import pytest
+from sqlalchemy.exc import DataError, OperationalError, ProgrammingError
 
 from query_pilot.db.executor import (
     QueryExecutionError,
     QueryResult,
+    QueryTimeoutError,
+    UnsafeQueryError,
 )
 from query_pilot.db.models import (
     ColumnMetadata,
@@ -20,6 +23,7 @@ from query_pilot.db.models import (
     TableMetadata,
 )
 from query_pilot.graph.state import (
+    MAX_GENERATION_ATTEMPTS,
     QueryPilotState,
     create_initial_state,
     validate_initial_state,
@@ -29,9 +33,15 @@ from query_pilot.graph.workflow import (
     create_query_graph,
     run_query_graph,
 )
+from query_pilot.observability import ErrorCategory
 from query_pilot.pipeline import PipelineResult, PipelineStatus, QueryPipeline
 from query_pilot.presentation.formatter import PresentationResult
+from query_pilot.runner import ExecutionMode, QueryRunner
 from query_pilot.sql.generation import (
+    ConfigurationError,
+    EmptySQLError,
+    MalformedResponseError,
+    ProviderAPIError,
     SQLGenerationError,
     SQLGenerationRequest,
     SQLGenerationResponse,
@@ -112,6 +122,23 @@ class FakeSQLGenerator(SQLGenerator):
         if self.exc_to_raise:
             raise self.exc_to_raise
         return self.response
+
+
+class SequenceFakeSQLGenerator(SQLGenerator):
+    """Fake SQL generator returning a sequence of responses/exceptions across calls."""
+
+    def __init__(self, sequence: List[Any]):
+        self.sequence = list(sequence)
+        self.calls: List[SQLGenerationRequest] = []
+
+    def generate(self, request: SQLGenerationRequest) -> SQLGenerationResponse:
+        self.calls.append(request)
+        if not self.sequence:
+            raise RuntimeError("SequenceFakeSQLGenerator ran out of configured responses")
+        item = self.sequence.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
 
 
 # ==============================================================================
@@ -669,4 +696,516 @@ def test_sanitized_error_messages_in_state(test_schema: DatabaseSchema) -> None:
     assert result["status"] == PipelineStatus.GENERATION_FAILED
     assert "SuperSecret123" not in result["error_message"]
     assert "[REDACTED]" in result["error_message"]
+
+
+# ==============================================================================
+# 13. Task 1.23-B Bounded LangGraph Recovery Tests (20 Required Scenarios)
+# ==============================================================================
+
+def test_first_attempt_success_invokes_once(test_schema: DatabaseSchema) -> None:
+    """Requirement 1: First-attempt success invokes generation once and execution once."""
+    fake_generator = FakeSQLGenerator(
+        response=SQLGenerationResponse(
+            status=SQLGenerationStatus.ANSWERABLE,
+            sql="SELECT Id FROM Students;",
+        )
+    )
+    exec_result = QueryResult(columns=["Id"], rows=[{"Id": 1}], row_count=1, truncated=False)
+    with patch("query_pilot.graph.workflow.validate_sql", return_value=ValidationResult(allowed=True)) as mock_val, \
+         patch("query_pilot.graph.workflow.execute_read_only", return_value=exec_result) as mock_exec:
+        workflow = QueryPilotWorkflow(generator=fake_generator, schema=test_schema, engine=MagicMock())
+        result = workflow.run("Show students")
+
+        assert len(fake_generator.calls) == 1
+        assert mock_val.call_count == 1
+        assert mock_exec.call_count == 1
+        assert result["status"] == PipelineStatus.SUCCESS
+        assert result.get("generation_attempts") == 1
+        assert result.get("retry_count") == 0
+        assert result.get("recovery_feedback") is None
+
+
+def test_recoverable_validation_error_succeeds_on_second_attempt(test_schema: DatabaseSchema) -> None:
+    """Requirement 2: Recoverable validation error followed by corrected SQL succeeds on 2nd attempt."""
+    gen = SequenceFakeSQLGenerator([
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT BadCol FROM Students;"),
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT Id FROM Students;"),
+    ])
+    val_side_effects = [
+        ValidationResult(
+            allowed=False,
+            reasons=[ValidationReason(code=ValidationReasonCode.UNKNOWN_COLUMN, message="Unknown column 'BadCol'")],
+        ),
+        ValidationResult(allowed=True, normalized_sql="SELECT Id FROM Students;"),
+    ]
+    exec_result = QueryResult(columns=["Id"], rows=[{"Id": 1}], row_count=1, truncated=False)
+
+    with patch("query_pilot.graph.workflow.validate_sql", side_effect=val_side_effects) as mock_val, \
+         patch("query_pilot.graph.workflow.execute_read_only", return_value=exec_result) as mock_exec:
+        workflow = QueryPilotWorkflow(generator=gen, schema=test_schema, engine=MagicMock())
+        result = workflow.run("Show students")
+
+        assert len(gen.calls) == 2
+        assert mock_val.call_count == 2
+        assert mock_exec.call_count == 1
+        assert result["status"] == PipelineStatus.SUCCESS
+        assert result.get("generation_attempts") == 2
+        assert result.get("retry_count") == 1
+        # Second call received sanitized feedback
+        assert gen.calls[1].instructions is not None
+        assert "UNKNOWN_COLUMN" in gen.calls[1].instructions
+        assert "SELECT BadCol FROM Students;" not in gen.calls[1].instructions
+
+
+def test_two_failed_attempts_terminate_with_correct_status(test_schema: DatabaseSchema) -> None:
+    """Requirement 3: Two failed attempts terminate with correct non-success status."""
+    gen = SequenceFakeSQLGenerator([
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT ColA FROM Students;"),
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT ColB FROM Students;"),
+    ])
+    val_side_effects = [
+        ValidationResult(allowed=False, reasons=[ValidationReason(code=ValidationReasonCode.UNKNOWN_COLUMN, message="No ColA")]),
+        ValidationResult(allowed=False, reasons=[ValidationReason(code=ValidationReasonCode.UNKNOWN_COLUMN, message="No ColB")]),
+    ]
+    with patch("query_pilot.graph.workflow.validate_sql", side_effect=val_side_effects) as mock_val, \
+         patch("query_pilot.graph.workflow.execute_read_only") as mock_exec:
+        workflow = QueryPilotWorkflow(generator=gen, schema=test_schema, engine=MagicMock())
+        result = workflow.run("Show students")
+
+        assert len(gen.calls) == 2
+        assert mock_val.call_count == 2
+        assert mock_exec.call_count == 0
+        assert result["status"] == PipelineStatus.VALIDATION_REJECTED
+        assert result.get("generation_attempts") == 2
+        assert result.get("retry_count") == 1
+        assert result["presentation_result"].status == "validation_rejected"
+
+
+def test_maximum_attempt_count_cannot_be_exceeded(test_schema: DatabaseSchema) -> None:
+    """Requirement 4: Maximum attempt count cannot be exceeded even if caller requests more."""
+    gen = SequenceFakeSQLGenerator([
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT Col1 FROM Students;"),
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT Col2 FROM Students;"),
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT Col3 FROM Students;"),
+    ])
+    with patch("query_pilot.graph.workflow.validate_sql", return_value=ValidationResult(allowed=False, reasons=[ValidationReason(code=ValidationReasonCode.UNKNOWN_COLUMN, message="Bad col")])):
+        workflow = QueryPilotWorkflow(generator=gen, schema=test_schema, engine=MagicMock())
+        initial_state = create_initial_state("Show students", max_retries=10)
+        result = workflow.run(initial_state)
+
+        assert len(gen.calls) == 2
+        assert result.get("generation_attempts") == 2
+
+
+def test_mutating_sql_rejected_without_execution_or_recovery(test_schema: DatabaseSchema) -> None:
+    """Requirement 5: Mutating SQL is rejected without execution and without recovery."""
+    gen = SequenceFakeSQLGenerator([
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="DELETE FROM Students WHERE Id = 1;"),
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT Id FROM Students;"),
+    ])
+    val_reject = ValidationResult(
+        allowed=False,
+        reasons=[ValidationReason(code=ValidationReasonCode.NOT_READ_ONLY, message="Query contains mutation")],
+    )
+    with patch("query_pilot.graph.workflow.validate_sql", return_value=val_reject) as mock_val, \
+         patch("query_pilot.graph.workflow.execute_read_only") as mock_exec:
+        workflow = QueryPilotWorkflow(generator=gen, schema=test_schema, engine=MagicMock())
+        result = workflow.run("Delete student")
+
+        assert len(gen.calls) == 1
+        mock_val.assert_called_once()
+        mock_exec.assert_not_called()
+        assert result["status"] == PipelineStatus.VALIDATION_REJECTED
+        assert result.get("generation_attempts") == 1
+        assert result.get("retry_count") == 0
+        assert result.get("recovery_feedback") is None
+
+
+def test_multiple_statements_rejected_without_execution_or_recovery(test_schema: DatabaseSchema) -> None:
+    """Requirement 6: Multiple statements rejected without execution and without recovery."""
+    gen = SequenceFakeSQLGenerator([
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT 1; SELECT 2;"),
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT 1;"),
+    ])
+    val_reject = ValidationResult(
+        allowed=False,
+        reasons=[ValidationReason(code=ValidationReasonCode.MULTI_STATEMENT, message="Multiple statements prohibited")],
+    )
+    with patch("query_pilot.graph.workflow.validate_sql", return_value=val_reject) as mock_val, \
+         patch("query_pilot.graph.workflow.execute_read_only") as mock_exec:
+        workflow = QueryPilotWorkflow(generator=gen, schema=test_schema, engine=MagicMock())
+        result = workflow.run("Run multiple")
+
+        assert len(gen.calls) == 1
+        mock_val.assert_called_once()
+        mock_exec.assert_not_called()
+        assert result["status"] == PipelineStatus.VALIDATION_REJECTED
+        assert result.get("generation_attempts") == 1
+        assert result.get("recovery_feedback") is None
+
+
+def test_sensitive_forbidden_access_is_terminal(test_schema: DatabaseSchema) -> None:
+    """Requirement 7: Sensitive/forbidden access is terminal."""
+    gen = SequenceFakeSQLGenerator([
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT PasswordHash FROM Users;"),
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT Email FROM Users;"),
+    ])
+    val_reject = ValidationResult(
+        allowed=False,
+        reasons=[ValidationReason(code=ValidationReasonCode.SENSITIVE_COLUMN, message="Access to PasswordHash denied")],
+    )
+    with patch("query_pilot.graph.workflow.validate_sql", return_value=val_reject) as mock_val, \
+         patch("query_pilot.graph.workflow.execute_read_only") as mock_exec:
+        workflow = QueryPilotWorkflow(generator=gen, schema=test_schema, engine=MagicMock())
+        result = workflow.run("Show passwords")
+
+        assert len(gen.calls) == 1
+        mock_val.assert_called_once()
+        mock_exec.assert_not_called()
+        assert result["status"] == PipelineStatus.VALIDATION_REJECTED
+        assert result.get("generation_attempts") == 1
+        assert result.get("recovery_feedback") is None
+
+
+def test_timeout_is_terminal_and_not_retried(test_schema: DatabaseSchema) -> None:
+    """Requirement 8: Timeout is terminal and is not retried."""
+    gen = SequenceFakeSQLGenerator([
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT * FROM HugeTable;"),
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT TOP 1 * FROM HugeTable;"),
+    ])
+    with patch("query_pilot.graph.workflow.validate_sql", return_value=ValidationResult(allowed=True)) as mock_val, \
+         patch("query_pilot.graph.workflow.execute_read_only", side_effect=QueryTimeoutError("Timed out after 30s")) as mock_exec:
+        workflow = QueryPilotWorkflow(generator=gen, schema=test_schema, engine=MagicMock())
+        result = workflow.run("Slow query")
+
+        assert len(gen.calls) == 1
+        assert mock_val.call_count == 1
+        assert mock_exec.call_count == 1
+        assert result["status"] == PipelineStatus.EXECUTION_FAILED
+        assert result.get("error_category") == ErrorCategory.QUERY_TIMEOUT
+        assert result.get("generation_attempts") == 1
+        assert result.get("recovery_feedback") is None
+
+
+def test_connection_failure_is_terminal_and_not_retried(test_schema: DatabaseSchema) -> None:
+    """Requirement 9: Connection/operational failure is terminal and is not retried."""
+    op_err = OperationalError("conn failed", None, Exception("Connection reset"))
+    exec_err = QueryExecutionError("Database connection failed")
+    exec_err.__cause__ = op_err
+
+    gen = SequenceFakeSQLGenerator([
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT Id FROM Users;"),
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT Id FROM Users;"),
+    ])
+    with patch("query_pilot.graph.workflow.validate_sql", return_value=ValidationResult(allowed=True)) as mock_val, \
+         patch("query_pilot.graph.workflow.execute_read_only", side_effect=exec_err) as mock_exec:
+        workflow = QueryPilotWorkflow(generator=gen, schema=test_schema, engine=MagicMock())
+        result = workflow.run("Query during network drop")
+
+        assert len(gen.calls) == 1
+        assert mock_val.call_count == 1
+        assert mock_exec.call_count == 1
+        assert result["status"] == PipelineStatus.EXECUTION_FAILED
+        assert result.get("generation_attempts") == 1
+        assert result.get("recovery_feedback") is None
+
+
+def test_database_syntax_error_recovers_and_ambiguous_terminates(test_schema: DatabaseSchema) -> None:
+    """Requirement 10: Safely classified DB syntax error recovers; ambiguous error terminates."""
+    # 10a. Safely classified: ProgrammingError causes recovery
+    prog_err = ProgrammingError("SELECT Foo", None, Exception("Invalid column Foo"))
+    exec_err = QueryExecutionError("Execution failed")
+    exec_err.__cause__ = prog_err
+
+    gen = SequenceFakeSQLGenerator([
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT Foo FROM Users;"),
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT Id FROM Users;"),
+    ])
+    exec_result = QueryResult(columns=["Id"], rows=[{"Id": 1}], row_count=1, truncated=False)
+
+    with patch("query_pilot.graph.workflow.validate_sql", return_value=ValidationResult(allowed=True)), \
+         patch("query_pilot.graph.workflow.execute_read_only", side_effect=[exec_err, exec_result]) as mock_exec:
+        workflow = QueryPilotWorkflow(generator=gen, schema=test_schema, engine=MagicMock())
+        result = workflow.run("Query with DB syntax error")
+
+        assert len(gen.calls) == 2
+        assert mock_exec.call_count == 2
+        assert result["status"] == PipelineStatus.SUCCESS
+        assert result.get("generation_attempts") == 2
+        assert gen.calls[1].instructions is not None
+        assert "DATABASE_EXECUTION_ERROR" in gen.calls[1].instructions
+
+    # 10b. Ambiguous error terminates immediately without retry
+    ambig_err = QueryExecutionError("Unclassified generic DB failure")
+    gen_ambig = SequenceFakeSQLGenerator([
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT 1;"),
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT 2;"),
+    ])
+    with patch("query_pilot.graph.workflow.validate_sql", return_value=ValidationResult(allowed=True)), \
+         patch("query_pilot.graph.workflow.execute_read_only", side_effect=ambig_err) as mock_exec_ambig:
+        workflow2 = QueryPilotWorkflow(generator=gen_ambig, schema=test_schema, engine=MagicMock())
+        result2 = workflow2.run("Query with ambiguous failure")
+
+        assert len(gen_ambig.calls) == 1
+        assert mock_exec_ambig.call_count == 1
+        assert result2["status"] == PipelineStatus.EXECUTION_FAILED
+        assert result2.get("generation_attempts") == 1
+        assert result2.get("recovery_feedback") is None
+
+
+def test_malformed_model_output_recovers_only_when_explicitly_classified(test_schema: DatabaseSchema) -> None:
+    """Requirement 11: Malformed model output recovers only when error is explicitly classified."""
+    # 11a. MalformedResponseError recovers
+    gen = SequenceFakeSQLGenerator([
+        MalformedResponseError("Invalid JSON from LLM"),
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT Id FROM Users;"),
+    ])
+    exec_result = QueryResult(columns=["Id"], rows=[{"Id": 1}], row_count=1, truncated=False)
+    with patch("query_pilot.graph.workflow.validate_sql", return_value=ValidationResult(allowed=True)) as mock_val, \
+         patch("query_pilot.graph.workflow.execute_read_only", return_value=exec_result) as mock_exec:
+        workflow = QueryPilotWorkflow(generator=gen, schema=test_schema, engine=MagicMock())
+        result = workflow.run("Show users")
+
+        assert len(gen.calls) == 2
+        assert mock_val.call_count == 1
+        assert mock_exec.call_count == 1
+        assert result["status"] == PipelineStatus.SUCCESS
+        assert result.get("generation_attempts") == 2
+        assert gen.calls[1].instructions is not None
+        assert "MALFORMED_OUTPUT" in gen.calls[1].instructions
+
+    # 11b. EmptySQLError recovers
+    gen_empty = SequenceFakeSQLGenerator([
+        EmptySQLError("Model returned empty SQL string"),
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT Id FROM Users;"),
+    ])
+    with patch("query_pilot.graph.workflow.validate_sql", return_value=ValidationResult(allowed=True)), \
+         patch("query_pilot.graph.workflow.execute_read_only", return_value=exec_result):
+        workflow_empty = QueryPilotWorkflow(generator=gen_empty, schema=test_schema, engine=MagicMock())
+        result_empty = workflow_empty.run("Show users")
+
+        assert len(gen_empty.calls) == 2
+        assert result_empty["status"] == PipelineStatus.SUCCESS
+        assert result_empty.get("generation_attempts") == 2
+        assert "EMPTY_SQL" in gen_empty.calls[1].instructions
+
+
+def test_provider_configuration_failure_terminates_without_retry(test_schema: DatabaseSchema) -> None:
+    """Requirement 12: Provider/configuration failure terminates without retry."""
+    # 12a. ConfigurationError
+    gen_cfg = SequenceFakeSQLGenerator([
+        ConfigurationError("GEMINI_API_KEY is not configured"),
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT 1;"),
+    ])
+    workflow_cfg = QueryPilotWorkflow(generator=gen_cfg, schema=test_schema, engine=MagicMock())
+    result_cfg = workflow_cfg.run("Show users")
+    assert len(gen_cfg.calls) == 1
+    assert result_cfg["status"] == PipelineStatus.GENERATION_FAILED
+    assert result_cfg.get("generation_attempts") == 1
+    assert result_cfg.get("recovery_feedback") is None
+
+    # 12b. ProviderAPIError
+    gen_prov = SequenceFakeSQLGenerator([
+        ProviderAPIError("503 Service Unavailable"),
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT 1;"),
+    ])
+    workflow_prov = QueryPilotWorkflow(generator=gen_prov, schema=test_schema, engine=MagicMock())
+    result_prov = workflow_prov.run("Show users")
+    assert len(gen_prov.calls) == 1
+    assert result_prov["status"] == PipelineStatus.GENERATION_FAILED
+    assert result_prov.get("generation_attempts") == 1
+    assert result_prov.get("recovery_feedback") is None
+
+
+def test_unsupported_questions_terminate_without_retry(test_schema: DatabaseSchema) -> None:
+    """Requirement 13: Unsupported questions terminate without retry."""
+    gen = SequenceFakeSQLGenerator([
+        SQLGenerationResponse(status=SQLGenerationStatus.UNSUPPORTED, sql=None, explanation="Not in database"),
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT 1;"),
+    ])
+    with patch("query_pilot.graph.workflow.validate_sql") as mock_val, \
+         patch("query_pilot.graph.workflow.execute_read_only") as mock_exec:
+        workflow = QueryPilotWorkflow(generator=gen, schema=test_schema, engine=MagicMock())
+        result = workflow.run("What is the cafeteria menu?")
+
+        assert len(gen.calls) == 1
+        mock_val.assert_not_called()
+        mock_exec.assert_not_called()
+        assert result["status"] == PipelineStatus.UNSUPPORTED
+        assert result.get("generation_attempts") == 1
+        assert result.get("recovery_feedback") is None
+
+
+def test_empty_results_return_success_without_retry(test_schema: DatabaseSchema) -> None:
+    """Requirement 14: Empty results return success without retry."""
+    fake_generator = FakeSQLGenerator(
+        response=SQLGenerationResponse(
+            status=SQLGenerationStatus.ANSWERABLE,
+            sql="SELECT Id FROM Students WHERE DepartmentId = 999;",
+        )
+    )
+    empty_result = QueryResult(columns=["Id"], rows=[], row_count=0, truncated=False)
+    with patch("query_pilot.graph.workflow.validate_sql", return_value=ValidationResult(allowed=True)) as mock_val, \
+         patch("query_pilot.graph.workflow.execute_read_only", return_value=empty_result) as mock_exec:
+        workflow = QueryPilotWorkflow(generator=fake_generator, schema=test_schema, engine=MagicMock())
+        result = workflow.run("Show non-existent students")
+
+        assert len(fake_generator.calls) == 1
+        mock_val.assert_called_once()
+        mock_exec.assert_called_once()
+        assert result["status"] == PipelineStatus.SUCCESS
+        assert result.get("generation_attempts") == 1
+        assert result["presentation_result"].status == "success"
+        assert result["presentation_result"].row_count == 0
+        assert "No rows returned" in result["presentation_result"].message
+        assert result.get("recovery_feedback") is None
+
+
+def test_recovery_feedback_is_sanitized_and_contains_no_previous_sql(test_schema: DatabaseSchema) -> None:
+    """Requirement 15: Recovery feedback is sanitized and contains no previous SQL by default."""
+    sensitive_sql = "SELECT SecretKey, PasswordHash FROM SuperSecretUsers WHERE Token = 'xyz123';"
+    gen = SequenceFakeSQLGenerator([
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql=sensitive_sql),
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT Id FROM Users;"),
+    ])
+    val_reject = ValidationResult(
+        allowed=False,
+        reasons=[ValidationReason(code=ValidationReasonCode.UNKNOWN_TABLE, message="Table 'SuperSecretUsers' does not exist")],
+    )
+    with patch("query_pilot.graph.workflow.validate_sql", side_effect=[val_reject, ValidationResult(allowed=True)]), \
+         patch("query_pilot.graph.workflow.execute_read_only", return_value=QueryResult(columns=["Id"], rows=[{"Id": 1}], row_count=1, truncated=False)):
+        workflow = QueryPilotWorkflow(generator=gen, schema=test_schema, engine=MagicMock())
+        workflow.run("Show secrets")
+
+        assert len(gen.calls) == 2
+        instructions = gen.calls[1].instructions
+        assert instructions is not None
+        # Must not contain previous SQL literals or statement
+        assert sensitive_sql not in instructions
+        assert "xyz123" not in instructions
+        assert "SecretKey" not in instructions
+        assert "PasswordHash" not in instructions
+        assert "UNKNOWN_TABLE" in instructions
+
+
+def test_second_candidate_must_be_validated_before_execution(test_schema: DatabaseSchema) -> None:
+    """Requirement 16: A second candidate must be validated before execution."""
+    gen = SequenceFakeSQLGenerator([
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT UnknownCol FROM Students;"),
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="DROP TABLE Students;"),
+    ])
+    val_side_effects = [
+        ValidationResult(allowed=False, reasons=[ValidationReason(code=ValidationReasonCode.UNKNOWN_COLUMN, message="Unknown column")]),
+        ValidationResult(allowed=False, reasons=[ValidationReason(code=ValidationReasonCode.FORBIDDEN_OPERATION, message="DROP statement forbidden")]),
+    ]
+    with patch("query_pilot.graph.workflow.validate_sql", side_effect=val_side_effects) as mock_val, \
+         patch("query_pilot.graph.workflow.execute_read_only") as mock_exec:
+        workflow = QueryPilotWorkflow(generator=gen, schema=test_schema, engine=MagicMock())
+        result = workflow.run("Malicious attempt 2")
+
+        assert len(gen.calls) == 2
+        assert mock_val.call_count == 2
+        # Execution MUST NOT be invoked for second unvalidated/rejected candidate
+        mock_exec.assert_not_called()
+        assert result["status"] == PipelineStatus.VALIDATION_REJECTED
+        assert result["validation_result"].allowed is False
+
+
+def test_recovery_exhaustion_preserves_established_terminal_contract(test_schema: DatabaseSchema) -> None:
+    """Requirement 17: Recovery exhaustion preserves the established terminal result contract."""
+    gen = SequenceFakeSQLGenerator([
+        MalformedResponseError("Attempt 1 parse failed"),
+        MalformedResponseError("Attempt 2 parse failed"),
+    ])
+    workflow = QueryPilotWorkflow(generator=gen, schema=test_schema, engine=MagicMock())
+    result = workflow.run("Exhaustion test")
+
+    assert len(gen.calls) == 2
+    assert result["status"] == PipelineStatus.GENERATION_FAILED
+    assert result.get("error_category") == ErrorCategory.SQL_GENERATION_FAILED
+    assert result.get("generation_attempts") == 2
+    assert result.get("retry_count") == 1
+    assert result["presentation_result"].status == "generation_failed"
+    assert "Attempt 2 parse failed" in result["presentation_result"].message
+
+
+def test_two_invocations_do_not_share_retry_state(test_schema: DatabaseSchema) -> None:
+    """Requirement 18: Two invocations using the same workflow do not share retry state or feedback."""
+    gen = SequenceFakeSQLGenerator([
+        # Run 1: attempt 1 recoverable error, attempt 2 success
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT BadCol FROM Students;"),
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT Id FROM Students;"),
+        # Run 2: attempt 1 immediate success
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT Id FROM Users;"),
+    ])
+    val_side_effects = [
+        # Run 1 val 1 & val 2
+        ValidationResult(allowed=False, reasons=[ValidationReason(code=ValidationReasonCode.UNKNOWN_COLUMN, message="Unknown column")]),
+        ValidationResult(allowed=True, normalized_sql="SELECT Id FROM Students;"),
+        # Run 2 val 1
+        ValidationResult(allowed=True, normalized_sql="SELECT Id FROM Users;"),
+    ]
+    exec_result = QueryResult(columns=["Id"], rows=[{"Id": 1}], row_count=1, truncated=False)
+
+    with patch("query_pilot.graph.workflow.validate_sql", side_effect=val_side_effects), \
+         patch("query_pilot.graph.workflow.execute_read_only", return_value=exec_result):
+        workflow = QueryPilotWorkflow(generator=gen, schema=test_schema, engine=MagicMock())
+
+        # Invocation 1: required 2 attempts
+        res1 = workflow.run("Question 1")
+        assert res1["status"] == PipelineStatus.SUCCESS
+        assert res1.get("generation_attempts") == 2
+        assert res1.get("retry_count") == 1
+
+        # Invocation 2: starts fresh
+        res2 = workflow.run("Question 2")
+        assert res2["status"] == PipelineStatus.SUCCESS
+        assert res2.get("generation_attempts") == 1
+        assert res2.get("retry_count") == 0
+        assert res2.get("recovery_feedback") is None
+        # Call 3 to generator had NO recovery instructions
+        assert gen.calls[2].instructions is None
+
+
+def test_query_runner_still_defaults_to_sequential_execution(test_schema: DatabaseSchema) -> None:
+    """Requirement 19: QueryRunner still defaults to sequential execution."""
+    runner = QueryRunner(schema=test_schema, engine=MagicMock())
+    assert runner.default_mode == ExecutionMode.SEQUENTIAL
+
+    fake_generator = FakeSQLGenerator(
+        response=SQLGenerationResponse(
+            status=SQLGenerationStatus.ANSWERABLE,
+            sql="SELECT Id FROM Users;",
+        )
+    )
+    runner._generator = fake_generator
+    with patch("query_pilot.pipeline.validate_sql", return_value=ValidationResult(allowed=True)), \
+         patch("query_pilot.pipeline.execute_read_only", return_value=QueryResult(columns=["Id"], rows=[{"Id": 1}], row_count=1, truncated=False)):
+        res = runner.run("Show users")
+        assert isinstance(res, PipelineResult)
+        assert res.status == PipelineStatus.SUCCESS
+        assert res.is_success is True
+
+
+def test_sequential_pipeline_remains_single_pass_and_unchanged(test_schema: DatabaseSchema) -> None:
+    """Requirement 20: The sequential pipeline remains single-pass and unchanged."""
+    gen = SequenceFakeSQLGenerator([
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT BadCol FROM Students;"),
+        SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT Id FROM Students;"),
+    ])
+    val_reject = ValidationResult(
+        allowed=False,
+        reasons=[ValidationReason(code=ValidationReasonCode.UNKNOWN_COLUMN, message="Unknown column")],
+    )
+    with patch("query_pilot.pipeline.validate_sql", return_value=val_reject) as mock_val, \
+         patch("query_pilot.pipeline.execute_read_only") as mock_exec:
+        pipeline = QueryPipeline(generator=gen, schema=test_schema, engine=MagicMock())
+        res = pipeline.run("Show students")
+
+        # In sequential pipeline, exactly ONE attempt is made and no retry loop exists
+        assert len(gen.calls) == 1
+        mock_val.assert_called_once()
+        mock_exec.assert_not_called()
+        assert res.status == PipelineStatus.VALIDATION_REJECTED
+        assert res.is_success is False
 

@@ -19,21 +19,25 @@ Security & Safety Principles:
 """
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import DataError, OperationalError, ProgrammingError
 
 from query_pilot.db.connection import create_db_engine
 from query_pilot.db.executor import (
     QueryExecutionError,
     QueryResult,
+    QueryTimeoutError,
+    UnsafeQueryError,
     execute_read_only,
 )
 from query_pilot.db.introspection import DatabaseIntrospector
 from query_pilot.db.models import DatabaseSchema
 from query_pilot.graph.state import (
+    MAX_GENERATION_ATTEMPTS,
     QueryPilotState,
     create_initial_state,
     validate_initial_state,
@@ -42,16 +46,172 @@ from query_pilot.observability import ErrorCategory, PipelineStage, classify_err
 from query_pilot.pipeline import PipelineResult, PipelineStatus
 from query_pilot.presentation.formatter import format_pipeline_result, sanitize_message
 from query_pilot.sql.generation import (
+    EmptySQLError,
+    MalformedResponseError,
     SQLGenerationError,
     SQLGenerationRequest,
     SQLGenerationResponse,
     SQLGenerationStatus,
     SQLGenerator,
 )
-from query_pilot.sql.models import ValidationResult
+from query_pilot.sql.models import ValidationReasonCode, ValidationResult
 from query_pilot.sql.validator import validate_sql
 
 logger = logging.getLogger(__name__)
+
+# Explicit policy sets for deterministic validation failure classification
+RECOVERABLE_VALIDATION_CODES: Set[ValidationReasonCode] = {
+    ValidationReasonCode.PARSE_ERROR,
+    ValidationReasonCode.UNKNOWN_TABLE,
+    ValidationReasonCode.UNKNOWN_COLUMN,
+    ValidationReasonCode.EXCEEDS_MAX_ROWS,
+    ValidationReasonCode.UNSUPPORTED_QUERY_SHAPE,
+    ValidationReasonCode.EMPTY_SQL,
+}
+
+TERMINAL_VALIDATION_CODES: Set[ValidationReasonCode] = {
+    ValidationReasonCode.NOT_READ_ONLY,
+    ValidationReasonCode.MULTI_STATEMENT,
+    ValidationReasonCode.FORBIDDEN_OPERATION,
+    ValidationReasonCode.SENSITIVE_COLUMN,
+    ValidationReasonCode.FORBIDDEN_TABLE,
+}
+
+
+def is_recoverable_validation_result(val_result: ValidationResult) -> bool:
+    """Classify whether a validation rejection represents a safely recoverable issue.
+
+    Deterministic Safety Policy:
+    - If allowed is True: not a failure (False).
+    - If reasons list is empty: unclassified/unknown failure is terminal (False).
+    - If ANY reason code is terminal or not recognized: strictly terminal (False).
+    - Only if ALL reason codes are in RECOVERABLE_VALIDATION_CODES: True.
+    """
+    if val_result.allowed:
+        return False
+    if not val_result.reasons:
+        return False
+
+    for reason in val_result.reasons:
+        if reason.code in TERMINAL_VALIDATION_CODES or reason.code not in RECOVERABLE_VALIDATION_CODES:
+            return False
+
+    return True
+
+
+def is_recoverable_generation_error(exc: Exception) -> bool:
+    """Classify whether an LLM generation error represents a safely recoverable issue.
+
+    Recoverable:
+    - MalformedResponseError (structured JSON output parsing error).
+    - EmptySQLError (empty candidate SQL string).
+
+    Terminal:
+    - ConfigurationError (missing API key/config).
+    - ProviderAPIError (external API / network / auth failure).
+    - SQLGenerationError (generic/unclassified generation failure).
+    - Other unexpected exceptions.
+    """
+    return isinstance(exc, (MalformedResponseError, EmptySQLError))
+
+
+def is_recoverable_execution_error(exc: Exception) -> bool:
+    """Classify whether a database execution failure is a correctable SQL syntax/schema issue.
+
+    Recoverable:
+    - Database syntax or schema errors where cause is ProgrammingError or DataError.
+
+    Terminal:
+    - QueryTimeoutError (timeout).
+    - UnsafeQueryError (mutating or multi-statement).
+    - OperationalError (connection drop, server down).
+    - Generic QueryExecutionError without explicit syntax/schema cause.
+    """
+    if isinstance(exc, (QueryTimeoutError, UnsafeQueryError)):
+        return False
+
+    cause = getattr(exc, "__cause__", None)
+    if cause is not None:
+        if isinstance(cause, OperationalError):
+            return False
+        if isinstance(cause, (ProgrammingError, DataError)):
+            return True
+
+    if isinstance(exc, (ProgrammingError, DataError)):
+        return True
+
+    return False
+
+
+def build_sanitized_recovery_feedback(
+    *,
+    validation_result: Optional[ValidationResult] = None,
+    generation_error: Optional[Exception] = None,
+    execution_error: Optional[Exception] = None,
+) -> str:
+    """Construct safe, sanitized diagnostic guidance for the next generation attempt.
+
+    SECURITY GUARANTEES:
+    - Never includes previously generated candidate SQL.
+    - Never includes database credentials, connection strings, or raw stack traces.
+    - Contains only stable reason codes and safe diagnostic messages.
+    """
+    feedback_lines: List[str] = []
+
+    if validation_result is not None:
+        for reason in validation_result.reasons:
+            code = reason.code
+            if code == ValidationReasonCode.PARSE_ERROR:
+                feedback_lines.append(
+                    "PARSE_ERROR: The previous query had a syntax error. Please ensure valid Microsoft SQL Server (T-SQL) syntax."
+                )
+            elif code == ValidationReasonCode.UNKNOWN_TABLE:
+                feedback_lines.append(
+                    f"UNKNOWN_TABLE: {sanitize_message(reason.message)}. Please query only tables defined in the schema."
+                )
+            elif code == ValidationReasonCode.UNKNOWN_COLUMN:
+                feedback_lines.append(
+                    f"UNKNOWN_COLUMN: {sanitize_message(reason.message)}. Please query only valid columns defined in the schema."
+                )
+            elif code == ValidationReasonCode.EXCEEDS_MAX_ROWS:
+                feedback_lines.append(
+                    "EXCEEDS_MAX_ROWS: The query exceeds row limits. Please include a TOP clause (e.g. SELECT TOP 100 ...)."
+                )
+            elif code == ValidationReasonCode.UNSUPPORTED_QUERY_SHAPE:
+                feedback_lines.append(
+                    "UNSUPPORTED_QUERY_SHAPE: The query structure was rejected. Please generate a simpler read-only query."
+                )
+            elif code == ValidationReasonCode.EMPTY_SQL:
+                feedback_lines.append(
+                    "EMPTY_SQL: Generated SQL was empty. Please generate a non-empty read-only T-SQL query."
+                )
+            else:
+                feedback_lines.append(
+                    f"VALIDATION_REJECTED: {code.value}. Please generate a compliant read-only query."
+                )
+
+    elif generation_error is not None:
+        if isinstance(generation_error, MalformedResponseError):
+            feedback_lines.append(
+                "MALFORMED_OUTPUT: Previous response was not valid structured JSON. "
+                "Please return valid JSON conforming to the schema with 'status', 'sql', 'explanation', and 'assumptions'."
+            )
+        elif isinstance(generation_error, EmptySQLError):
+            feedback_lines.append(
+                "EMPTY_SQL: Generated SQL was empty. Please provide a non-empty read-only T-SQL query."
+            )
+        else:
+            feedback_lines.append(
+                "GENERATION_ERROR: Generation failed. Please provide a valid structured JSON response."
+            )
+
+    elif execution_error is not None:
+        feedback_lines.append(
+            "DATABASE_EXECUTION_ERROR: The query encountered a database execution error. "
+            "Please check table/column names, data types, join conditions, and GROUP BY expressions."
+        )
+
+    return "\n".join(feedback_lines)
 
 
 class QueryPilotWorkflow:
@@ -146,18 +306,60 @@ class QueryPilotWorkflow:
                 "error_message": "Missing schema context for SQL generation.",
             }
 
+        # Monotonically track attempts
+        current_attempts = state.get("generation_attempts", 0) + 1
+        retry_count = max(0, current_attempts - 1)
+        can_retry = current_attempts < MAX_GENERATION_ATTEMPTS
+
+        # Incorporate sanitized recovery feedback into instructions if present
+        instructions = self.additional_instructions
+        recovery_feedback = state.get("recovery_feedback")
+        if recovery_feedback and recovery_feedback.strip():
+            logger.info(
+                "Generating SQL with recovery feedback (attempt %d of %d, request_id=%s)",
+                current_attempts,
+                MAX_GENERATION_ATTEMPTS,
+                state.get("request_id"),
+            )
+            if instructions and instructions.strip():
+                instructions = f"{instructions.strip()}\n\nRECOVERY INSTRUCTIONS:\n{recovery_feedback.strip()}"
+            else:
+                instructions = f"RECOVERY INSTRUCTIONS:\n{recovery_feedback.strip()}"
+
         request = SQLGenerationRequest(
             question=question,
             schema_context=schema,
             dialect=self.dialect,
-            instructions=self.additional_instructions,
+            instructions=instructions,
         )
 
         try:
             gen_resp = self.generator.generate(request)
         except SQLGenerationError as exc:
             logger.warning(f"Graph SQL generation failed with controlled error: {exc}")
+            is_rec = is_recoverable_generation_error(exc) and can_retry
+            feedback = (
+                build_sanitized_recovery_feedback(generation_error=exc)
+                if is_rec
+                else None
+            )
+            if is_rec:
+                logger.info(
+                    "Recovery scheduled for generation failure (attempt %d of %d, error=%s)",
+                    current_attempts,
+                    MAX_GENERATION_ATTEMPTS,
+                    type(exc).__name__,
+                )
+            elif current_attempts >= MAX_GENERATION_ATTEMPTS:
+                logger.warning(
+                    "Recovery exhausted after %d attempts for generation error (%s)",
+                    current_attempts,
+                    type(exc).__name__,
+                )
             return {
+                "generation_attempts": current_attempts,
+                "retry_count": retry_count,
+                "recovery_feedback": feedback,
                 "status": PipelineStatus.GENERATION_FAILED,
                 "error_category": ErrorCategory.SQL_GENERATION_FAILED,
                 "error_message": sanitize_message(str(exc)),
@@ -165,6 +367,9 @@ class QueryPilotWorkflow:
         except Exception as exc:
             logger.error(f"Graph SQL generation encountered unexpected error: {exc}")
             return {
+                "generation_attempts": current_attempts,
+                "retry_count": retry_count,
+                "recovery_feedback": None,
                 "status": PipelineStatus.GENERATION_FAILED,
                 "error_category": ErrorCategory.SQL_GENERATION_FAILED,
                 "error_message": sanitize_message(f"SQL generation error: {exc}"),
@@ -173,12 +378,23 @@ class QueryPilotWorkflow:
         if gen_resp.status == SQLGenerationStatus.UNSUPPORTED:
             logger.info(f"Question identified as unsupported by schema: {question}")
             return {
+                "generation_attempts": current_attempts,
+                "retry_count": retry_count,
+                "recovery_feedback": None,
                 "generation_response": gen_resp,
                 "status": PipelineStatus.UNSUPPORTED,
                 "error_category": ErrorCategory.UNSUPPORTED_QUESTION,
             }
 
-        return {"generation_response": gen_resp}
+        return {
+            "generation_attempts": current_attempts,
+            "retry_count": retry_count,
+            "recovery_feedback": None,
+            "generation_response": gen_resp,
+            "status": None,
+            "error_category": None,
+            "error_message": None,
+        }
 
     def validate_sql(self, state: QueryPilotState) -> Dict[str, Any]:
         """Node 3: Deterministically validate generated candidate SQL."""
@@ -191,6 +407,7 @@ class QueryPilotWorkflow:
                 "status": PipelineStatus.VALIDATION_REJECTED,
                 "error_category": ErrorCategory.VALIDATION_ERROR,
                 "error_message": "Candidate SQL or schema context missing for validation.",
+                "recovery_feedback": None,
             }
 
         try:
@@ -205,19 +422,47 @@ class QueryPilotWorkflow:
                 "status": PipelineStatus.VALIDATION_REJECTED,
                 "error_category": ErrorCategory.VALIDATION_ERROR,
                 "error_message": sanitize_message(f"Validation failed with unexpected error: {exc}"),
+                "recovery_feedback": None,
             }
 
         if not val_result.allowed:
             reasons_str = "; ".join(f"{r.code.value}: {r.message}" for r in val_result.reasons)
             logger.info(f"Candidate SQL rejected by validator: {reasons_str}")
+            can_retry = state.get("generation_attempts", 0) < MAX_GENERATION_ATTEMPTS
+            is_rec = is_recoverable_validation_result(val_result) and can_retry
+            feedback = (
+                build_sanitized_recovery_feedback(validation_result=val_result)
+                if is_rec
+                else None
+            )
+            if is_rec:
+                reason_codes = [r.code.value for r in val_result.reasons]
+                logger.info(
+                    "Recovery scheduled for validation rejection (attempt %d of %d, reasons=%s)",
+                    state.get("generation_attempts", 0),
+                    MAX_GENERATION_ATTEMPTS,
+                    reason_codes,
+                )
+            elif state.get("generation_attempts", 0) >= MAX_GENERATION_ATTEMPTS:
+                logger.warning(
+                    "Recovery exhausted after %d attempts for validation rejection",
+                    state.get("generation_attempts", 0),
+                )
             return {
                 "validation_result": val_result,
+                "recovery_feedback": feedback,
                 "status": PipelineStatus.VALIDATION_REJECTED,
                 "error_category": ErrorCategory.VALIDATION_REJECTED,
                 "error_message": f"Validation rejected: {reasons_str}",
             }
 
-        return {"validation_result": val_result}
+        return {
+            "validation_result": val_result,
+            "recovery_feedback": None,
+            "status": None,
+            "error_category": None,
+            "error_message": None,
+        }
 
     def execute_sql(self, state: QueryPilotState) -> Dict[str, Any]:
         """Node 4: Execute validated SQL under read-only transaction safeguards."""
@@ -227,6 +472,7 @@ class QueryPilotWorkflow:
                 "status": PipelineStatus.VALIDATION_REJECTED,
                 "error_category": ErrorCategory.VALIDATION_REJECTED,
                 "error_message": "Execution blocked: query has not been validated and approved.",
+                "recovery_feedback": None,
             }
 
         gen_resp = state.get("generation_response")
@@ -237,6 +483,7 @@ class QueryPilotWorkflow:
                 "status": PipelineStatus.EXECUTION_FAILED,
                 "error_category": ErrorCategory.EXECUTION_FAILED,
                 "error_message": "No candidate SQL available for execution.",
+                "recovery_feedback": None,
             }
 
         try:
@@ -249,13 +496,43 @@ class QueryPilotWorkflow:
             return {
                 "execution_result": exec_result,
                 "status": PipelineStatus.SUCCESS,
+                "recovery_feedback": None,
+                "error_category": None,
+                "error_message": None,
+            }
+        except QueryTimeoutError as exc:
+            logger.warning(f"Read-only query execution timed out: {exc}")
+            return {
+                "status": PipelineStatus.EXECUTION_FAILED,
+                "error_category": ErrorCategory.QUERY_TIMEOUT,
+                "error_message": sanitize_message(f"Query timeout: {exc}"),
+                "recovery_feedback": None,
             }
         except QueryExecutionError as exc:
             logger.warning(f"Read-only query execution failed: {exc}")
+            can_retry = state.get("generation_attempts", 0) < MAX_GENERATION_ATTEMPTS
+            is_rec = is_recoverable_execution_error(exc) and can_retry
+            feedback = (
+                build_sanitized_recovery_feedback(execution_error=exc)
+                if is_rec
+                else None
+            )
+            if is_rec:
+                logger.info(
+                    "Recovery scheduled for database execution error (attempt %d of %d)",
+                    state.get("generation_attempts", 0),
+                    MAX_GENERATION_ATTEMPTS,
+                )
+            elif state.get("generation_attempts", 0) >= MAX_GENERATION_ATTEMPTS:
+                logger.warning(
+                    "Recovery exhausted after %d attempts for database execution error",
+                    state.get("generation_attempts", 0),
+                )
             return {
                 "status": PipelineStatus.EXECUTION_FAILED,
                 "error_category": ErrorCategory.EXECUTION_FAILED,
                 "error_message": sanitize_message(f"Execution error: {exc}"),
+                "recovery_feedback": feedback,
             }
         except Exception as exc:
             logger.error(f"Unexpected error during query execution: {exc}")
@@ -263,6 +540,7 @@ class QueryPilotWorkflow:
                 "status": PipelineStatus.EXECUTION_FAILED,
                 "error_category": ErrorCategory.EXECUTION_FAILED,
                 "error_message": sanitize_message(f"Execution error: {exc}"),
+                "recovery_feedback": None,
             }
 
     def present_result(self, state: QueryPilotState) -> Dict[str, Any]:
@@ -302,9 +580,15 @@ class QueryPilotWorkflow:
         return "generate_sql"
 
     def route_after_generation(self, state: QueryPilotState) -> str:
-        """Route to validate_sql if answerable SQL exists; present_result on failure/unsupported."""
+        """Route to validate_sql if answerable SQL exists; generate_sql if recoverable; present_result on termination."""
         status = state.get("status")
-        if status in (PipelineStatus.UNSUPPORTED, PipelineStatus.GENERATION_FAILED):
+        if status == PipelineStatus.UNSUPPORTED:
+            return "present_result"
+
+        if state.get("recovery_feedback") is not None and state.get("generation_attempts", 0) < MAX_GENERATION_ATTEMPTS:
+            return "generate_sql"
+
+        if status == PipelineStatus.GENERATION_FAILED:
             return "present_result"
 
         gen_resp = state.get("generation_response")
@@ -319,10 +603,24 @@ class QueryPilotWorkflow:
         return "present_result"
 
     def route_after_validation(self, state: QueryPilotState) -> str:
-        """Route to execute_sql if validation allowed query; present_result if rejected."""
+        """Route to execute_sql if validation allowed query; generate_sql if recoverable; present_result if terminal."""
         val_result = state.get("validation_result")
         if val_result and val_result.allowed is True:
             return "execute_sql"
+
+        if state.get("recovery_feedback") is not None and state.get("generation_attempts", 0) < MAX_GENERATION_ATTEMPTS:
+            return "generate_sql"
+
+        return "present_result"
+
+    def route_after_execution(self, state: QueryPilotState) -> str:
+        """Route to present_result on success or terminal error; generate_sql if recoverable."""
+        if state.get("status") == PipelineStatus.SUCCESS:
+            return "present_result"
+
+        if state.get("recovery_feedback") is not None and state.get("generation_attempts", 0) < MAX_GENERATION_ATTEMPTS:
+            return "generate_sql"
+
         return "present_result"
 
     # =========================================================================
@@ -360,6 +658,7 @@ class QueryPilotWorkflow:
             self.route_after_generation,
             {
                 "validate_sql": "validate_sql",
+                "generate_sql": "generate_sql",
                 "present_result": "present_result",
             },
         )
@@ -368,12 +667,20 @@ class QueryPilotWorkflow:
             self.route_after_validation,
             {
                 "execute_sql": "execute_sql",
+                "generate_sql": "generate_sql",
+                "present_result": "present_result",
+            },
+        )
+        builder.add_conditional_edges(
+            "execute_sql",
+            self.route_after_execution,
+            {
+                "generate_sql": "generate_sql",
                 "present_result": "present_result",
             },
         )
 
         # Terminal transitions
-        builder.add_edge("execute_sql", "present_result")
         builder.add_edge("present_result", END)
 
         self._compiled_app = builder.compile()
