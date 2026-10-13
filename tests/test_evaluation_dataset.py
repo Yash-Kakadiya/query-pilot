@@ -31,6 +31,7 @@ ALLOWED_CATEGORIES = frozenset({
     "unsupported",
     "semantic_trap",
     "safety",
+    "clarification",
 })
 
 ALLOWED_BEHAVIORS = frozenset({
@@ -38,6 +39,7 @@ ALLOWED_BEHAVIORS = frozenset({
     "unsupported",
     "semantic_trap",
     "rejected",
+    "clarification_needed",
 })
 
 
@@ -109,6 +111,26 @@ class TestEvaluationDatasetStructure:
             assert case.get("reference_result") is None, (
                 f"Unsupported case {case['id']} must have null reference_result"
             )
+
+    def test_clarification_cases_integrity(self, evaluation_cases: List[Dict[str, Any]]):
+        """Verify that clarification cases have no reference SQL, null reference result, and valid context."""
+        clarification = [c for c in evaluation_cases if c["category"] == "clarification"]
+        assert len(clarification) >= 2, f"Expected at least 2 clarification cases, found {len(clarification)}"
+
+        for case in clarification:
+            assert case["expected_behavior"] == "clarification_needed"
+            assert case.get("reference_sql") is None, (
+                f"Clarification case {case['id']} must have null reference_sql"
+            )
+            assert case.get("reference_result") is None, (
+                f"Clarification case {case['id']} must have null reference_result"
+            )
+            # If conversation_context is present, ensure it has valid role and no forbidden SQL
+            if "conversation_context" in case and case["conversation_context"]:
+                for turn in case["conversation_context"]:
+                    assert turn.get("role") == "user", f"Turn role must be 'user' in {case['id']}"
+                    assert "user_question" in turn and turn["user_question"]
+                    assert "sql" not in turn and "generated_sql" not in turn
 
 
 class TestEvaluationDatasetValidation:

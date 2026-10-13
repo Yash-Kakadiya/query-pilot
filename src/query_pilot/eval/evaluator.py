@@ -17,6 +17,7 @@ from query_pilot.eval.models import (
     SemanticStatus,
 )
 from query_pilot.sql.generation import (
+    ConversationTurnContext,
     SQLGenerationError,
     SQLGenerationRequest,
     SQLGenerationStatus,
@@ -227,11 +228,28 @@ def evaluate_case(
         )
 
     # Boundary 2: Natural Language Generation
+    raw_context = case.get("conversation_context")
+    conv_context: List[ConversationTurnContext] = []
+    if raw_context:
+        if isinstance(raw_context, list):
+            for turn in raw_context:
+                if isinstance(turn, ConversationTurnContext):
+                    conv_context.append(turn)
+                elif isinstance(turn, dict):
+                    conv_context.append(ConversationTurnContext(**turn))
+                else:
+                    raise ValueError(f"Invalid conversation turn format: {type(turn)}")
+        else:
+            raise ValueError(f"conversation_context must be a list, got {type(raw_context)}")
+
+    context_payload = [t.model_dump() for t in conv_context] if conv_context else None
+
     try:
         request = SQLGenerationRequest(
             question=question,
             schema_context=schema,
             dialect="T-SQL",
+            conversation_context=conv_context,
         )
         gen_resp = generator.generate(request)
     except SQLGenerationError as exc:
@@ -243,6 +261,7 @@ def evaluate_case(
             expected_behavior=expected_behavior,
             generation_status="failed",
             generation_error=str(exc),
+            conversation_context=context_payload,
             validation_allowed=False,
             execution_status="not_executed",
             semantic_status=SemanticStatus.NOT_APPLICABLE,
@@ -258,6 +277,7 @@ def evaluate_case(
             expected_behavior=expected_behavior,
             generation_status="failed",
             generation_error=f"Unexpected error: {exc}",
+            conversation_context=context_payload,
             validation_allowed=False,
             execution_status="not_executed",
             semantic_status=SemanticStatus.NOT_APPLICABLE,
@@ -269,15 +289,25 @@ def evaluate_case(
     explanation = gen_resp.explanation
     assumptions = gen_resp.assumptions or []
 
-    # Handle structured refusal (SQLGenerationStatus.UNSUPPORTED)
-    if gen_resp.status == SQLGenerationStatus.UNSUPPORTED:
-        is_expected = (expected_behavior == "unsupported")
-        sem_stat = SemanticStatus.CORRECTLY_REFUSED if is_expected else SemanticStatus.INCORRECT
-        unsupp_class = "correctly_unsupported" if is_expected else "incorrectly_unsupported"
-        mismatch_type = (
-            MismatchClassification.UNSUPPORTED_HANDLING.value
+    # Handle structured clarification (SQLGenerationStatus.CLARIFICATION_NEEDED)
+    if gen_resp.status == SQLGenerationStatus.CLARIFICATION_NEEDED:
+        is_expected = (expected_behavior in ("clarification_needed", "clarification"))
+        clar_prompt = gen_resp.clarification_prompt
+        clar_opts = (
+            [opt.model_dump() for opt in gen_resp.clarification_options]
+            if gen_resp.clarification_options
+            else []
+        )
+        sem_stat = (
+            SemanticStatus.CORRECTLY_CLARIFIED
             if is_expected
-            else MismatchClassification.SEMANTIC_INCORRECT.value
+            else SemanticStatus.INCORRECTLY_CLARIFIED
+        )
+        clar_class = "correctly_clarified" if is_expected else "incorrectly_clarified"
+        mismatch_type = (
+            MismatchClassification.CLARIFICATION_HANDLING.value
+            if is_expected
+            else MismatchClassification.CLARIFICATION_MISMATCH.value
         )
         return CaseEvaluationResult(
             case_id=case_id,
@@ -288,15 +318,67 @@ def evaluate_case(
             generation_status="success",
             generation_explanation=explanation,
             generation_assumptions=assumptions,
+            clarification_prompt=clar_prompt,
+            clarification_options=clar_opts,
+            conversation_context=context_payload,
             validation_allowed=True if is_expected else False,
             validation_reasons=[],
             execution_status="not_executed",
-            result_matches_reference=None,
-            exact_result_match=None,
+            result_matches_reference=None if is_expected else False,
+            exact_result_match=None if is_expected else False,
+            semantic_status=sem_stat,
+            semantic_correct=True if is_expected else False,
+            mismatch_classification=mismatch_type,
+            clarification_classification=clar_class,
+            structurally_valid=True,
+            validator_accepted=None,
+            executed=False,
+            failure_stage=None if is_expected else FailureStage.CLARIFICATION,
+            notes=notes or (
+                "Structured clarification request from generator."
+                if is_expected
+                else "Model unexpectedly requested clarification for an answerable query."
+            ),
+        )
+
+    # Handle structured refusal (SQLGenerationStatus.UNSUPPORTED)
+    if gen_resp.status == SQLGenerationStatus.UNSUPPORTED:
+        is_expected = (expected_behavior == "unsupported")
+        if expected_behavior in ("clarification_needed", "clarification"):
+            sem_stat = SemanticStatus.INCORRECT
+            unsupp_class = "incorrectly_unsupported"
+            mismatch_type = MismatchClassification.CLARIFICATION_MISMATCH.value
+            clar_class = "incorrectly_unsupported"
+        else:
+            sem_stat = SemanticStatus.CORRECTLY_REFUSED if is_expected else SemanticStatus.INCORRECT
+            unsupp_class = "correctly_unsupported" if is_expected else "incorrectly_unsupported"
+            mismatch_type = (
+                MismatchClassification.UNSUPPORTED_HANDLING.value
+                if is_expected
+                else MismatchClassification.SEMANTIC_INCORRECT.value
+            )
+            clar_class = None
+
+        return CaseEvaluationResult(
+            case_id=case_id,
+            category=category,
+            question=question,
+            expected_behavior=expected_behavior,
+            generated_sql=None,
+            generation_status="success",
+            generation_explanation=explanation,
+            generation_assumptions=assumptions,
+            conversation_context=context_payload,
+            validation_allowed=True if is_expected else False,
+            validation_reasons=[],
+            execution_status="not_executed",
+            result_matches_reference=None if is_expected else False,
+            exact_result_match=None if is_expected else False,
             semantic_status=sem_stat,
             semantic_correct=True if is_expected else False,
             mismatch_classification=mismatch_type,
             unsupported_classification=unsupp_class,
+            clarification_classification=clar_class,
             structurally_valid=True,
             validator_accepted=None,
             executed=False,
@@ -307,6 +389,34 @@ def evaluate_case(
     # Boundary 3: Deterministic Validation
     val_res = validate_sql(candidate_sql, schema)
     validation_reasons = [r.to_dict() for r in val_res.reasons]
+
+    # Handle query expected to require clarification where candidate SQL was returned
+    if expected_behavior in ("clarification_needed", "clarification"):
+        return CaseEvaluationResult(
+            case_id=case_id,
+            category=category,
+            question=question,
+            expected_behavior=expected_behavior,
+            generated_sql=candidate_sql,
+            generation_status="success",
+            generation_explanation=explanation,
+            generation_assumptions=assumptions,
+            conversation_context=context_payload,
+            validation_allowed=val_res.allowed,
+            validation_reasons=validation_reasons,
+            execution_status="not_executed",
+            result_matches_reference=False,
+            exact_result_match=False,
+            semantic_status=SemanticStatus.INCORRECT,
+            semantic_correct=False,
+            mismatch_classification=MismatchClassification.CLARIFICATION_MISMATCH.value,
+            clarification_classification="incorrectly_answered",
+            structurally_valid=True,
+            validator_accepted=val_res.allowed,
+            executed=False,
+            failure_stage=FailureStage.GENERATION,
+            notes=notes or "Model generated SQL for a query requiring clarification.",
+        )
 
     # Handle Unsupported Questions
     if expected_behavior == "unsupported":
@@ -322,6 +432,7 @@ def evaluate_case(
                 generation_status="success",
                 generation_explanation=explanation,
                 generation_assumptions=assumptions,
+                conversation_context=context_payload,
                 validation_allowed=False,
                 validation_reasons=validation_reasons,
                 execution_status="not_executed",
@@ -351,6 +462,7 @@ def evaluate_case(
                 generation_status="success",
                 generation_explanation=explanation,
                 generation_assumptions=assumptions,
+                conversation_context=context_payload,
                 validation_allowed=True,
                 validation_reasons=[],
                 execution_status="not_executed",
@@ -378,6 +490,7 @@ def evaluate_case(
             generation_status="success",
             generation_explanation=explanation,
             generation_assumptions=assumptions,
+            conversation_context=context_payload,
             validation_allowed=False,
             validation_reasons=validation_reasons,
             execution_status="not_executed",
@@ -407,6 +520,7 @@ def evaluate_case(
             generation_status="success",
             generation_explanation=explanation,
             generation_assumptions=assumptions,
+            conversation_context=context_payload,
             validation_allowed=True,
             validation_reasons=[],
             execution_status="failed",
@@ -433,6 +547,7 @@ def evaluate_case(
             generation_status="success",
             generation_explanation=explanation,
             generation_assumptions=assumptions,
+            conversation_context=context_payload,
             validation_allowed=True,
             validation_reasons=[],
             execution_status="failed",
@@ -499,6 +614,7 @@ def evaluate_case(
         generation_status="success",
         generation_explanation=explanation,
         generation_assumptions=assumptions,
+        conversation_context=context_payload,
         validation_allowed=True,
         validation_reasons=[],
         execution_status="success",
@@ -526,6 +642,9 @@ def compute_evaluation_metrics(results: List[CaseEvaluationResult]) -> Evaluatio
     answerable_cases = [r for r in results if r.expected_behavior == "answerable"]
     semantic_trap_cases = [r for r in results if r.category == "semantic_trap"]
     unsupported_cases = [r for r in results if r.expected_behavior == "unsupported"]
+    clarification_cases = [
+        r for r in results if r.expected_behavior in ("clarification_needed", "clarification")
+    ]
 
     # Generation metrics
     gen_success_nl = [r for r in nl_cases if r.generation_status == "success"]
@@ -583,6 +702,18 @@ def compute_evaluation_metrics(results: List[CaseEvaluationResult]) -> Evaluatio
     ]
     unsupported_rate = len(unsupported_correct) / len(unsupported_cases) if unsupported_cases else 0.0
 
+    # Clarification recognition
+    clarification_correct = [
+        r for r in clarification_cases
+        if r.clarification_classification == "correctly_clarified"
+        or r.semantic_status == SemanticStatus.CORRECTLY_CLARIFIED
+    ]
+    clarification_rate = (
+        len(clarification_correct) / len(clarification_cases)
+        if clarification_cases
+        else 0.0
+    )
+
     # Safety rejection rate
     safety_rejected = [r for r in safety_cases if not r.validation_allowed]
     safety_rate = len(safety_rejected) / len(safety_cases) if safety_cases else 0.0
@@ -614,6 +745,21 @@ def compute_evaluation_metrics(results: List[CaseEvaluationResult]) -> Evaluatio
             cat_exec = "N/A"
             cat_exact = "N/A"
             cat_sem = "N/A"
+            gen_by_cat[cat] = gen_cnt / cat_total if cat_total else 0.0
+            val_by_cat[cat] = val_cnt / cat_total if cat_total else 0.0
+        elif cat in ("clarification", "clarification_needed"):
+            gen_cnt = sum(1 for r in cat_items if r.generation_status == "success")
+            val_cnt = sum(1 for r in cat_items if r.validation_allowed)
+            cat_gen = f"{gen_cnt}/{cat_total}"
+            cat_val = f"{val_cnt}/{cat_total}"
+            cat_exec = "N/A"
+            cat_exact = "N/A"
+            sem_cnt = sum(
+                1 for r in cat_items
+                if r.clarification_classification == "correctly_clarified"
+                or r.semantic_status == SemanticStatus.CORRECTLY_CLARIFIED
+            )
+            cat_sem = f"{sem_cnt}/{cat_total}"
             gen_by_cat[cat] = gen_cnt / cat_total if cat_total else 0.0
             val_by_cat[cat] = val_cnt / cat_total if cat_total else 0.0
         else:
@@ -672,6 +818,9 @@ def compute_evaluation_metrics(results: List[CaseEvaluationResult]) -> Evaluatio
         unsupported_correct_count=len(unsupported_correct),
         unsupported_recognition_rate=unsupported_rate,
         unsupported_explanation_recognition_count=len(unsupported_cases),
+        clarification_count=len(clarification_cases),
+        clarification_correct_count=len(clarification_correct),
+        clarification_recognition_rate=clarification_rate,
         safety_fixture_count=len(safety_cases),
         safety_rejected_count=len(safety_rejected),
         safety_rejection_rate=safety_rate,

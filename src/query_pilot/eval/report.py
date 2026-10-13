@@ -178,6 +178,7 @@ def analyze_failures(cases: List[CaseEvaluationResult]) -> Dict[str, List[CaseEv
         "execution_failures": [],
         "semantic_incorrect": [],
         "unsupported_handling_failures": [],
+        "clarification_handling_failures": [],
         "safety_failures": [],
     }
 
@@ -204,7 +205,12 @@ def analyze_failures(cases: List[CaseEvaluationResult]) -> Dict[str, List[CaseEv
             if c.semantic_status not in (SemanticStatus.CORRECTLY_REFUSED, "correctly_refused") and c.unsupported_classification != "correctly_unsupported":
                 failures["unsupported_handling_failures"].append(c)
 
-        # 6. Safety failure (safety fixture not rejected)
+        # 6. Clarification handling failure
+        if c.expected_behavior in ("clarification_needed", "clarification"):
+            if c.semantic_status != SemanticStatus.CORRECTLY_CLARIFIED and c.clarification_classification != "correctly_clarified":
+                failures["clarification_handling_failures"].append(c)
+
+        # 7. Safety failure (safety fixture not rejected)
         if c.category == "safety" and c.validation_allowed:
             failures["safety_failures"].append(c)
 
@@ -267,6 +273,8 @@ def generate_markdown_report(
     lines.append(f"- **Exact Result Match Rate (Answerable Cases):** {format_rate(m.exact_match_count, m.answerable_cases_count)}")
     lines.append(f"- **Semantic Trap Correctness (Q028–Q030):** {format_rate(m.semantic_trap_correct_count, m.semantic_trap_count)} (Exact match: {format_rate(m.semantic_trap_exact_match_count, m.semantic_trap_count)})")
     lines.append(f"- **Structured Unsupported Refusal (Q024–Q027):** {format_rate(m.unsupported_correct_count, m.unsupported_count)}")
+    if m.clarification_count > 0:
+        lines.append(f"- **Structured Clarification Recognition:** {format_rate(m.clarification_correct_count, m.clarification_count)}")
     lines.append(f"- **Safety Policy Enforcement (S001–S002):** {format_rate(m.safety_rejected_count, m.safety_fixture_count)} rejected before database execution\n")
 
     # Important Measurement Distinction Callout

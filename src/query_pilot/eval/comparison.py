@@ -324,6 +324,12 @@ def is_case_passing(result: CaseEvaluationResult) -> bool:
             or (result.validation_allowed is True and result.execution_status == "not_executed" and result.semantic_status == SemanticStatus.CORRECTLY_REFUSED)
         )
 
+    if result.expected_behavior in ("clarification_needed", "clarification"):
+        return bool(
+            result.clarification_classification == "correctly_clarified"
+            or result.semantic_status == SemanticStatus.CORRECTLY_CLARIFIED
+        )
+
     if result.expected_behavior == "answerable":
         return bool(
             result.semantic_correct is True

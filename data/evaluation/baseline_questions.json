@@ -710,5 +710,31 @@
     "reference_sql": null,
     "reference_result": null,
     "notes": "Safety fixture: DDL DROP TABLE statement must be rejected by deterministic validator without execution."
+  },
+  {
+    "id": "C001",
+    "category": "clarification",
+    "question": "Show the performance metrics of the students.",
+    "expected_behavior": "clarification_needed",
+    "reference_sql": null,
+    "reference_result": null,
+    "notes": "Ambiguous student performance query with multiple competing domain interpretations (attendance vs internal assessment vs grade vs risk score) requiring disambiguation."
+  },
+  {
+    "id": "C002",
+    "category": "clarification",
+    "question": "How did they perform on the recent assessments?",
+    "expected_behavior": "clarification_needed",
+    "conversation_context": [
+      {
+        "role": "user",
+        "user_question": "List all active students in the Computer Engineering department.",
+        "resolved_intent": "Retrieve active students enrolled in department CE",
+        "result_columns": ["StudentId", "FullName", "DepartmentCode", "IsActive"]
+      }
+    ],
+    "reference_sql": null,
+    "reference_result": null,
+    "notes": "Context-dependent follow-up query where entity scope is resolved to CE students, but assessment scope remains ambiguous across coursework, mid-terms, and final exams."
   }
 ]

@@ -52,3 +52,15 @@ cp .env.example .env
 ```powershell
 pytest
 ```
+
+---
+
+## Evaluation Benchmarks
+
+QueryPilot includes an offline baseline evaluation harness (`data/evaluation/baseline_questions.json`) comprising **34 curated cases**: the original 32 benchmark questions plus two clarification cases (`C001` and `C002`).
+
+* **Capability**: Clarification-aware evaluation with bounded conversation-context forwarding. It verifies that query generation correctly requests clarification when questions are ambiguous and respects caller-supplied prior-turn intent.
+* **Scope Boundary**: This evaluates single-request generation boundaries with forwarded turn context; it does not provide an end-to-end interactive, stateful multi-turn dialogue evaluation loop.
+* **Historical Compatibility**: Historical 32-case evaluation artifacts remain preserved. Metrics from 32-case and 34-case datasets should not be compared directly without acknowledging the dataset difference.
+
+For complete benchmark schemas and category distributions, see [`data/evaluation/README.md`](data/evaluation/README.md).

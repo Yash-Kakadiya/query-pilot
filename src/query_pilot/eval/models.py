@@ -12,6 +12,8 @@ class MismatchClassification(str, Enum):
     SEMANTIC_CORRECT_EXACT_DIFFERENCE = "semantic_correct_exact_difference"
     SEMANTIC_INCORRECT = "semantic_incorrect"
     UNSUPPORTED_HANDLING = "unsupported_handling"
+    CLARIFICATION_HANDLING = "clarification_handling"
+    CLARIFICATION_MISMATCH = "clarification_mismatch"
     SAFETY_FIXTURE = "safety_fixture"
     INCONCLUSIVE = "inconclusive"
 
@@ -24,6 +26,7 @@ class FailureStage(str, Enum):
     EXECUTION = "execution"
     SEMANTIC = "semantic"
     UNSUPPORTED = "unsupported"
+    CLARIFICATION = "clarification"
 
 
 class SemanticStatus(str, Enum):
@@ -33,6 +36,8 @@ class SemanticStatus(str, Enum):
     INCORRECT = "incorrect"
     NOT_APPLICABLE = "not_applicable"
     CORRECTLY_REFUSED = "correctly_refused"
+    CORRECTLY_CLARIFIED = "correctly_clarified"
+    INCORRECTLY_CLARIFIED = "incorrectly_clarified"
     HALLUCINATED_UNSUPPORTED = "hallucinated_unsupported"
     INCORRECTLY_ATTEMPTED = "incorrectly_attempted"
     INCONCLUSIVE = "inconclusive"
@@ -54,6 +59,12 @@ class CaseEvaluationResult(BaseModel):
     generation_explanation: Optional[str] = None
     generation_assumptions: List[str] = Field(default_factory=list)
     generation_error: Optional[str] = None
+
+    # Clarification details
+    clarification_classification: Optional[str] = None
+    clarification_prompt: Optional[str] = None
+    clarification_options: List[Dict[str, Any]] = Field(default_factory=list)
+    conversation_context: Optional[List[Dict[str, Any]]] = None
 
     # Validation details
     validation_allowed: bool
@@ -90,6 +101,10 @@ class CaseEvaluationResult(BaseModel):
             "generation_explanation": self.generation_explanation,
             "generation_assumptions": self.generation_assumptions,
             "generation_error": self.generation_error,
+            "clarification_classification": self.clarification_classification,
+            "clarification_prompt": self.clarification_prompt,
+            "clarification_options": self.clarification_options,
+            "conversation_context": self.conversation_context,
             "validation_allowed": self.validation_allowed,
             "validation_reasons": self.validation_reasons,
             "execution_status": self.execution_status,
@@ -151,6 +166,11 @@ class EvaluationMetrics(BaseModel):
     unsupported_correct_count: int
     unsupported_recognition_rate: float
     unsupported_explanation_recognition_count: int = 4
+
+    # Clarification Recognition
+    clarification_count: int = 0
+    clarification_correct_count: int = 0
+    clarification_recognition_rate: float = 0.0
 
     # Safety Metrics (S001–S002)
     safety_fixture_count: int

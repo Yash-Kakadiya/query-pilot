@@ -8,7 +8,7 @@ The dataset serves as authoritative ground truth for evaluating pipeline capabil
 
 ## Dataset Structure
 
-The dataset is located in [`baseline_questions.json`](baseline_questions.json) and comprises **32 carefully curated evaluation cases** formatted as follows:
+The dataset is located in [`baseline_questions.json`](baseline_questions.json) and comprises **34 carefully curated evaluation cases** (the original 32 benchmark questions plus two clarification cases, `C001` and `C002`), formatted as follows:
 
 ```json
 {
@@ -29,20 +29,21 @@ The dataset is located in [`baseline_questions.json`](baseline_questions.json) a
 
 | Field | Type | Description |
 |---|---|---|
-| `id` | string | Unique case identifier (e.g., `Q001`, `S001`). |
+| `id` | string | Unique case identifier (e.g., `Q001`, `S001`, `C001`). |
 | `category` | string | Evaluation category name. |
 | `question` | string / null | Natural-language query prompt (`null` for safety fixtures). |
-| `expected_behavior` | string | Expected outcome: `answerable`, `unsupported`, `semantic_trap`, or `rejected`. |
-| `reference_sql` | string / null | Verified, read-only SQL for `answerable` cases (`null` for unsupported/safety). |
+| `expected_behavior` | string | Expected outcome: `answerable`, `unsupported`, `semantic_trap`, `rejected`, or `clarification_needed`. |
+| `reference_sql` | string / null | Verified, read-only SQL for `answerable` cases (`null` for unsupported/safety/clarification). |
 | `reference_result` | array / null | Exact JSON-serializable rows returned from `GradeSense_Local`. |
 | `candidate_sql` | string / null | Dangerous query string tested exclusively for safety rejection. |
 | `expected_reason` | string / null | Rejection reason code (e.g. `NOT_READ_ONLY`) for safety fixtures. |
 | `semantic_trap_details` | object / null | Explains why plausible incorrect joins pass safety checks but fail business semantics. |
+| `conversation_context` | array / null | Optional list of bounded prior conversation turns (`role`, `user_question`, `resolved_intent`, `result_columns`). |
 | `notes` | string | Context, tables involved, and expected behavior notes. |
 
 ---
 
-## Category Distribution (32 Cases)
+## Category Distribution (34 Cases)
 
 | Category | Count | IDs | Description |
 |---|:---:|---|---|
@@ -55,6 +56,27 @@ The dataset is located in [`baseline_questions.json`](baseline_questions.json) a
 | **Unsupported** | 4 | `Q024`–`Q027` | Questions outside database scope (fees, hostels, placements, library). |
 | **Semantic Trap** | 3 | `Q028`–`Q030` | Valid syntax/schema queries that produce wrong semantics if misjoined. |
 | **Safety Regressions** | 2 | `S001`–`S002` | Destructive DML (`DELETE`) and DDL (`DROP`) validation fixtures. |
+| **Clarification** | 2 | `C001`–`C002` | Ambiguous or context-dependent requests evaluating clarification recognition and bounded context forwarding. |
+
+---
+
+## Clarification and Context Evaluation Scope
+
+The baseline dataset evaluates clarification handling as a first-class outcome via `C001` and `C002`:
+- **`C001` (Vague Question)**: Ambiguous standalone query without sufficient domain or schema specificity to construct SQL safely, expecting clarification.
+- **`C002` (Context-Dependent Follow-Up)**: Follow-up question supplying prior user intent and result column summaries in `conversation_context`.
+
+### Capability Definition and Scope Boundary
+- **Clarification-Aware Evaluation with Bounded Context Forwarding**: Evaluates whether the generation subsystem correctly identifies queries requiring clarification instead of generating SQL, and whether callers can supply bounded conversation context ($\le 3$ prior turns, restricted to user questions, intent summaries, and column lists with zero raw SQL, rows, or credentials) to inform generation or clarification decisions.
+- **Explicit Scope Limitation**: This evaluation capability tests single-request generation boundaries with forwarded turn context. It does **not** yet provide an end-to-end interactive, stateful multi-turn dialogue evaluation loop (i.e., multi-turn back-and-forth session simulation or dynamic agent dialogue).
+
+---
+
+## Dataset Versioning and Historical Benchmark Compatibility
+
+- **Dataset Evolution**: The baseline question suite originally contained 32 cases (`Q001`–`Q032`). Task 1.30-B expanded the active suite to 34 cases with the addition of `C001` and `C002`.
+- **Preservation of Historical Artifacts**: Saved historical evaluation artifacts (e.g., `baseline_results.json`, `baseline_results_1_14.json`, `comparison_1_22_audited.json`, `semantic_audit_1_26.json`) remain unchanged on their original 32-case baseline.
+- **Comparability Warning**: Metrics derived from the historical 32-case dataset and the expanded 34-case dataset must not be compared directly without acknowledging the dataset difference, particularly regarding overall accuracy, execution rates, and the introduction of clarification recognition metrics.
 
 ---
 
