@@ -1,0 +1,120 @@
+[
+  {
+    "id": "RET_REL_01",
+    "category": "relationship",
+    "question": "Find the top 3 students with their student ID, full name, enrollment number, and average obtained marks across all non-absent assessments ordered by average marks descending.",
+    "intent": null,
+    "expected_entry_ids": [
+      "KB_MARKS_STUDENT_ENROLLMENT_REL",
+      "KB_STU_USERS_INHERITANCE"
+    ],
+    "rationale": "Joining student marks to students requires the course enrollment join path (KB_MARKS_STUDENT_ENROLLMENT_REL) and student full name requires user inheritance (KB_STU_USERS_INHERITANCE)."
+  },
+  {
+    "id": "RET_REL_02",
+    "category": "relationship",
+    "question": "List all course offerings with their subject code, subject name, and batch name.",
+    "intent": null,
+    "expected_entry_ids": [
+      "KB_COURSE_OFFERING_HIERARCHY"
+    ],
+    "rationale": "Multi-table join between CourseOfferings, Subjects, and Batches requires the course offering hierarchy card (KB_COURSE_OFFERING_HIERARCHY)."
+  },
+  {
+    "id": "RET_INHERIT_01",
+    "category": "table_inheritance",
+    "question": "List all faculty members with their employee ID, designation, and full name ordered by employee ID.",
+    "intent": null,
+    "expected_entry_ids": [
+      "KB_FAC_USERS_INHERITANCE"
+    ],
+    "rationale": "Faculty personal details such as FullName reside on Users and must be queried via Faculties.Id = Users.Id shared primary key inheritance (KB_FAC_USERS_INHERITANCE)."
+  },
+  {
+    "id": "RET_TRAP_01",
+    "category": "semantic_trap",
+    "question": "List the first 5 students with their enrollment number and full name ordered by student ID.",
+    "intent": null,
+    "expected_entry_ids": [
+      "KB_STU_USERS_INHERITANCE",
+      "KB_TRAP_STUDENT_DEPARTMENT_JOIN"
+    ],
+    "required_trap_id": "KB_TRAP_STUDENT_DEPARTMENT_JOIN",
+    "rationale": "Known semantic trap Q028 where models risk erroneously joining Students.DepartmentId = Users.Id instead of Students.Id = Users.Id. Requires student identity inheritance and student-department disambiguation."
+  },
+  {
+    "id": "RET_TRAP_02",
+    "category": "semantic_trap",
+    "question": "List the first 5 faculty members with their employee ID, full name, and department name ordered by employee ID.",
+    "intent": null,
+    "expected_entry_ids": [
+      "KB_FAC_USERS_INHERITANCE",
+      "KB_TRAP_FACULTY_DEPARTMENT_JOIN"
+    ],
+    "required_trap_id": "KB_TRAP_FACULTY_DEPARTMENT_JOIN",
+    "rationale": "Known semantic trap Q029 where models equate Faculties.Id = Departments.Id instead of Faculties.DepartmentId = Departments.Id. Requires faculty inheritance and faculty department disambiguation."
+  },
+  {
+    "id": "RET_TRAP_03",
+    "category": "semantic_trap",
+    "question": "List the first 5 course offerings with their offering ID, subject name, and coordinator full name ordered by offering ID.",
+    "intent": null,
+    "expected_entry_ids": [
+      "KB_COURSE_OFFERING_HIERARCHY",
+      "KB_TRAP_OFFERING_COORDINATOR_JOIN"
+    ],
+    "required_trap_id": "KB_TRAP_OFFERING_COORDINATOR_JOIN",
+    "rationale": "Known semantic trap Q030 where models confuse SubjectId and SubjectCoordinatorId when joining to Faculties. Requires coordinator multi-hop join guidance and course offering hierarchy."
+  },
+  {
+    "id": "RET_OOD_01",
+    "category": "out_of_domain",
+    "question": "What is the capital city of France?",
+    "intent": null,
+    "expected_entry_ids": [],
+    "rationale": "General world knowledge query outside the GradeSense domain; must return zero domain knowledge entries."
+  },
+  {
+    "id": "RET_UNINDEXED_01",
+    "category": "unindexed_schema",
+    "question": "What is the count of attendance records for each attendance status?",
+    "intent": null,
+    "expected_entry_ids": [],
+    "rationale": "Valid database query targeting AttendanceRecords, which is unrepresented in the 7 catalog knowledge entries."
+  },
+  {
+    "id": "RET_UNINDEXED_02",
+    "category": "unindexed_schema",
+    "question": "What is the distribution of predictions by predicted category and their average risk score?",
+    "intent": null,
+    "expected_entry_ids": [],
+    "rationale": "Valid database query targeting the ML Predictions table, which is unrepresented in the active knowledge catalog."
+  },
+  {
+    "id": "RET_UNRESOLVED_01",
+    "category": "unresolved_business_rules",
+    "question": "Which students are currently classified as at-risk in their courses?",
+    "intent": null,
+    "expected_entry_ids": [],
+    "rationale": "Touches unresolved business rule #2 (Official At-Risk Student Definition). Since unresolved rules are excluded from the active catalog, no active card applies."
+  },
+  {
+    "id": "RET_UNRESOLVED_02",
+    "category": "unresolved_business_rules",
+    "question": "What is the official cumulative grade point average formula for enrolled students?",
+    "intent": null,
+    "expected_entry_ids": [],
+    "rationale": "Touches unresolved business rule #1 (Dynamic vs. Stored CGPA). The catalog contains no authoritative dynamic GPA calculation rule; no active catalog card applies."
+  },
+  {
+    "id": "RET_FOLLOWUP_01",
+    "category": "follow_up_context",
+    "question": "How did they perform on the recent assessments?",
+    "intent": "Retrieve active students enrolled in department CE",
+    "expected_entry_ids": [
+      "KB_MARKS_STUDENT_ENROLLMENT_REL",
+      "KB_TRAP_STUDENT_DEPARTMENT_JOIN"
+    ],
+    "rationale": "Context-dependent follow-up question. The question alone has no entity, but the resolved intent references students in department CE, requiring student mark enrollment joins and student department join disambiguation."
+  }
+]
