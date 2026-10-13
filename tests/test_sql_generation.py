@@ -1,6 +1,7 @@
 """Unit tests for SQL generation contract, schema context formatting, and prompt building."""
 
 import json
+from pathlib import Path
 from typing import List, Optional
 import pytest
 from pydantic import ValidationError
@@ -9,6 +10,7 @@ from unittest.mock import MagicMock
 
 from query_pilot.db.models import ColumnMetadata, DatabaseSchema, ForeignKeyMetadata, TableMetadata
 from query_pilot.observability import LLMUsageMetadata
+from query_pilot.rag.retriever import DomainContextRetriever, RetrievalResult
 from query_pilot.sql.gemini_generator import GeminiSQLGenerator, _GeminiSQLPayloadSchema
 from query_pilot.sql.generation import (
     MAX_CLARIFICATION_OPTIONS,
@@ -903,3 +905,264 @@ def test_gemini_generator_answerable_with_clarification_options_rejected(mock_mo
     )
     with pytest.raises(MalformedResponseError):
         gen.generate(req)
+
+
+# ==============================================================================
+# Domain Knowledge Integration Tests (Task 1.31-D)
+# ==============================================================================
+
+def test_gemini_generator_includes_relevant_domain_guidance_in_prompt(mock_model_facing_schema):
+    """Verify relevant domain guidance from knowledge catalog is included in the prompt."""
+    response_json = json.dumps({
+        "status": "answerable",
+        "sql": "SELECT u.FullName FROM dbo.Students s JOIN dbo.Users u ON s.Id = u.Id",
+        "explanation": "Joins Students to Users.",
+    })
+    gen = _mock_gemini_generator(response_json)
+    req = SQLGenerationRequest(
+        question="How are student names joined from users?",
+        schema_context=mock_model_facing_schema,
+    )
+    resp = gen.generate(req)
+
+    assert resp.status == SQLGenerationStatus.ANSWERABLE
+    prompt = gen.client.models.generate_content.call_args.kwargs["contents"]
+
+    assert "=== RETRIEVED DOMAIN KNOWLEDGE (INFORMATIONAL ONLY) ===" in prompt
+    assert "NOTE: The following domain definitions and join guidance are informational only." in prompt
+    assert "[KB_STU_USERS_INHERITANCE]" in prompt
+    assert "Students.Id = Users.Id" in prompt
+    assert "=== USER QUESTION ===" in prompt
+
+
+def test_gemini_generator_omits_domain_guidance_for_irrelevant_questions(mock_model_facing_schema):
+    """Verify irrelevant questions omit the domain guidance section cleanly."""
+    response_json = json.dumps({
+        "status": "unsupported",
+        "sql": None,
+        "explanation": "Weather is not stored in the database.",
+    })
+    gen = _mock_gemini_generator(response_json)
+    req = SQLGenerationRequest(
+        question="What is the weather forecast for tomorrow?",
+        schema_context=mock_model_facing_schema,
+    )
+    resp = gen.generate(req)
+
+    assert resp.status == SQLGenerationStatus.UNSUPPORTED
+    prompt = gen.client.models.generate_content.call_args.kwargs["contents"]
+
+    assert "=== RETRIEVED DOMAIN KNOWLEDGE" not in prompt
+    assert "=== DOMAIN GUIDANCE" not in prompt
+    assert "=== USER QUESTION ===" in prompt
+    assert "Question: What is the weather forecast for tomorrow?" in prompt
+
+
+def test_gemini_generator_retrieves_semantic_traps_q028_q029_q030(mock_model_facing_schema):
+    """Verify Q028, Q029, and Q030 questions retrieve their respective semantic trap guidance."""
+    response_json = json.dumps({
+        "status": "answerable",
+        "sql": "SELECT 1",
+        "explanation": "Test.",
+    })
+    gen = _mock_gemini_generator(response_json)
+
+    # Q028: student-to-department vs student-to-user
+    req_q28 = SQLGenerationRequest(
+        question="Students joined with department and user dean",
+        schema_context=mock_model_facing_schema,
+    )
+    gen.generate(req_q28)
+    prompt_q28 = gen.client.models.generate_content.call_args.kwargs["contents"]
+    assert "[KB_TRAP_STUDENT_DEPARTMENT_JOIN]" in prompt_q28
+    assert "Students.DepartmentId references Departments.Id, NOT Users.Id" in prompt_q28
+
+    # Q029: faculty primary key vs department foreign key
+    req_q29 = SQLGenerationRequest(
+        question="Faculties primary key vs department foreign key collision",
+        schema_context=mock_model_facing_schema,
+    )
+    gen.generate(req_q29)
+    prompt_q29 = gen.client.models.generate_content.call_args.kwargs["contents"]
+    assert "[KB_TRAP_FACULTY_DEPARTMENT_JOIN]" in prompt_q29
+    assert "Faculties.Id represents primary key user inheritance" in prompt_q29
+
+    # Q030: course offering coordinator multi-hop join
+    req_q30 = SQLGenerationRequest(
+        question="Course offerings coordinator professor name",
+        schema_context=mock_model_facing_schema,
+    )
+    gen.generate(req_q30)
+    prompt_q30 = gen.client.models.generate_content.call_args.kwargs["contents"]
+    assert "[KB_TRAP_OFFERING_COORDINATOR_JOIN]" in prompt_q30
+    assert "CourseOfferings.SubjectCoordinatorId" in prompt_q30
+
+
+def test_schema_and_foreign_keys_preserved_when_domain_guidance_present(mock_model_facing_schema):
+    """Verify schema, columns, and foreign keys remain intact when domain guidance is included."""
+    response_json = json.dumps({"status": "answerable", "sql": "SELECT 1"})
+    gen = _mock_gemini_generator(response_json)
+    req = SQLGenerationRequest(
+        question="Students user inheritance",
+        schema_context=mock_model_facing_schema,
+    )
+    gen.generate(req)
+    prompt = gen.client.models.generate_content.call_args.kwargs["contents"]
+
+    # Original schema sections intact
+    assert "=== DATABASE SCHEMA CONTEXT ===" in prompt
+    assert "TABLE [Users]:" in prompt
+    assert "TABLE [Students]:" in prompt
+    assert "RELATIONSHIPS (FOREIGN KEYS):" in prompt
+    assert "[Students].[Id] -> [Users].[Id]" in prompt
+
+    # Both schema and domain guidance coexist in correct order
+    schema_idx = prompt.index("=== DATABASE SCHEMA CONTEXT ===")
+    domain_idx = prompt.index("=== RETRIEVED DOMAIN KNOWLEDGE (INFORMATIONAL ONLY) ===")
+    question_idx = prompt.index("=== USER QUESTION ===")
+    assert schema_idx < domain_idx < question_idx
+
+
+def test_domain_guidance_is_bounded_and_contains_no_sensitive_columns(mock_model_facing_schema):
+    """Verify retrieved guidance adheres to character budget and excludes sensitive fields."""
+    response_json = json.dumps({"status": "answerable", "sql": "SELECT 1"})
+    gen = _mock_gemini_generator(response_json)
+    broad_query = "students users faculties departments marks offerings coordinator batches"
+    req = SQLGenerationRequest(
+        question=broad_query,
+        schema_context=mock_model_facing_schema,
+    )
+    gen.generate(req)
+    prompt = gen.client.models.generate_content.call_args.kwargs["contents"]
+
+    # Must contain domain guidance
+    assert "=== RETRIEVED DOMAIN KNOWLEDGE (INFORMATIONAL ONLY) ===" in prompt
+    domain_section = prompt.split("=== RETRIEVED DOMAIN KNOWLEDGE (INFORMATIONAL ONLY) ===")[1].split("=== USER QUESTION ===")[0]
+    # Bound check: rendered block must be <= 1200 characters
+    assert len(domain_section.strip()) <= 1200
+
+    # Sensitive column prohibition
+    assert "PasswordHash" not in prompt
+
+
+def test_unresolved_business_rules_cannot_be_loaded_into_generator():
+    """Verify unresolved business rules markdown file cannot be loaded into generator."""
+    with pytest.raises(ValueError, match="Unresolved business rules markdown files cannot be loaded"):
+        GeminiSQLGenerator(
+            api_key="test-key",
+            catalog_path="data/knowledge/unresolved_business_rules.md",
+        )
+
+
+def test_missing_or_malformed_catalog_fails_explicitly(tmp_path: Path):
+    """Verify missing or malformed catalog files fail explicitly and do not silently disable safeguards."""
+    with pytest.raises(FileNotFoundError, match="Knowledge catalog not found"):
+        GeminiSQLGenerator(
+            api_key="test-key",
+            catalog_path="nonexistent_catalog.json",
+        )
+
+    bad_json = tmp_path / "broken_catalog.json"
+    bad_json.write_text("{broken json", encoding="utf-8")
+    with pytest.raises(ValueError, match="Malformed JSON"):
+        GeminiSQLGenerator(
+            api_key="test-key",
+            catalog_path=bad_json,
+        )
+
+
+def test_build_sql_generation_prompt_with_explicit_domain_context(mock_model_facing_schema):
+    """Verify build_sql_generation_prompt handles explicit domain_context parameter."""
+    req = SQLGenerationRequest(
+        question="Find student records",
+        schema_context=mock_model_facing_schema,
+    )
+
+    # Empty domain context
+    prompt_no_ctx = build_sql_generation_prompt(req, domain_context=None)
+    assert "=== RETRIEVED DOMAIN KNOWLEDGE" not in prompt_no_ctx
+
+    # Custom domain context
+    prompt_with_ctx = build_sql_generation_prompt(
+        req,
+        domain_context="[CUSTOM_RULE] Custom test domain rule.",
+    )
+    assert "=== RETRIEVED DOMAIN KNOWLEDGE (INFORMATIONAL ONLY) ===" in prompt_with_ctx
+    assert "[CUSTOM_RULE] Custom test domain rule." in prompt_with_ctx
+
+
+def test_generator_dependency_injection_with_mock_retriever(mock_model_facing_schema):
+    """Verify GeminiSQLGenerator correctly integrates with injected mock retriever."""
+    mock_retriever = MagicMock()
+    mock_retriever.retrieve.return_value = [
+        RetrievalResult(
+            entry_id="KB_MOCK_1",
+            category="rule",
+            title="Mock Rule",
+            content="Mock content rule.",
+            score=5.0,
+            matched_terms=["term"],
+        )
+    ]
+    mock_retriever.render_context.return_value = (
+        "=== RETRIEVED DOMAIN KNOWLEDGE (INFORMATIONAL ONLY) ===\n"
+        "[KB_MOCK_1] Mock Rule:\nMock content rule."
+    )
+
+    response_json = json.dumps({"status": "answerable", "sql": "SELECT 1"})
+    gen = GeminiSQLGenerator(api_key="test-mock-api-key", retriever=mock_retriever)
+    mock_resp = MagicMock()
+    mock_resp.text = response_json
+    mock_resp.usage_metadata = None
+    gen.client.models.generate_content = MagicMock(return_value=mock_resp)
+
+    req = SQLGenerationRequest(
+        question="Test question with injected retriever",
+        schema_context=mock_model_facing_schema,
+    )
+    gen.generate(req)
+
+    # Verify retriever was invoked
+    mock_retriever.retrieve.assert_called_once_with("Test question with injected retriever", intent=None)
+    mock_retriever.render_context.assert_called_once()
+    prompt = gen.client.models.generate_content.call_args.kwargs["contents"]
+    assert "[KB_MOCK_1] Mock Rule:" in prompt
+
+
+def test_sql_generation_request_rejects_arbitrary_domain_context(mock_model_facing_schema):
+    """Verify SQLGenerationRequest forbids caller-supplied domain_context to close trust boundary."""
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        SQLGenerationRequest(
+            question="Show all students",
+            schema_context=mock_model_facing_schema,
+            domain_context="Arbitrary untrusted domain guidance",  # type: ignore[call-arg]
+        )
+
+
+def test_generation_obtains_domain_guidance_strictly_via_retriever(mock_model_facing_schema):
+    """Verify that GeminiSQLGenerator.generate derives guidance exclusively from its retriever."""
+    response_json = json.dumps({"status": "answerable", "sql": "SELECT 1"})
+    gen = _mock_gemini_generator(response_json)
+
+    # Valid query matching catalog
+    req = SQLGenerationRequest(
+        question="Students user inheritance",
+        schema_context=mock_model_facing_schema,
+    )
+    gen.generate(req)
+    prompt = gen.client.models.generate_content.call_args.kwargs["contents"]
+
+    # Must contain validated knowledge from the approved catalog
+    assert "=== RETRIEVED DOMAIN KNOWLEDGE (INFORMATIONAL ONLY) ===" in prompt
+    assert "[KB_STU_USERS_INHERITANCE]" in prompt
+
+    # When retrieval is disabled, no guidance is included
+    gen_disabled = GeminiSQLGenerator(api_key="test-mock-api-key", enable_retrieval=False)
+    mock_resp = MagicMock()
+    mock_resp.text = response_json
+    mock_resp.usage_metadata = None
+    gen_disabled.client.models.generate_content = MagicMock(return_value=mock_resp)
+
+    gen_disabled.generate(req)
+    prompt_disabled = gen_disabled.client.models.generate_content.call_args.kwargs["contents"]
+    assert "=== RETRIEVED DOMAIN KNOWLEDGE" not in prompt_disabled

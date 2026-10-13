@@ -252,7 +252,7 @@ class SQLGenerationStatus(str, Enum):
 class SQLGenerationRequest(BaseModel):
     """Typed request representing a user question and model-facing schema context."""
 
-    model_config = {"arbitrary_types_allowed": True}
+    model_config = {"arbitrary_types_allowed": True, "extra": "forbid"}
 
     question: str = Field(
         ...,

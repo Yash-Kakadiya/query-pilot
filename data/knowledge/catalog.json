@@ -1,0 +1,190 @@
+[
+  {
+    "id": "KB_STU_USERS_INHERITANCE",
+    "category": "table_inheritance",
+    "title": "Student Identity Inheritance from Users",
+    "keywords": [
+      "student",
+      "name",
+      "email",
+      "user",
+      "inheritance",
+      "identity"
+    ],
+    "tables_referenced": [
+      "Students",
+      "Users"
+    ],
+    "columns_referenced": [
+      "Students.Id",
+      "Users.Id",
+      "Users.FullName",
+      "Users.Email"
+    ],
+    "content": "Students inherits identity from Users using a shared primary key pattern. Students.Id is a foreign key referencing Users.Id. Student demographic details such as FullName and Email reside on Users and must be queried by joining Students.Id = Users.Id.",
+    "source": "data/schemas/gradesense_schema.sql (Students and Users table DDL) and baseline_questions.json Q028 notes"
+  },
+  {
+    "id": "KB_FAC_USERS_INHERITANCE",
+    "category": "table_inheritance",
+    "title": "Faculty Identity Inheritance from Users",
+    "keywords": [
+      "faculty",
+      "instructor",
+      "professor",
+      "name",
+      "email",
+      "user",
+      "inheritance"
+    ],
+    "tables_referenced": [
+      "Faculties",
+      "Users"
+    ],
+    "columns_referenced": [
+      "Faculties.Id",
+      "Users.Id",
+      "Users.FullName",
+      "Users.Email",
+      "Faculties.EmployeeId",
+      "Faculties.DepartmentId"
+    ],
+    "content": "Faculties inherits identity from Users using a shared primary key pattern. Faculties.Id is a foreign key referencing Users.Id. Faculty personal details such as FullName and Email reside on Users and must be queried by joining Faculties.Id = Users.Id. Department association is tracked separately via Faculties.DepartmentId.",
+    "source": "data/schemas/gradesense_schema.sql (Faculties and Users table DDL) and baseline_questions.json Q029 notes"
+  },
+  {
+    "id": "KB_MARKS_STUDENT_ENROLLMENT_REL",
+    "category": "relationship",
+    "title": "Student Marks Relate to Students via Course Enrollments",
+    "keywords": [
+      "marks",
+      "grades",
+      "assessments",
+      "student marks",
+      "enrollment",
+      "student join"
+    ],
+    "tables_referenced": [
+      "StudentMarks",
+      "CourseEnrollments",
+      "Students"
+    ],
+    "columns_referenced": [
+      "StudentMarks.EnrollmentId",
+      "CourseEnrollments.Id",
+      "CourseEnrollments.StudentId",
+      "Students.Id"
+    ],
+    "content": "StudentMarks records individual assessment grades and does not link directly to Students.Id. StudentMarks.EnrollmentId is a foreign key referencing CourseEnrollments.Id. To associate marks with a student, join StudentMarks.EnrollmentId = CourseEnrollments.Id and CourseEnrollments.StudentId = Students.Id.",
+    "source": "data/schemas/gradesense_schema.sql (StudentMarks FK to CourseEnrollments, CourseEnrollments FK to Students) and baseline_questions.json Q018"
+  },
+  {
+    "id": "KB_COURSE_OFFERING_HIERARCHY",
+    "category": "relationship",
+    "title": "Course Offering Relational Structure",
+    "keywords": [
+      "course offering",
+      "subject",
+      "batch",
+      "coordinator",
+      "offering join"
+    ],
+    "tables_referenced": [
+      "CourseOfferings",
+      "Subjects",
+      "Batches",
+      "Faculties"
+    ],
+    "columns_referenced": [
+      "CourseOfferings.SubjectId",
+      "Subjects.Id",
+      "CourseOfferings.BatchId",
+      "Batches.Id",
+      "CourseOfferings.SubjectCoordinatorId",
+      "Faculties.Id"
+    ],
+    "content": "CourseOfferings represents the delivery of a curriculum subject to an academic batch. It joins to Subjects via CourseOfferings.SubjectId = Subjects.Id, to Batches via CourseOfferings.BatchId = Batches.Id, and to Faculties via CourseOfferings.SubjectCoordinatorId = Faculties.Id.",
+    "source": "data/schemas/gradesense_schema.sql (CourseOfferings foreign keys) and baseline_questions.json Q015"
+  },
+  {
+    "id": "KB_TRAP_STUDENT_DEPARTMENT_JOIN",
+    "category": "semantic_trap",
+    "title": "Disambiguation: Student-to-Department vs Student-to-User Join",
+    "keywords": [
+      "semantic trap",
+      "department",
+      "user",
+      "dean",
+      "hod",
+      "misjoin",
+      "q028"
+    ],
+    "tables_referenced": [
+      "Students",
+      "Users",
+      "Departments"
+    ],
+    "columns_referenced": [
+      "Students.Id",
+      "Students.DepartmentId",
+      "Users.Id",
+      "Departments.Id"
+    ],
+    "content": "Students.DepartmentId references Departments.Id, NOT Users.Id. Joining Students.DepartmentId = Users.Id is syntactically valid because both columns are integers, but semantically incorrect as it erroneously pairs students with HOD or Dean user accounts having matching numeric IDs. To get student name, join Students.Id = Users.Id; to get student department, join Students.DepartmentId = Departments.Id.",
+    "source": "data/evaluation/baseline_questions.json (Q028 semantic trap definition) and data/evaluation/README.md"
+  },
+  {
+    "id": "KB_TRAP_FACULTY_DEPARTMENT_JOIN",
+    "category": "semantic_trap",
+    "title": "Disambiguation: Faculty Primary Key vs Department Foreign Key",
+    "keywords": [
+      "semantic trap",
+      "faculty",
+      "department",
+      "primary key",
+      "foreign key",
+      "q029"
+    ],
+    "tables_referenced": [
+      "Faculties",
+      "Departments",
+      "Users"
+    ],
+    "columns_referenced": [
+      "Faculties.Id",
+      "Faculties.DepartmentId",
+      "Departments.Id",
+      "Users.Id"
+    ],
+    "content": "Faculties.Id represents primary key user inheritance (Faculties.Id = Users.Id), whereas Faculties.DepartmentId represents the foreign key association to academic departments (Faculties.DepartmentId = Departments.Id). Equating Faculties.Id = Departments.Id passes AST syntax and column validation but causes a collision between user IDs and department IDs.",
+    "source": "data/evaluation/baseline_questions.json (Q029 semantic trap definition) and data/evaluation/README.md"
+  },
+  {
+    "id": "KB_TRAP_OFFERING_COORDINATOR_JOIN",
+    "category": "semantic_trap",
+    "title": "Disambiguation: Course Offering Coordinator Multi-Hop Join",
+    "keywords": [
+      "semantic trap",
+      "course offering",
+      "coordinator",
+      "subject",
+      "faculty",
+      "q030"
+    ],
+    "tables_referenced": [
+      "CourseOfferings",
+      "Faculties",
+      "Users",
+      "Subjects"
+    ],
+    "columns_referenced": [
+      "CourseOfferings.SubjectCoordinatorId",
+      "CourseOfferings.SubjectId",
+      "Faculties.Id",
+      "Users.Id",
+      "Subjects.Id"
+    ],
+    "content": "In CourseOfferings, SubjectCoordinatorId represents the assigned faculty member, while SubjectId represents the academic subject. To obtain the coordinator's name, perform a multi-hop join: CourseOfferings.SubjectCoordinatorId = Faculties.Id, then Faculties.Id = Users.Id for Users.FullName. Joining CourseOfferings.SubjectId = Faculties.Id is invalid and conflates subjects with professors.",
+    "source": "data/evaluation/baseline_questions.json (Q030 semantic trap definition) and data/evaluation/README.md"
+  }
+]

@@ -5,8 +5,9 @@ the SQLGenerationResponse model. Strictly generates candidate SQL without execut
 """
 
 import logging
+from pathlib import Path
 import time
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from google import genai
 from google.genai import types
@@ -14,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from query_pilot.config import Settings, get_settings
 from query_pilot.observability import LLMUsageMetadata, extract_llm_usage
+from query_pilot.rag.retriever import DomainContextRetriever
 from query_pilot.sql.generation import (
     ClarificationOption,
     ConfigurationError,
@@ -52,6 +54,9 @@ class GeminiSQLGenerator(SQLGenerator):
         settings: Optional[Settings] = None,
         api_key: Optional[str] = None,
         model_name: Optional[str] = None,
+        retriever: Optional[DomainContextRetriever] = None,
+        catalog_path: Optional[Union[str, Path]] = None,
+        enable_retrieval: bool = True,
     ):
         """Initialize Gemini SQL Generator.
 
@@ -59,9 +64,15 @@ class GeminiSQLGenerator(SQLGenerator):
             settings: Optional Settings object containing GEMINI_API_KEY and GEMINI_MODEL.
             api_key: Optional explicit API key string (overrides settings).
             model_name: Optional explicit model name string (overrides settings).
+            retriever: Optional explicit DomainContextRetriever instance. If omitted and
+                enable_retrieval is True, loads the validated catalog at data/knowledge/catalog.json.
+            catalog_path: Optional explicit path to catalog.json.
+            enable_retrieval: Whether domain context retrieval is enabled (default: True).
 
         Raises:
             ConfigurationError: If no valid API key can be resolved.
+            FileNotFoundError: If the specified catalog file cannot be found.
+            ValueError: If the catalog file is malformed or invalid.
         """
         resolved_key: Optional[str] = None
         resolved_model: str = "gemini-2.0-flash"
@@ -90,6 +101,14 @@ class GeminiSQLGenerator(SQLGenerator):
         self.model_name = model_name or resolved_model
         self.last_usage: Optional[LLMUsageMetadata] = None
 
+        if not enable_retrieval:
+            self.retriever: Optional[DomainContextRetriever] = None
+        elif retriever is not None:
+            self.retriever = retriever
+        else:
+            # Instantiate retriever using validated catalog
+            self.retriever = DomainContextRetriever(catalog_path=catalog_path)
+
         try:
             # Note: Do NOT log the API key
             logger.debug(f"Initializing Gemini Client with model={self.model_name}")
@@ -116,7 +135,20 @@ class GeminiSQLGenerator(SQLGenerator):
             EmptySQLError: If the returned SQL is empty or whitespace.
         """
         self.last_usage = None
-        prompt = build_sql_generation_prompt(request)
+
+        # Resolve domain guidance exclusively through the validated retriever
+        domain_guidance = None
+        if self.retriever is not None:
+            intent = None
+            if request.conversation_context:
+                last_turn = request.conversation_context[-1]
+                if last_turn.resolved_intent:
+                    intent = last_turn.resolved_intent
+            results = self.retriever.retrieve(request.question, intent=intent)
+            if results:
+                domain_guidance = self.retriever.render_context(results)
+
+        prompt = build_sql_generation_prompt(request, domain_context=domain_guidance)
 
         config = types.GenerateContentConfig(
             system_instruction=SYSTEM_INSTRUCTION,
