@@ -351,6 +351,7 @@ class QueryPilotWorkflow:
             schema_context=schema,
             dialect=self.dialect,
             instructions=instructions,
+            conversation_context=state.get("conversation_context") or [],
         )
 
         # Track telemetry across initial and recovery invocations
@@ -431,6 +432,19 @@ class QueryPilotWorkflow:
                 "telemetry": telemetry,
                 "status": PipelineStatus.UNSUPPORTED,
                 "error_category": ErrorCategory.UNSUPPORTED_QUESTION,
+            }
+
+        if gen_resp.status == SQLGenerationStatus.CLARIFICATION_NEEDED:
+            logger.info(f"Question requires clarification: {question}")
+            return {
+                "generation_attempts": current_attempts,
+                "retry_count": retry_count,
+                "recovery_feedback": None,
+                "generation_response": gen_resp,
+                "telemetry": telemetry,
+                "status": PipelineStatus.CLARIFICATION_NEEDED,
+                "error_category": None,
+                "error_message": None,
             }
 
         return {
@@ -625,7 +639,7 @@ class QueryPilotWorkflow:
             question=state["question"],
             status=status,
             generation_status=gen_resp.status if gen_resp else None,
-            generated_sql=gen_resp.sql if gen_resp else None,
+            generated_sql=gen_resp.sql if (gen_resp and status != PipelineStatus.CLARIFICATION_NEEDED) else None,
             generation_explanation=gen_resp.explanation if gen_resp else None,
             generation_assumptions=gen_resp.assumptions if gen_resp else [],
             validation_result=val_result,
@@ -634,6 +648,8 @@ class QueryPilotWorkflow:
             request_id=state.get("request_id"),
             grounded_answer=grounded_answer,
             telemetry=telemetry,
+            clarification_prompt=gen_resp.clarification_prompt if gen_resp else None,
+            clarification_options=gen_resp.clarification_options if gen_resp else [],
         )
 
         presentation = format_pipeline_result(pipe_res)
@@ -657,7 +673,7 @@ class QueryPilotWorkflow:
     def route_after_generation(self, state: QueryPilotState) -> str:
         """Route to validate_sql if answerable SQL exists; generate_sql if recoverable; present_result on termination."""
         status = state.get("status")
-        if status == PipelineStatus.UNSUPPORTED:
+        if status in (PipelineStatus.UNSUPPORTED, PipelineStatus.CLARIFICATION_NEEDED):
             return "present_result"
 
         if state.get("recovery_feedback") is not None and state.get("generation_attempts", 0) < MAX_GENERATION_ATTEMPTS:
@@ -765,6 +781,7 @@ class QueryPilotWorkflow:
         self,
         question: str | QueryPilotState,
         request_id: Optional[str] = None,
+        conversation_context: Optional[List[Any]] = None,
     ) -> QueryPilotState:
         """Execute the compiled workflow for a given question or state.
 
@@ -775,11 +792,14 @@ class QueryPilotWorkflow:
                 question,
                 schema_context=self._schema,
                 request_id=request_id,
+                conversation_context=conversation_context,
             )
         else:
             state = dict(validate_initial_state(question))
             if request_id and "request_id" not in state:
                 state["request_id"] = request_id
+            if conversation_context is not None and "conversation_context" not in state:
+                state["conversation_context"] = conversation_context
 
         app = self.compile()
         return app.invoke(state)
@@ -830,6 +850,7 @@ def run_query_graph(
     question: str | QueryPilotState,
     graph: Optional[CompiledStateGraph] = None,
     request_id: Optional[str] = None,
+    conversation_context: Optional[List[Any]] = None,
     **kwargs: Any,
 ) -> QueryPilotState:
     """Convenience public entry point to run a question through the QueryPilot graph.
@@ -840,6 +861,7 @@ def run_query_graph(
         question: Natural language question string or valid initial QueryPilotState.
         graph: Optional pre-compiled CompiledStateGraph instance.
         request_id: Optional correlation ID for the request.
+        conversation_context: Optional list of validated conversation turns.
         **kwargs: Arguments passed to QueryPilotWorkflow if graph is None.
 
     Returns:
@@ -847,12 +869,18 @@ def run_query_graph(
     """
     if graph is not None:
         if isinstance(question, str):
-            state = create_initial_state(question, request_id=request_id)
+            state = create_initial_state(
+                question,
+                request_id=request_id,
+                conversation_context=conversation_context,
+            )
         else:
             state = dict(validate_initial_state(question))
             if request_id and "request_id" not in state:
                 state["request_id"] = request_id
+            if conversation_context is not None and "conversation_context" not in state:
+                state["conversation_context"] = conversation_context
         return graph.invoke(state)
 
     workflow = QueryPilotWorkflow(**kwargs)
-    return workflow.run(question, request_id=request_id)
+    return workflow.run(question, request_id=request_id, conversation_context=conversation_context)

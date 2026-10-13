@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from query_pilot.config import Settings, get_settings
 from query_pilot.observability import LLMUsageMetadata, extract_llm_usage
 from query_pilot.sql.generation import (
+    ClarificationOption,
     ConfigurationError,
     EmptySQLError,
     MalformedResponseError,
@@ -39,6 +40,8 @@ class _GeminiSQLPayloadSchema(BaseModel):
     sql: Optional[str] = None
     explanation: Optional[str] = None
     assumptions: List[str] = Field(default_factory=list)
+    clarification_prompt: Optional[str] = None
+    clarification_options: List[ClarificationOption] = Field(default_factory=list)
 
 
 class GeminiSQLGenerator(SQLGenerator):

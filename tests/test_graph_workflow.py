@@ -38,7 +38,9 @@ from query_pilot.pipeline import PipelineResult, PipelineStatus, QueryPipeline
 from query_pilot.presentation.formatter import PresentationResult
 from query_pilot.runner import ExecutionMode, QueryRunner
 from query_pilot.sql.generation import (
+    ClarificationOption,
     ConfigurationError,
+    ConversationTurnContext,
     EmptySQLError,
     MalformedResponseError,
     ProviderAPIError,
@@ -1208,4 +1210,187 @@ def test_sequential_pipeline_remains_single_pass_and_unchanged(test_schema: Data
         mock_exec.assert_not_called()
         assert res.status == PipelineStatus.VALIDATION_REJECTED
         assert res.is_success is False
+
+
+# ==============================================================================
+# Clarification Routing Tests (Task 1.29-B3)
+# ==============================================================================
+
+def test_graph_workflow_clarification_routes_directly_to_presentation(test_schema: DatabaseSchema) -> None:
+    """Verify that CLARIFICATION_NEEDED routes directly to present_result and bypasses validation and execution."""
+    options = [
+        ClarificationOption(
+            option_id="opt_ug",
+            description="Undergraduate courses only",
+            suggested_question="Show undergraduate courses",
+        ),
+        ClarificationOption(
+            option_id="opt_grad",
+            description="Graduate courses only",
+            suggested_question="Show graduate courses",
+        ),
+    ]
+    clarification_resp = SQLGenerationResponse(
+        status=SQLGenerationStatus.CLARIFICATION_NEEDED,
+        clarification_prompt="Do you want undergraduate or graduate courses?",
+        clarification_options=options,
+        explanation="The course level is not specified.",
+    )
+    fake_generator = FakeSQLGenerator(response=clarification_resp)
+    workflow = QueryPilotWorkflow(generator=fake_generator, schema=test_schema, engine=MagicMock())
+
+    with patch("query_pilot.graph.workflow.validate_sql") as mock_val, \
+         patch("query_pilot.graph.workflow.execute_read_only") as mock_exec:
+        final_state = workflow.run("Show all courses")
+
+        # 1. State status is CLARIFICATION_NEEDED
+        assert final_state["status"] == PipelineStatus.CLARIFICATION_NEEDED
+        assert final_state.get("error_category") is None
+        assert final_state.get("error_message") is None
+
+        # 2. Validation and execution nodes were completely bypassed
+        mock_val.assert_not_called()
+        mock_exec.assert_not_called()
+        assert final_state.get("validation_result") is None
+        assert final_state.get("execution_result") is None
+
+        # 3. No recovery feedback or extra retry attempts
+        assert final_state.get("recovery_feedback") is None
+        assert final_state.get("generation_attempts") == 1
+        assert final_state.get("retry_count") == 0
+        assert len(fake_generator.calls) == 1
+
+        # 4. Presentation result is present and formatted cleanly
+        pres = final_state["presentation_result"]
+        assert isinstance(pres, PresentationResult)
+        assert pres.status == "clarification_needed"
+        assert pres.clarification_prompt == "Do you want undergraduate or graduate courses?"
+        assert len(pres.clarification_options) == 2
+        assert pres.generated_sql is None
+        assert pres.rows == []
+        assert pres.row_count == 0
+        assert "Do you want undergraduate or graduate courses?" in pres.message
+        assert "Undergraduate courses only" in pres.message
+
+
+def test_graph_workflow_clarification_explanation_only_fallback(test_schema: DatabaseSchema) -> None:
+    """Verify that CLARIFICATION_NEEDED with explanation-only falls back to explanation without inventing a question."""
+    clarification_resp = SQLGenerationResponse(
+        status=SQLGenerationStatus.CLARIFICATION_NEEDED,
+        clarification_prompt=None,
+        clarification_options=[],
+        explanation="Please specify whether you mean spring or fall semester.",
+    )
+    fake_generator = FakeSQLGenerator(response=clarification_resp)
+    workflow = QueryPilotWorkflow(generator=fake_generator, schema=test_schema, engine=MagicMock())
+
+    with patch("query_pilot.graph.workflow.validate_sql") as mock_val, \
+         patch("query_pilot.graph.workflow.execute_read_only") as mock_exec:
+        final_state = workflow.run("Show enrollment")
+
+        assert final_state["status"] == PipelineStatus.CLARIFICATION_NEEDED
+        mock_val.assert_not_called()
+        mock_exec.assert_not_called()
+
+        pres = final_state["presentation_result"]
+        assert pres.status == "clarification_needed"
+        assert pres.clarification_prompt is None
+        assert pres.generated_sql is None
+        assert "Please specify whether you mean spring or fall semester." in pres.message
+
+
+def test_route_after_generation_clarification_returns_present_result() -> None:
+    """Verify route_after_generation returns present_result directly for CLARIFICATION_NEEDED."""
+    workflow = QueryPilotWorkflow()
+    route = workflow.route_after_generation({"status": PipelineStatus.CLARIFICATION_NEEDED})
+    assert route == "present_result"
+
+
+def test_runner_graph_mode_clarification(test_schema: DatabaseSchema) -> None:
+    """Verify QueryRunner in graph mode correctly converts clarification state to PipelineResult."""
+    clarification_resp = SQLGenerationResponse(
+        status=SQLGenerationStatus.CLARIFICATION_NEEDED,
+        clarification_prompt="Which semester?",
+        clarification_options=[ClarificationOption(option_id="1", description="Spring 2024")],
+        explanation="Semester not specified.",
+    )
+    runner = QueryRunner(
+        generator=FakeSQLGenerator(response=clarification_resp),
+        schema=test_schema,
+        engine=MagicMock(),
+        mode=ExecutionMode.GRAPH,
+    )
+
+    with patch("query_pilot.graph.workflow.validate_sql") as mock_val, \
+         patch("query_pilot.graph.workflow.execute_read_only") as mock_exec:
+        res = runner.run("Show schedule")
+
+        assert res.status == PipelineStatus.CLARIFICATION_NEEDED
+        assert res.is_clarification_needed is True
+        assert res.generated_sql is None
+        assert res.validation_result is None
+        assert res.execution_result is None
+        assert res.clarification_prompt == "Which semester?"
+        assert len(res.clarification_options) == 1
+        assert res.clarification_options[0].option_id == "1"
+
+        mock_val.assert_not_called()
+        mock_exec.assert_not_called()
+
+
+def test_graph_workflow_context_propagation_to_generator(test_schema: DatabaseSchema) -> None:
+    """Verify conversation_context reaches generator in LangGraph workflow."""
+    context = [
+        ConversationTurnContext(user_question="Show users"),
+    ]
+    fake_generator = FakeSQLGenerator(
+        response=SQLGenerationResponse(
+            status=SQLGenerationStatus.ANSWERABLE,
+            sql="SELECT Id FROM Users;",
+        )
+    )
+    workflow = QueryPilotWorkflow(generator=fake_generator, schema=test_schema, engine=MagicMock())
+
+    with patch("query_pilot.graph.workflow.validate_sql", return_value=ValidationResult(allowed=True)), \
+         patch("query_pilot.graph.workflow.execute_read_only", return_value=QueryResult(columns=["Id"], rows=[{"Id": 1}], row_count=1, truncated=False)):
+        workflow.run("Active only", conversation_context=context)
+
+        assert len(fake_generator.calls) == 1
+        assert fake_generator.calls[0].conversation_context == context
+
+
+def test_runner_context_propagation_both_modes(test_schema: DatabaseSchema) -> None:
+    """Verify QueryRunner propagates conversation_context in both sequential and graph modes."""
+    context = [ConversationTurnContext(user_question="Show all students")]
+
+    # 1. Sequential mode
+    gen_seq = FakeSQLGenerator(response=SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT 1"))
+    runner_seq = QueryRunner(generator=gen_seq, schema=test_schema, engine=MagicMock(), mode=ExecutionMode.SEQUENTIAL)
+    with patch("query_pilot.pipeline.validate_sql", return_value=ValidationResult(allowed=True)), \
+         patch("query_pilot.pipeline.execute_read_only", return_value=QueryResult(columns=["1"], rows=[{"1": 1}], row_count=1, truncated=False)):
+        runner_seq.run("CS only", conversation_context=context)
+        assert len(gen_seq.calls) == 1
+        assert gen_seq.calls[0].conversation_context == context
+
+    # 2. Graph mode
+    gen_graph = FakeSQLGenerator(response=SQLGenerationResponse(status=SQLGenerationStatus.ANSWERABLE, sql="SELECT 1"))
+    runner_graph = QueryRunner(generator=gen_graph, schema=test_schema, engine=MagicMock(), mode=ExecutionMode.GRAPH)
+    with patch("query_pilot.graph.workflow.validate_sql", return_value=ValidationResult(allowed=True)), \
+         patch("query_pilot.graph.workflow.execute_read_only", return_value=QueryResult(columns=["1"], rows=[{"1": 1}], row_count=1, truncated=False)):
+        runner_graph.run("CS only", conversation_context=context)
+        assert len(gen_graph.calls) == 1
+        assert gen_graph.calls[0].conversation_context == context
+
+
+def test_graph_clarification_with_prior_recovery_feedback_still_bypasses_retry(test_schema: DatabaseSchema) -> None:
+    """Verify that route_after_generation never triggers recovery retry on CLARIFICATION_NEEDED even if feedback exists."""
+    workflow = QueryPilotWorkflow()
+    # Simulated state containing residual recovery feedback
+    state = {
+        "status": PipelineStatus.CLARIFICATION_NEEDED,
+        "recovery_feedback": "PARSE_ERROR: syntax error",
+        "generation_attempts": 1,
+    }
+    route = workflow.route_after_generation(state)
+    assert route == "present_result"
 

@@ -198,6 +198,14 @@ class PresentationResult(BaseModel):
         default_factory=list,
         description="Structured validation rejection reasons if rejected.",
     )
+    clarification_prompt: Optional[str] = Field(
+        default=None,
+        description="Clarifying question or guidance if clarification is requested.",
+    )
+    clarification_options: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Structured candidate interpretation options for clarification.",
+    )
     grounded_answer: Optional[Any] = Field(
         default=None,
         description="Structured natural-language answer if synthesized or templated.",
@@ -292,7 +300,7 @@ def format_pipeline_result(pipeline_result: "PipelineResult") -> PresentationRes
 
     status = pipeline_result.status
     question = pipeline_result.question
-    explanation = pipeline_result.generation_explanation
+    explanation = getattr(pipeline_result, "generation_explanation", None) or getattr(pipeline_result, "explanation", None)
     sql = pipeline_result.generated_sql
     req_id = getattr(pipeline_result, "request_id", None)
     answer = getattr(pipeline_result, "grounded_answer", None)
@@ -336,6 +344,54 @@ def format_pipeline_result(pipeline_result: "PipelineResult") -> PresentationRes
             truncated=False,
             explanation=explanation,
             generated_sql=None,
+            grounded_answer=answer,
+            telemetry=telemetry,
+        )
+
+    if status == PipelineStatus.CLARIFICATION_NEEDED:
+        prompt_text = (
+            pipeline_result.clarification_prompt.strip()
+            if pipeline_result.clarification_prompt and pipeline_result.clarification_prompt.strip()
+            else None
+        )
+        clarification_text = prompt_text or (
+            explanation.strip() if explanation and explanation.strip() else "Additional information is required to answer this question."
+        )
+
+        options_raw = getattr(pipeline_result, "clarification_options", []) or []
+        options_dicts = [
+            opt.model_dump() if hasattr(opt, "model_dump") else dict(opt)
+            for opt in options_raw
+        ]
+
+        msg_lines = ["Additional information is required to process this question.", "", clarification_text]
+        if options_dicts:
+            msg_lines.append("")
+            msg_lines.append("Available options:")
+            for opt in options_dicts:
+                opt_id = opt.get("option_id", "")
+                opt_desc = opt.get("description", "")
+                suggested = opt.get("suggested_question")
+                if suggested:
+                    msg_lines.append(f"- [{opt_id}] {opt_desc} (Suggested: {suggested})")
+                else:
+                    msg_lines.append(f"- [{opt_id}] {opt_desc}")
+
+        full_message = "\n".join(msg_lines)
+
+        return PresentationResult(
+            status="clarification_needed",
+            request_id=req_id,
+            title=question,
+            message=full_message,
+            columns=[],
+            rows=[],
+            row_count=0,
+            truncated=False,
+            explanation=explanation,
+            generated_sql=None,
+            clarification_prompt=prompt_text,
+            clarification_options=options_dicts,
             grounded_answer=answer,
             telemetry=telemetry,
         )

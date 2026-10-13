@@ -43,6 +43,8 @@ from query_pilot.pipeline import (
     run_question,
 )
 from query_pilot.sql.generation import (
+    ClarificationOption,
+    ConversationTurnContext,
     EmptySQLError,
     ProviderAPIError,
     SQLGenerationRequest,
@@ -50,7 +52,7 @@ from query_pilot.sql.generation import (
     SQLGenerationStatus,
     SQLGenerator,
 )
-from query_pilot.sql.models import ValidationReasonCode
+from query_pilot.sql.models import ValidationReasonCode, ValidationResult
 
 
 # ==============================================================================
@@ -154,6 +156,34 @@ class UnsupportedFakeGenerator(SQLGenerator):
             sql=None,
             explanation=self.explanation,
             assumptions=self.assumptions,
+        )
+
+
+class ClarificationFakeGenerator(SQLGenerator):
+    """Fake SQL generator returning a structured clarification response."""
+
+    def __init__(
+        self,
+        clarification_prompt: Optional[str] = None,
+        clarification_options: Optional[List[ClarificationOption]] = None,
+        explanation: Optional[str] = "Question is ambiguous.",
+        assumptions: Optional[List[str]] = None,
+    ):
+        self.clarification_prompt = clarification_prompt
+        self.clarification_options = clarification_options or []
+        self.explanation = explanation
+        self.assumptions = assumptions or []
+        self.calls: List[SQLGenerationRequest] = []
+
+    def generate(self, request: SQLGenerationRequest) -> SQLGenerationResponse:
+        self.calls.append(request)
+        return SQLGenerationResponse(
+            status=SQLGenerationStatus.CLARIFICATION_NEEDED,
+            sql=None,
+            explanation=self.explanation,
+            assumptions=self.assumptions,
+            clarification_prompt=self.clarification_prompt,
+            clarification_options=self.clarification_options,
         )
 
 
@@ -393,7 +423,160 @@ class TestPipelineUnitBoundaries:
         assert d["generated_sql"] is None
         assert d["validation_result"] is None
         assert d["execution_result"] is None
-        assert d["generation_explanation"] == "Tuition fees are not in the schema."
+    def test_pipeline_clarification_with_prompt_skips_validation_and_execution(
+        self,
+        test_schema: DatabaseSchema,
+    ):
+        """Test: Clarification request stops immediately without calling validator or executor."""
+        options = [
+            ClarificationOption(
+                option_id="opt_ug",
+                description="Undergraduate courses only",
+                suggested_question="Show undergraduate courses",
+            ),
+            ClarificationOption(
+                option_id="opt_grad",
+                description="Graduate courses only",
+                suggested_question="Show graduate courses",
+            ),
+        ]
+        fake_generator = ClarificationFakeGenerator(
+            clarification_prompt="Do you want undergraduate or graduate courses?",
+            clarification_options=options,
+            explanation="The course level is not specified.",
+        )
+        pipeline = QueryPipeline(generator=fake_generator, schema=test_schema)
+
+        with (
+            patch("query_pilot.pipeline.validate_sql") as mock_val,
+            patch("query_pilot.pipeline.execute_read_only") as mock_exec,
+        ):
+            result = pipeline.run("Show all courses")
+
+            # 1. Pipeline result status is CLARIFICATION_NEEDED
+            assert result.status == PipelineStatus.CLARIFICATION_NEEDED
+            assert result.is_clarification_needed is True
+            assert result.is_success is False
+            assert result.generation_status == SQLGenerationStatus.CLARIFICATION_NEEDED
+
+            # 2. SQL, validation_result, and execution_result are all None
+            assert result.generated_sql is None
+            assert result.validation_result is None
+            assert result.execution_result is None
+            assert result.clarification_prompt == "Do you want undergraduate or graduate courses?"
+            assert len(result.clarification_options) == 2
+            assert result.clarification_options[0].option_id == "opt_ug"
+            assert result.generation_explanation == "The course level is not specified."
+
+            # 3. Validator was NEVER called
+            mock_val.assert_not_called()
+
+            # 4. Executor was NEVER called
+            mock_exec.assert_not_called()
+
+            # 5. Generator called exactly once (no retry/recovery attempt)
+            assert len(fake_generator.calls) == 1
+
+            # 6. Presentation format
+            pres = result.present()
+            assert pres.status == "clarification_needed"
+            assert "Do you want undergraduate or graduate courses?" in pres.message
+            assert "Undergraduate courses only" in pres.message
+            assert pres.generated_sql is None
+            assert pres.rows == []
+
+    def test_pipeline_clarification_explanation_only_without_inventing_question(
+        self,
+        test_schema: DatabaseSchema,
+    ):
+        """Test: Clarification with explanation-only falls back to explanation without inventing a question."""
+        fake_generator = ClarificationFakeGenerator(
+            clarification_prompt=None,
+            clarification_options=[],
+            explanation="Please specify whether you mean spring or fall semester.",
+        )
+        pipeline = QueryPipeline(generator=fake_generator, schema=test_schema)
+
+        with (
+            patch("query_pilot.pipeline.validate_sql") as mock_val,
+            patch("query_pilot.pipeline.execute_read_only") as mock_exec,
+        ):
+            result = pipeline.run("Show enrollment statistics")
+
+            assert result.status == PipelineStatus.CLARIFICATION_NEEDED
+            assert result.clarification_prompt is None
+            assert result.generation_explanation == "Please specify whether you mean spring or fall semester."
+
+            mock_val.assert_not_called()
+            mock_exec.assert_not_called()
+
+            pres = result.present()
+            assert pres.status == "clarification_needed"
+            assert "Please specify whether you mean spring or fall semester." in pres.message
+            assert pres.generated_sql is None
+
+    def test_pipeline_result_to_dict_clarification(self):
+        """Test serializability of PipelineResult for CLARIFICATION_NEEDED status."""
+        result = PipelineResult(
+            question="Show courses",
+            status=PipelineStatus.CLARIFICATION_NEEDED,
+            generation_status=SQLGenerationStatus.CLARIFICATION_NEEDED,
+            generated_sql=None,
+            generation_explanation="Level not specified.",
+            clarification_prompt="Undergrad or grad?",
+            clarification_options=[
+                ClarificationOption(option_id="1", description="Undergrad")
+            ],
+        )
+        d = result.to_dict()
+        assert d["question"] == "Show courses"
+        assert d["status"] == "CLARIFICATION_NEEDED"
+        assert d["generation_status"] == "clarification_needed"
+        assert d["clarification_prompt"] == "Undergrad or grad?"
+        assert len(d["clarification_options"]) == 1
+        assert d["clarification_options"][0]["option_id"] == "1"
+        assert d["generated_sql"] is None
+        assert d["validation_result"] is None
+        assert d["execution_result"] is None
+
+    def test_pipeline_context_propagation_to_generator(self, test_schema: DatabaseSchema):
+        """Verify conversation_context reaches generator in sequential pipeline."""
+        context = [
+            ConversationTurnContext(user_question="Show all students"),
+            ConversationTurnContext(user_question="Filter to Computer Science"),
+        ]
+        fake_generator = DeterministicFakeGenerator(sql="SELECT * FROM Students WHERE Dept = 'CS';")
+        pipeline = QueryPipeline(generator=fake_generator, schema=test_schema)
+
+        with (
+            patch("query_pilot.pipeline.validate_sql") as mock_val,
+            patch("query_pilot.pipeline.execute_read_only") as mock_exec,
+        ):
+            mock_val.return_value = ValidationResult(allowed=True, reasons=[])
+            mock_exec.return_value = QueryResult(columns=["Id"], rows=[{"Id": 1}], row_count=1, truncated=False)
+
+            pipeline.run("And active only", conversation_context=context)
+
+            assert len(fake_generator.calls) == 1
+            assert fake_generator.calls[0].conversation_context == context
+
+    def test_pipeline_legacy_caller_omitting_context_defaults_empty(self, test_schema: DatabaseSchema):
+        """Verify callers omitting conversation_context default to empty list in SQLGenerationRequest."""
+        fake_generator = DeterministicFakeGenerator(sql="SELECT COUNT(*) FROM Students;")
+        pipeline = QueryPipeline(generator=fake_generator, schema=test_schema)
+
+        with (
+            patch("query_pilot.pipeline.validate_sql") as mock_val,
+            patch("query_pilot.pipeline.execute_read_only") as mock_exec,
+        ):
+            mock_val.return_value = ValidationResult(allowed=True, reasons=[])
+            mock_exec.return_value = QueryResult(columns=["Count"], rows=[{"Count": 5}], row_count=1, truncated=False)
+
+            pipeline.run("How many students?")
+
+            assert len(fake_generator.calls) == 1
+            assert fake_generator.calls[0].conversation_context == []
+
 
 
 # ==============================================================================

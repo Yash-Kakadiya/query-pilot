@@ -11,7 +11,7 @@ consistent status codes, presentation results, and safety safeguards.
 
 from enum import Enum
 import logging
-from typing import Any, Callable, Dict, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from sqlalchemy.engine import Engine
 
@@ -121,7 +121,7 @@ def graph_state_to_pipeline_result(state: QueryPilotState) -> PipelineResult:
     err_msg = state.get("error_message")
 
     # Defense-in-depth: enforce invariant that failure paths never retain fabricated results
-    if status == PipelineStatus.UNSUPPORTED:
+    if status in (PipelineStatus.UNSUPPORTED, PipelineStatus.CLARIFICATION_NEEDED):
         candidate_sql = None
         val_result = None
         exec_result = None
@@ -153,6 +153,8 @@ def graph_state_to_pipeline_result(state: QueryPilotState) -> PipelineResult:
         presentation=presentation,
         grounded_answer=state.get("grounded_answer"),
         telemetry=state.get("telemetry"),
+        clarification_prompt=gen_resp.clarification_prompt if gen_resp else None,
+        clarification_options=gen_resp.clarification_options if gen_resp else [],
     )
 
     # If presentation was not already generated, format it deterministically
@@ -257,6 +259,7 @@ class QueryRunner:
         question: str,
         request_id: Optional[str] = None,
         mode: Optional[Union[ExecutionMode, str]] = None,
+        conversation_context: Optional[List[Any]] = None,
     ) -> PipelineResult:
         """Execute a natural-language question using the selected execution path.
 
@@ -264,6 +267,7 @@ class QueryRunner:
             question: The user natural-language query string.
             request_id: Optional correlation ID for structured observability.
             mode: Optional per-run execution mode override. If None, uses default_mode.
+            conversation_context: Optional caller-supplied prior-turn context.
 
         Returns:
             Structured PipelineResult.
@@ -281,11 +285,16 @@ class QueryRunner:
 
         if selected_mode == ExecutionMode.SEQUENTIAL:
             pipeline = self._create_pipeline()
+            if conversation_context is not None:
+                return pipeline.run(question, request_id=request_id, conversation_context=conversation_context)
             return pipeline.run(question, request_id=request_id)
 
         elif selected_mode == ExecutionMode.GRAPH:
             workflow = self._create_workflow()
-            state = workflow.run(question, request_id=request_id)
+            if conversation_context is not None:
+                state = workflow.run(question, request_id=request_id, conversation_context=conversation_context)
+            else:
+                state = workflow.run(question, request_id=request_id)
             return graph_state_to_pipeline_result(state)
 
         # Unreachable due to normalize_execution_mode validation, but defensive fallback
@@ -296,6 +305,7 @@ def run_query(
     question: str,
     mode: Union[ExecutionMode, str] = ExecutionMode.SEQUENTIAL,
     request_id: Optional[str] = None,
+    conversation_context: Optional[List[Any]] = None,
     runner: Optional[QueryRunner] = None,
     **kwargs: Any,
 ) -> PipelineResult:
@@ -307,6 +317,7 @@ def run_query(
         question: Natural-language user question.
         mode: Execution mode ('sequential' or 'graph'). Defaults to 'sequential'.
         request_id: Optional correlation ID for the request.
+        conversation_context: Optional caller-supplied prior-turn context.
         runner: Optional pre-configured QueryRunner instance.
         **kwargs: Arguments passed to QueryRunner if runner is None.
 
@@ -314,7 +325,11 @@ def run_query(
         Structured PipelineResult.
     """
     if runner is not None:
+        if conversation_context is not None:
+            return runner.run(question, request_id=request_id, mode=mode, conversation_context=conversation_context)
         return runner.run(question, request_id=request_id, mode=mode)
 
     active_runner = QueryRunner(mode=mode, **kwargs)
+    if conversation_context is not None:
+        return active_runner.run(question, request_id=request_id, conversation_context=conversation_context)
     return active_runner.run(question, request_id=request_id)

@@ -22,7 +22,7 @@ Strict safety principles:
 from enum import Enum
 import logging
 from typing import Any, Callable, Dict, List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy.engine import Engine
 
 from query_pilot.db.connection import create_db_engine
@@ -48,12 +48,14 @@ from query_pilot.presentation.synthesizer import (
     GroundedAnswerStatus,
 )
 from query_pilot.sql.generation import (
-
+    MAX_CLARIFICATION_OPTIONS,
+    ClarificationOption,
     SQLGenerationError,
     SQLGenerationRequest,
     SQLGenerationResponse,
     SQLGenerationStatus,
     SQLGenerator,
+    validate_clarification_options,
 )
 from query_pilot.sql.models import ValidationResult
 from query_pilot.sql.validator import validate_sql
@@ -66,6 +68,7 @@ class PipelineStatus(str, Enum):
 
     SUCCESS = "SUCCESS"
     UNSUPPORTED = "UNSUPPORTED"
+    CLARIFICATION_NEEDED = "CLARIFICATION_NEEDED"
     GENERATION_FAILED = "GENERATION_FAILED"
     VALIDATION_REJECTED = "VALIDATION_REJECTED"
     EXECUTION_FAILED = "EXECUTION_FAILED"
@@ -86,7 +89,7 @@ class PipelineResult(BaseModel):
     )
     generation_status: Optional[SQLGenerationStatus] = Field(
         default=None,
-        description="The generation status from the model ('answerable' or 'unsupported').",
+        description="The generation status from the model ('answerable', 'unsupported', or 'clarification_needed').",
     )
     generated_sql: Optional[str] = Field(
         default=None,
@@ -136,6 +139,36 @@ class PipelineResult(BaseModel):
         default=None,
         description="Request-level LLM token usage and latency telemetry.",
     )
+    clarification_prompt: Optional[str] = Field(
+        default=None,
+        max_length=1000,
+        description="Clarifying question or guidance if clarification is requested.",
+    )
+    clarification_options: List[ClarificationOption] = Field(
+        default_factory=list,
+        description="Structured candidate interpretation options for clarification.",
+    )
+
+    @field_validator("clarification_options")
+    @classmethod
+    def validate_options_bound(
+        cls, v: List[ClarificationOption]
+    ) -> List[ClarificationOption]:
+        """Ensure clarification_options is bounded to MAX_CLARIFICATION_OPTIONS with unique IDs."""
+        return validate_clarification_options(v)
+
+    @field_validator("clarification_prompt")
+    @classmethod
+    def validate_clarification_prompt(cls, v: Optional[str]) -> Optional[str]:
+        """Ensure clarification_prompt is non-empty if provided and within length bounds."""
+        if v is None:
+            return None
+        cleaned = v.strip()
+        if not cleaned:
+            return None
+        if len(cleaned) > 1000:
+            raise ValueError("clarification_prompt cannot exceed 1000 characters.")
+        return cleaned
 
     @property
     def is_success(self) -> bool:
@@ -146,6 +179,31 @@ class PipelineResult(BaseModel):
     def is_unsupported(self) -> bool:
         """Return True if question was identified as unsupported by the database schema."""
         return self.status == PipelineStatus.UNSUPPORTED
+
+    @property
+    def is_clarification_needed(self) -> bool:
+        """Return True if question requires clarification from the user."""
+        return self.status == PipelineStatus.CLARIFICATION_NEEDED
+
+    @model_validator(mode="after")
+    def validate_clarification_contract(self) -> "PipelineResult":
+        """Ensure clarification status never implies SQL was generated or executed and has consistent status."""
+        if self.status == PipelineStatus.CLARIFICATION_NEEDED:
+            if self.generated_sql is not None:
+                raise ValueError("Clarification result must not contain generated_sql.")
+            if self.execution_result is not None:
+                raise ValueError("Clarification result must not contain execution_result.")
+            if self.validation_result is not None:
+                raise ValueError("Clarification result must not contain validation_result.")
+            if (
+                self.generation_status is not None
+                and self.generation_status != SQLGenerationStatus.CLARIFICATION_NEEDED
+            ):
+                raise ValueError(
+                    f"Contradictory generation_status {self.generation_status.value!r} "
+                    f"for PipelineStatus.CLARIFICATION_NEEDED. Must be None or 'clarification_needed'."
+                )
+        return self
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert pipeline result to a serializable dictionary."""
@@ -172,6 +230,13 @@ class PipelineResult(BaseModel):
             d["grounded_answer"] = self.grounded_answer.model_dump() if hasattr(self.grounded_answer, "model_dump") else self.grounded_answer
         if self.telemetry is not None:
             d["telemetry"] = self.telemetry.to_dict() if hasattr(self.telemetry, "to_dict") else self.telemetry
+        if self.clarification_prompt is not None:
+            d["clarification_prompt"] = self.clarification_prompt
+        if self.clarification_options:
+            d["clarification_options"] = [
+                opt.model_dump() if hasattr(opt, "model_dump") else opt
+                for opt in self.clarification_options
+            ]
         return d
 
 
@@ -270,7 +335,12 @@ class QueryPipeline:
         self._schema = self._introspector.introspect_model_facing()
         return self._schema
 
-    def run(self, question: str, request_id: Optional[str] = None) -> PipelineResult:
+    def run(
+        self,
+        question: str,
+        request_id: Optional[str] = None,
+        conversation_context: Optional[List[Any]] = None,
+    ) -> PipelineResult:
         """Execute end-to-end question processing through strict pipeline stages.
 
         Stage A: Schema acquisition
@@ -283,6 +353,7 @@ class QueryPipeline:
         Args:
             question: The natural-language user question.
             request_id: Optional correlation ID for the request.
+            conversation_context: Optional bounded prior conversation turns.
 
         Returns:
             PipelineResult representing the outcome.
@@ -359,6 +430,7 @@ class QueryPipeline:
                 schema_context=schema,
                 dialect=self.dialect,
                 instructions=self.additional_instructions,
+                conversation_context=conversation_context or [],
             )
             gen_resp = self.generator.generate(request)
             if getattr(gen_resp, "usage_metadata", None):
@@ -433,6 +505,27 @@ class QueryPipeline:
                 ),
                 PipelineStatus.UNSUPPORTED.value,
                 StageStatus.UNSUPPORTED,
+            )
+
+        # Stage B.2: Check if question requires clarification
+        if gen_resp.status == SQLGenerationStatus.CLARIFICATION_NEEDED:
+            observer.end_stage(PipelineStage.SQL_GENERATION, StageStatus.SUCCEEDED)
+            logger.info(f"Question requires clarification: {question}")
+            return _finalize(
+                PipelineResult(
+                    question=question,
+                    status=PipelineStatus.CLARIFICATION_NEEDED,
+                    generation_status=gen_resp.status,
+                    generated_sql=None,
+                    generation_explanation=explanation,
+                    generation_assumptions=assumptions,
+                    validation_result=None,
+                    execution_result=None,
+                    clarification_prompt=gen_resp.clarification_prompt,
+                    clarification_options=gen_resp.clarification_options,
+                ),
+                PipelineStatus.CLARIFICATION_NEEDED.value,
+                StageStatus.SUCCEEDED,
             )
 
         observer.end_stage(PipelineStage.SQL_GENERATION, StageStatus.SUCCEEDED)

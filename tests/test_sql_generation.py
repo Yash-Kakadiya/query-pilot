@@ -5,10 +5,17 @@ from typing import List, Optional
 import pytest
 from pydantic import ValidationError
 
+from unittest.mock import MagicMock
+
 from query_pilot.db.models import ColumnMetadata, DatabaseSchema, ForeignKeyMetadata, TableMetadata
-from query_pilot.sql.gemini_generator import GeminiSQLGenerator
+from query_pilot.observability import LLMUsageMetadata
+from query_pilot.sql.gemini_generator import GeminiSQLGenerator, _GeminiSQLPayloadSchema
 from query_pilot.sql.generation import (
+    MAX_CLARIFICATION_OPTIONS,
+    MAX_CONVERSATION_TURNS,
+    ClarificationOption,
     ConfigurationError,
+    ConversationTurnContext,
     EmptySQLError,
     MalformedResponseError,
     ProviderAPIError,
@@ -394,3 +401,505 @@ def test_gemini_generator_raises_configuration_error_on_missing_key(monkeypatch)
     with pytest.raises(ConfigurationError) as exc_info:
         GeminiSQLGenerator(settings=None, api_key=None)
     assert "Failed to load application settings" in str(exc_info.value)
+
+
+# ==============================================================================
+# Conversation Context Prompt Assembly Tests (Task 1.29-B2)
+# ==============================================================================
+
+def test_prompt_empty_context_preserves_standalone_behavior(mock_model_facing_schema):
+    """Verify prompt without conversation context preserves standalone question structure."""
+    req = SQLGenerationRequest(
+        question="Which users have role admin?",
+        schema_context=mock_model_facing_schema,
+        conversation_context=[],
+    )
+    prompt = build_sql_generation_prompt(req)
+
+    assert "=== PRIOR CONVERSATION CONTEXT" not in prompt
+    assert "Turn 1:" not in prompt
+    assert "=== USER QUESTION ===" in prompt
+    assert "=== CURRENT USER QUESTION ===" not in prompt
+    assert "Question: Which users have role admin?" in prompt
+    assert "=== TASK ===" in prompt
+
+
+def test_prompt_includes_one_prior_user_question(mock_model_facing_schema):
+    """Verify single prior user question interaction is included cleanly."""
+    turns = [
+        ConversationTurnContext(user_question="List all users"),
+    ]
+    req = SQLGenerationRequest(
+        question="Filter to active admins",
+        schema_context=mock_model_facing_schema,
+        conversation_context=turns,
+    )
+    prompt = build_sql_generation_prompt(req)
+
+    assert "=== PRIOR CONVERSATION CONTEXT (HISTORICAL REFERENCE ONLY) ===" in prompt
+    assert "NOTE: The following represents prior user-question interactions for historical reference only." in prompt
+    assert "Turn 1:" in prompt
+    assert "- Prior Question: List all users" in prompt
+    assert "- Resolved Intent:" not in prompt
+    assert "- Result Columns:" not in prompt
+    assert "=== CURRENT USER QUESTION ===" in prompt
+    assert "Question: Filter to active admins" in prompt
+
+
+def test_prompt_three_prior_interactions_bounded(mock_model_facing_schema):
+    """Verify prompt bounds historical context to at most 3 interactions."""
+    turns = [
+        ConversationTurnContext(user_question="Q1: List departments"),
+        ConversationTurnContext(user_question="Q2: Filter to engineering"),
+        ConversationTurnContext(user_question="Q3: Count staff"),
+    ]
+    req = SQLGenerationRequest(
+        question="Q4: Show averages",
+        schema_context=mock_model_facing_schema,
+        conversation_context=turns,
+    )
+    prompt = build_sql_generation_prompt(req)
+
+    assert "Turn 1:" in prompt
+    assert "- Prior Question: Q1: List departments" in prompt
+    assert "Turn 2:" in prompt
+    assert "- Prior Question: Q2: Filter to engineering" in prompt
+    assert "Turn 3:" in prompt
+    assert "- Prior Question: Q3: Count staff" in prompt
+    assert "Turn 4:" not in prompt
+    assert "Question: Q4: Show averages" in prompt
+
+
+def test_prompt_includes_resolved_intent_and_result_columns(mock_model_facing_schema):
+    """Verify optional resolved intent and result columns are rendered when present."""
+    turns = [
+        ConversationTurnContext(
+            user_question="List all orders",
+            resolved_intent="Retrieve orders with status",
+            result_columns=["Id", "UserId", "TotalAmount"],
+        ),
+    ]
+    req = SQLGenerationRequest(
+        question="Show orders above 100",
+        schema_context=mock_model_facing_schema,
+        conversation_context=turns,
+    )
+    prompt = build_sql_generation_prompt(req)
+
+    assert "Turn 1:" in prompt
+    assert "- Prior Question: List all orders" in prompt
+    assert "- Resolved Intent: Retrieve orders with status" in prompt
+    assert "- Result Columns: Id, UserId, TotalAmount" in prompt
+
+
+def test_prompt_handles_missing_optional_fields_cleanly(mock_model_facing_schema):
+    """Verify missing optional fields (None or empty) are omitted without placeholder strings."""
+    turns = [
+        ConversationTurnContext(
+            user_question="Show users",
+            resolved_intent=None,
+            result_columns=[],
+        ),
+    ]
+    req = SQLGenerationRequest(
+        question="Follow up question",
+        schema_context=mock_model_facing_schema,
+        conversation_context=turns,
+    )
+    prompt = build_sql_generation_prompt(req)
+
+    assert "Turn 1:" in prompt
+    assert "- Prior Question: Show users" in prompt
+    assert "- Resolved Intent:" not in prompt
+    assert "- Result Columns:" not in prompt
+    assert "None" not in prompt.split("Turn 1:")[1].split("=== CURRENT")[0]
+    assert "[]" not in prompt
+
+
+def test_prompt_forbidden_fields_cannot_enter_through_supported_inputs(mock_model_facing_schema):
+    """Verify assistant turns, executed SQL, and unexpected fields are rejected before prompt assembly."""
+    with pytest.raises(ValidationError):
+        ConversationTurnContext(role="assistant", user_question="Q1")
+
+    with pytest.raises(ValidationError):
+        ConversationTurnContext.model_validate({"user_question": "Q1", "executed_sql": "SELECT 1"})
+
+    with pytest.raises(ValidationError):
+        ConversationTurnContext.model_validate({"user_question": "Q1", "credentials": "secret"})
+
+
+def test_prompt_instructions_distinguish_three_statuses():
+    """Verify system instruction distinguishes answerable, clarification_needed, and unsupported."""
+    assert 'Return "status": "answerable"' in SYSTEM_INSTRUCTION
+    assert 'Return "status": "clarification_needed"' in SYSTEM_INSTRUCTION
+    assert 'Return "status": "unsupported"' in SYSTEM_INSTRUCTION
+    assert "clarification_prompt" in SYSTEM_INSTRUCTION
+    assert "clarification_options" in SYSTEM_INSTRUCTION
+    assert "Multiple materially different interpretations remain plausible" in SYSTEM_INSTRUCTION
+
+
+# ==============================================================================
+# Gemini Generator Response Parsing and Invariant Tests (Task 1.29-B2)
+# ==============================================================================
+
+def _mock_gemini_generator(response_text: str, usage_mock=None) -> GeminiSQLGenerator:
+    """Helper to instantiate GeminiSQLGenerator with a mocked client response."""
+    gen = GeminiSQLGenerator(api_key="test-mock-api-key")
+    mock_resp = MagicMock()
+    mock_resp.text = response_text
+    mock_resp.usage_metadata = usage_mock
+    gen.client.models.generate_content = MagicMock(return_value=mock_resp)
+    return gen
+
+
+def test_gemini_generator_valid_answerable_response(mock_model_facing_schema):
+    """Verify valid answerable response parses correctly and preserves all fields."""
+    response_json = json.dumps({
+        "status": "answerable",
+        "sql": "SELECT Id, FullName FROM dbo.Users",
+        "explanation": "Retrieves users from database.",
+        "assumptions": ["Assumes active users"],
+        "clarification_prompt": None,
+        "clarification_options": [],
+    })
+    gen = _mock_gemini_generator(response_json)
+    req = SQLGenerationRequest(
+        question="List all users",
+        schema_context=mock_model_facing_schema,
+    )
+    resp = gen.generate(req)
+
+    assert resp.status == SQLGenerationStatus.ANSWERABLE
+    assert resp.sql == "SELECT Id, FullName FROM dbo.Users"
+    assert resp.explanation == "Retrieves users from database."
+    assert resp.assumptions == ["Assumes active users"]
+    assert resp.clarification_prompt is None
+    assert resp.clarification_options == []
+    assert resp.usage_metadata is not None
+
+
+def test_gemini_generator_valid_unsupported_response(mock_model_facing_schema):
+    """Verify valid unsupported response parses correctly with null SQL."""
+    response_json = json.dumps({
+        "status": "unsupported",
+        "sql": None,
+        "explanation": "Salary information is not stored in the Users table.",
+        "assumptions": [],
+    })
+    gen = _mock_gemini_generator(response_json)
+    req = SQLGenerationRequest(
+        question="What is the average salary?",
+        schema_context=mock_model_facing_schema,
+    )
+    resp = gen.generate(req)
+
+    assert resp.status == SQLGenerationStatus.UNSUPPORTED
+    assert resp.sql is None
+    assert resp.explanation == "Salary information is not stored in the Users table."
+
+
+def test_gemini_generator_valid_clarification_response(mock_model_facing_schema):
+    """Verify valid clarification response parses with prompt and structured options."""
+    response_json = json.dumps({
+        "status": "clarification_needed",
+        "sql": None,
+        "explanation": "The term 'active' is ambiguous.",
+        "clarification_prompt": "Did you mean users with recent logins or active account status?",
+        "clarification_options": [
+            {
+                "option_id": "recent_login",
+                "description": "Users who logged in within the last 30 days",
+                "suggested_question": "Show users with recent logins",
+            },
+            {
+                "option_id": "active_status",
+                "description": "Users with Role equal to active",
+            },
+        ],
+        "assumptions": [],
+    })
+    gen = _mock_gemini_generator(response_json)
+    req = SQLGenerationRequest(
+        question="Show active users",
+        schema_context=mock_model_facing_schema,
+    )
+    resp = gen.generate(req)
+
+    assert resp.status == SQLGenerationStatus.CLARIFICATION_NEEDED
+    assert resp.sql is None
+    assert resp.clarification_prompt == "Did you mean users with recent logins or active account status?"
+    assert len(resp.clarification_options) == 2
+    assert resp.clarification_options[0].option_id == "recent_login"
+    assert resp.clarification_options[0].suggested_question == "Show users with recent logins"
+    assert resp.clarification_options[1].option_id == "active_status"
+    assert resp.clarification_options[1].suggested_question is None
+
+
+def test_gemini_generator_clarification_with_sql_rejected(mock_model_facing_schema):
+    """Verify clarification response containing SQL raises MalformedResponseError."""
+    response_json = json.dumps({
+        "status": "clarification_needed",
+        "sql": "SELECT Id FROM dbo.Users",
+        "clarification_prompt": "Which users?",
+        "clarification_options": [],
+    })
+    gen = _mock_gemini_generator(response_json)
+    req = SQLGenerationRequest(
+        question="Show users",
+        schema_context=mock_model_facing_schema,
+    )
+    with pytest.raises(MalformedResponseError) as exc_info:
+        gen.generate(req)
+    assert exc_info.value.usage_metadata is not None
+
+
+def test_gemini_generator_clarification_missing_prompt_and_explanation_rejected(mock_model_facing_schema):
+    """Verify clarification response missing both prompt and explanation is rejected."""
+    response_json = json.dumps({
+        "status": "clarification_needed",
+        "sql": None,
+        "clarification_prompt": None,
+        "explanation": None,
+    })
+    gen = _mock_gemini_generator(response_json)
+    req = SQLGenerationRequest(
+        question="Show users",
+        schema_context=mock_model_facing_schema,
+    )
+    with pytest.raises(MalformedResponseError) as exc_info:
+        gen.generate(req)
+    assert exc_info.value.usage_metadata is not None
+
+
+def test_gemini_generator_clarification_excessive_options_rejected(mock_model_facing_schema):
+    """Verify clarification response with more than 5 options is rejected."""
+    response_json = json.dumps({
+        "status": "clarification_needed",
+        "sql": None,
+        "clarification_prompt": "Please pick:",
+        "clarification_options": [
+            {"option_id": f"opt_{i}", "description": f"Option {i}"}
+            for i in range(6)
+        ],
+    })
+    gen = _mock_gemini_generator(response_json)
+    req = SQLGenerationRequest(
+        question="Show users",
+        schema_context=mock_model_facing_schema,
+    )
+    with pytest.raises(MalformedResponseError):
+        gen.generate(req)
+
+
+def test_gemini_generator_clarification_duplicate_option_ids_rejected(mock_model_facing_schema):
+    """Verify clarification response with duplicate option IDs is rejected."""
+    response_json = json.dumps({
+        "status": "clarification_needed",
+        "sql": None,
+        "clarification_prompt": "Please pick:",
+        "clarification_options": [
+            {"option_id": "dup", "description": "Choice A"},
+            {"option_id": "dup", "description": "Choice B"},
+        ],
+    })
+    gen = _mock_gemini_generator(response_json)
+    req = SQLGenerationRequest(
+        question="Show users",
+        schema_context=mock_model_facing_schema,
+    )
+    with pytest.raises(MalformedResponseError):
+        gen.generate(req)
+
+
+def test_gemini_generator_invalid_status_rejected(mock_model_facing_schema):
+    """Verify invalid status string raises MalformedResponseError."""
+    response_json = json.dumps({
+        "status": "maybe_answerable",
+        "sql": "SELECT 1",
+    })
+    gen = _mock_gemini_generator(response_json)
+    req = SQLGenerationRequest(
+        question="Show users",
+        schema_context=mock_model_facing_schema,
+    )
+    with pytest.raises(MalformedResponseError):
+        gen.generate(req)
+
+
+def test_gemini_generator_malformed_json_rejected(mock_model_facing_schema):
+    """Verify non-JSON response text raises MalformedResponseError."""
+    gen = _mock_gemini_generator("Not a valid JSON document.")
+    req = SQLGenerationRequest(
+        question="Show users",
+        schema_context=mock_model_facing_schema,
+    )
+    with pytest.raises(MalformedResponseError):
+        gen.generate(req)
+
+
+def test_gemini_generator_empty_response_rejected(mock_model_facing_schema):
+    """Verify null or empty response raises MalformedResponseError."""
+    gen = _mock_gemini_generator("")
+    req = SQLGenerationRequest(
+        question="Show users",
+        schema_context=mock_model_facing_schema,
+    )
+    with pytest.raises(MalformedResponseError):
+        gen.generate(req)
+
+
+def test_gemini_generator_provider_api_error_reraised(mock_model_facing_schema):
+    """Verify network or client exception raises ProviderAPIError."""
+    gen = GeminiSQLGenerator(api_key="test-mock-api-key")
+    gen.client.models.generate_content = MagicMock(side_effect=RuntimeError("Connection reset by peer"))
+    req = SQLGenerationRequest(
+        question="Show users",
+        schema_context=mock_model_facing_schema,
+    )
+    with pytest.raises(ProviderAPIError):
+        gen.generate(req)
+
+
+def test_gemini_generator_preserves_usage_metadata(mock_model_facing_schema):
+    """Verify provider usage metadata is attached to response and generator state."""
+    mock_usage = MagicMock()
+    mock_usage.prompt_token_count = 120
+    mock_usage.candidates_token_count = 40
+    mock_usage.total_token_count = 160
+
+    response_json = json.dumps({
+        "status": "answerable",
+        "sql": "SELECT Id FROM dbo.Users",
+    })
+    gen = _mock_gemini_generator(response_json, usage_mock=mock_usage)
+    req = SQLGenerationRequest(
+        question="Show users",
+        schema_context=mock_model_facing_schema,
+    )
+    resp = gen.generate(req)
+
+    assert resp.usage_metadata is not None
+    assert resp.usage_metadata.prompt_tokens == 120
+    assert resp.usage_metadata.completion_tokens == 40
+    assert resp.usage_metadata.total_tokens == 160
+    assert gen.last_usage == resp.usage_metadata
+
+
+def test_gemini_payload_schema_structure():
+    """Verify internal Gemini payload schema can generate OpenAPI JSON schema."""
+    schema = _GeminiSQLPayloadSchema.model_json_schema()
+    assert "properties" in schema
+    assert "status" in schema["properties"]
+    assert "sql" in schema["properties"]
+    assert "clarification_prompt" in schema["properties"]
+    assert "clarification_options" in schema["properties"]
+
+
+def test_gemini_generator_answerable_with_clarification_prompt_rejected(mock_model_facing_schema):
+    """Verify Gemini returning answerable status with clarification prompt raises MalformedResponseError."""
+    response_json = json.dumps({
+        "status": "answerable",
+        "sql": "SELECT Id FROM dbo.Users",
+        "clarification_prompt": "Are you sure?",
+    })
+    gen = _mock_gemini_generator(response_json)
+    req = SQLGenerationRequest(
+        question="Show users",
+        schema_context=mock_model_facing_schema,
+    )
+    with pytest.raises(MalformedResponseError):
+        gen.generate(req)
+
+
+def test_gemini_generator_unsupported_with_clarification_prompt_rejected(mock_model_facing_schema):
+    """Verify Gemini returning unsupported status with clarification prompt raises MalformedResponseError."""
+    response_json = json.dumps({
+        "status": "unsupported",
+        "sql": None,
+        "explanation": "Not supported.",
+        "clarification_prompt": "Which table?",
+    })
+    gen = _mock_gemini_generator(response_json)
+    req = SQLGenerationRequest(
+        question="Show users",
+        schema_context=mock_model_facing_schema,
+    )
+    with pytest.raises(MalformedResponseError):
+        gen.generate(req)
+
+
+def test_gemini_generator_valid_clarification_explanation_only(mock_model_facing_schema):
+    """Verify Gemini returning clarification with explanation-only and no prompt is accepted."""
+    response_json = json.dumps({
+        "status": "clarification_needed",
+        "sql": None,
+        "explanation": "Please specify whether you mean undergraduate or graduate courses.",
+        "clarification_prompt": None,
+        "clarification_options": [],
+    })
+    gen = _mock_gemini_generator(response_json)
+    req = SQLGenerationRequest(
+        question="Show courses",
+        schema_context=mock_model_facing_schema,
+    )
+    resp = gen.generate(req)
+
+    assert resp.status == SQLGenerationStatus.CLARIFICATION_NEEDED
+    assert resp.sql is None
+    assert resp.clarification_prompt is None
+    assert resp.clarification_options == []
+    assert resp.explanation == "Please specify whether you mean undergraduate or graduate courses."
+
+
+def test_gemini_generator_malformed_response_preserves_usage_metadata(mock_model_facing_schema):
+    """Verify usage metadata is attached to MalformedResponseError when JSON parsing fails."""
+    mock_usage = MagicMock()
+    mock_usage.prompt_token_count = 85
+    mock_usage.candidates_token_count = 15
+    mock_usage.total_token_count = 100
+
+    gen = _mock_gemini_generator("NOT JSON", usage_mock=mock_usage)
+    req = SQLGenerationRequest(
+        question="Show courses",
+        schema_context=mock_model_facing_schema,
+    )
+    with pytest.raises(MalformedResponseError) as exc_info:
+        gen.generate(req)
+
+    assert exc_info.value.usage_metadata is not None
+    assert exc_info.value.usage_metadata.total_tokens == 100
+    assert gen.last_usage is not None
+    assert gen.last_usage.total_tokens == 100
+
+
+def test_gemini_generator_unsupported_with_clarification_options_rejected(mock_model_facing_schema):
+    """Verify unsupported response with clarification_options raises MalformedResponseError."""
+    response_json = json.dumps({
+        "status": "unsupported",
+        "sql": None,
+        "explanation": "Not supported.",
+        "clarification_options": [{"option_id": "1", "description": "Opt 1"}],
+    })
+    gen = _mock_gemini_generator(response_json)
+    req = SQLGenerationRequest(
+        question="Show users",
+        schema_context=mock_model_facing_schema,
+    )
+    with pytest.raises(MalformedResponseError):
+        gen.generate(req)
+
+
+def test_gemini_generator_answerable_with_clarification_options_rejected(mock_model_facing_schema):
+    """Verify answerable response with clarification_options raises MalformedResponseError."""
+    response_json = json.dumps({
+        "status": "answerable",
+        "sql": "SELECT 1",
+        "clarification_options": [{"option_id": "1", "description": "Opt 1"}],
+    })
+    gen = _mock_gemini_generator(response_json)
+    req = SQLGenerationRequest(
+        question="Show users",
+        schema_context=mock_model_facing_schema,
+    )
+    with pytest.raises(MalformedResponseError):
+        gen.generate(req)

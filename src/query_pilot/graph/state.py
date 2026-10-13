@@ -55,7 +55,7 @@ Safety & Isolation Invariants:
 - State defaults do NOT bypass SQL validation or execution safeguards.
 """
 
-from typing import Any, Dict, List, NotRequired, Optional, Required, TypedDict
+from typing import Any, Dict, List, NotRequired, Optional, Required, Sequence, TypedDict, Union
 
 from query_pilot.db.executor import QueryResult
 from query_pilot.db.models import DatabaseSchema
@@ -63,7 +63,14 @@ from query_pilot.observability import ErrorCategory, PipelineRunTelemetry
 from query_pilot.pipeline import PipelineStatus
 from query_pilot.presentation.formatter import PresentationResult
 from query_pilot.presentation.synthesizer import GroundedAnswer
-from query_pilot.sql.generation import SQLGenerationResponse
+from query_pilot.sql.generation import (
+    ALLOWED_ROLES,
+    FORBIDDEN_SQL_FIELDS,
+    MAX_CONVERSATION_TURNS,
+    ClarificationOption,
+    ConversationTurnContext,
+    SQLGenerationResponse,
+)
 from query_pilot.sql.models import ValidationResult
 
 # Fixed maximum generation attempts ceiling for bounded recovery (1 initial + at most 1 recovery)
@@ -88,7 +95,7 @@ INTERMEDIATE_RESULT_FIELDS: tuple[str, ...] = (
 
 
 class ConversationTurn(TypedDict, total=False):
-    """Minimal representation of an optional prior conversation turn.
+    """Compact semantic representation of an optional prior conversation turn.
 
     Used strictly for optional contextual grounding without implementing
     conversational memory or stateful chat history in this layer.
@@ -96,6 +103,105 @@ class ConversationTurn(TypedDict, total=False):
 
     role: str
     content: str
+    user_question: str
+    resolved_intent: Optional[str]
+    result_columns: Optional[List[str]]
+
+
+def validate_conversation_turn(turn: Any, index: int = 0) -> None:
+    """Validate a single conversation turn representation.
+
+    Enforces:
+    - turn must be a dict or ConversationTurnContext.
+    - 'user_question' must be present, or 'content' if role is 'user'.
+    - 'role' if present must be 'user' (role 'assistant' is forbidden).
+    - Unexpected SQL-like fields ('executed_sql', 'sql', 'query', 'candidate_sql') are forbidden.
+    - Unexpected extra fields are strictly forbidden.
+    - 'resolved_intent' if present must be a string or None.
+    - 'result_columns' if present must be a list of non-empty strings or None.
+
+    Args:
+        turn: The conversation turn dictionary or ConversationTurnContext instance.
+        index: Turn index in the sequence for diagnostic errors.
+
+    Raises:
+        TypeError: If turn is not a dict or ConversationTurnContext, or if fields have wrong types.
+        ValueError: If turn fields violate boundaries (empty content, invalid role, forbidden fields).
+    """
+    if isinstance(turn, ConversationTurnContext):
+        return
+
+    if not isinstance(turn, dict):
+        raise TypeError(
+            f"Conversation turn at index {index} must be a dict or ConversationTurnContext, got {type(turn).__name__}."
+        )
+
+    # Forbid unexpected SQL-like fields
+    for forbidden_field in FORBIDDEN_SQL_FIELDS:
+        if forbidden_field in turn:
+            raise ValueError(
+                f"Conversation turn at index {index} must not contain '{forbidden_field}'."
+            )
+
+    # Forbid unexpected extra keys
+    allowed_keys = {"role", "content", "user_question", "resolved_intent", "result_columns"}
+    extra_keys = set(turn.keys()) - allowed_keys
+    if extra_keys:
+        raise ValueError(
+            f"Conversation turn at index {index} contains unexpected fields: {sorted(extra_keys)}."
+        )
+
+    role = str(turn.get("role", "user")).strip().lower()
+    if role == "assistant":
+        raise ValueError(
+            f"Conversation turn at index {index} has role 'assistant'. "
+            "Conversation context strictly represents prior user-question interactions. Role must be 'user'."
+        )
+    if role != "user":
+        raise ValueError(
+            f"Conversation turn at index {index} has invalid role {turn.get('role')!r}. Role must be 'user'."
+        )
+
+    user_question = turn.get("user_question")
+    content = turn.get("content")
+
+    if user_question is not None:
+        if not isinstance(user_question, str) or not user_question.strip():
+            raise ValueError(
+                f"Conversation turn at index {index} has empty or non-string 'user_question'."
+            )
+    elif content is not None:
+        if role != "user":
+            raise ValueError(
+                f"Conversation turn at index {index} has role {turn.get('role')!r} with 'content'. "
+                "Legacy 'content' fallback is only permitted for 'user' turns to prevent misrepresenting assistant prose as a user question."
+            )
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError(
+                f"Conversation turn at index {index} has empty or non-string 'content'."
+            )
+    else:
+        raise ValueError(
+            f"Conversation turn at index {index} must contain 'user_question'."
+        )
+
+    resolved_intent = turn.get("resolved_intent")
+    if resolved_intent is not None and not isinstance(resolved_intent, str):
+        raise TypeError(
+            f"Conversation turn at index {index} field 'resolved_intent' must be a str or None."
+        )
+
+    result_columns = turn.get("result_columns")
+    if result_columns is not None:
+        if not isinstance(result_columns, list):
+            raise TypeError(
+                f"Conversation turn at index {index} field 'result_columns' must be a list or None."
+            )
+        for col in result_columns:
+            if not isinstance(col, str) or not col.strip():
+                raise ValueError(
+                    f"Conversation turn at index {index} has invalid column in 'result_columns': {col!r}."
+                )
 
 
 class QueryPilotState(TypedDict):
@@ -114,8 +220,8 @@ class QueryPilotState(TypedDict):
     # -------------------------------------------------------------------------
     # 2. Contextual & Operational Inputs (Optional at start)
     # -------------------------------------------------------------------------
-    conversation_context: NotRequired[Optional[List[ConversationTurn]]]
-    """Optional prior conversation turns for reference; conversational memory is unmanaged."""
+    conversation_context: NotRequired[Optional[List[Union[ConversationTurn, ConversationTurnContext, Dict[str, Any]]]]]
+    """Optional bounded semantic conversation context (at most 3 completed turns)."""
 
     schema_context: NotRequired[Optional[DatabaseSchema]]
     """Model-facing database schema metadata for SQL generation; redaction must be preserved."""
@@ -188,7 +294,7 @@ def create_initial_state(
     question: str,
     *,
     schema_context: Optional[DatabaseSchema] = None,
-    conversation_context: Optional[List[ConversationTurn]] = None,
+    conversation_context: Optional[Sequence[Union[ConversationTurn, ConversationTurnContext, Dict[str, Any]]]] = None,
     request_id: Optional[str] = None,
     max_retries: int = DEFAULT_MAX_RETRIES,
 ) -> QueryPilotState:
@@ -198,6 +304,7 @@ def create_initial_state(
     - `question` is strictly validated to be a non-empty, non-whitespace string.
     - `max_retries` cannot be negative.
     - Initial values: `retry_count = 0`, `max_retries = max_retries`.
+    - `conversation_context` is bounded to at most `MAX_CONVERSATION_TURNS` (3).
     - No intermediate stage outputs (SQL, validation, execution, presentation) are fabricated.
 
     Args:
@@ -235,7 +342,17 @@ def create_initial_state(
     if schema_context is not None:
         state["schema_context"] = schema_context
     if conversation_context is not None:
-        state["conversation_context"] = conversation_context
+        if not isinstance(conversation_context, (list, tuple)):
+            raise TypeError(
+                f"conversation_context must be a list, got {type(conversation_context).__name__}."
+            )
+        if len(conversation_context) > MAX_CONVERSATION_TURNS:
+            raise ValueError(
+                f"conversation_context cannot exceed {MAX_CONVERSATION_TURNS} turns, got {len(conversation_context)}."
+            )
+        for idx, turn in enumerate(conversation_context):
+            validate_conversation_turn(turn, idx)
+        state["conversation_context"] = list(conversation_context)
     if request_id is not None:
         state["request_id"] = request_id
 
@@ -305,6 +422,19 @@ def validate_initial_state(state: object) -> QueryPilotState:
             raise TypeError(f"Field 'generation_attempts' must be an integer, got {type(val).__name__}.")
         if val < 0:
             raise ValueError(f"generation_attempts cannot be negative, got {val}.")
+
+    if "conversation_context" in state and state["conversation_context"] is not None:
+        cc = state["conversation_context"]
+        if not isinstance(cc, (list, tuple)):
+            raise TypeError(
+                f"Field 'conversation_context' must be a list, got {type(cc).__name__}."
+            )
+        if len(cc) > MAX_CONVERSATION_TURNS:
+            raise ValueError(
+                f"conversation_context cannot exceed {MAX_CONVERSATION_TURNS} turns, got {len(cc)}."
+            )
+        for idx, turn in enumerate(cc):
+            validate_conversation_turn(turn, idx)
 
     # Ensure intermediate result fields remain absent in initial state
     for field_name in INTERMEDIATE_RESULT_FIELDS:

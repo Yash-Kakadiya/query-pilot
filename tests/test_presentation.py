@@ -21,7 +21,7 @@ from query_pilot.presentation import (
     format_query_result,
     sanitize_message,
 )
-from query_pilot.sql.generation import SQLGenerationStatus
+from query_pilot.sql.generation import ClarificationOption, SQLGenerationStatus
 from query_pilot.sql.models import ValidationReason, ValidationReasonCode, ValidationResult
 
 
@@ -411,3 +411,155 @@ def test_pipeline_result_present_convenience_method():
     assert pres.scalar_value == 5
     assert pres.columns == ["Count"]
     assert pres.rows == [{"Count": 5}]
+
+
+# ==============================================================================
+# 12. Clarification Presentation (Task 1.29-B3)
+# ==============================================================================
+
+def test_presentation_clarification_with_prompt_and_options():
+    """Verify presentation includes notice, prompt, and formatted bulleted options."""
+    options = [
+        ClarificationOption(
+            option_id="opt_act",
+            description="Active students only",
+            suggested_question="Show active enrolled students",
+        ),
+        ClarificationOption(
+            option_id="opt_all",
+            description="All students including alumni",
+        ),
+    ]
+    pipe_res = PipelineResult(
+        question="Show enrolled students",
+        status=PipelineStatus.CLARIFICATION_NEEDED,
+        clarification_prompt="Did you mean active students or all historical students?",
+        clarification_options=options,
+        explanation="Student enrollment status filter is ambiguous.",
+    )
+
+    pres = format_pipeline_result(pipe_res)
+
+    assert pres.status == "clarification_needed"
+    assert pres.title == "Show enrolled students"
+    assert pres.clarification_prompt == "Did you mean active students or all historical students?"
+    assert len(pres.clarification_options) == 2
+    assert pres.columns == []
+    assert pres.rows == []
+    assert pres.row_count == 0
+    assert pres.generated_sql is None
+
+    # Message text verification
+    assert "Additional information is required to process this question." in pres.message
+    assert "Did you mean active students or all historical students?" in pres.message
+    assert "Available options:" in pres.message
+    assert "- [opt_act] Active students only (Suggested: Show active enrolled students)" in pres.message
+    assert "- [opt_all] All students including alumni" in pres.message
+
+    # Safety: zero SQL and zero execution success wording
+    assert "SELECT" not in pres.message
+    assert "success" not in pres.message.lower()
+    assert "rows returned" not in pres.message.lower()
+
+
+def test_presentation_clarification_explanation_fallback_when_prompt_absent():
+    """Verify presentation falls back to explanation when prompt is absent without inventing a question."""
+    pipe_res = PipelineResult(
+        question="Show classes",
+        status=PipelineStatus.CLARIFICATION_NEEDED,
+        clarification_prompt=None,
+        clarification_options=[],
+        generation_explanation="Please specify whether you mean spring or fall semester.",
+    )
+
+    pres = format_pipeline_result(pipe_res)
+
+    assert pres.status == "clarification_needed"
+    assert pres.clarification_prompt is None
+    assert "Please specify whether you mean spring or fall semester." in pres.message
+    assert pres.generated_sql is None
+    assert pres.rows == []
+    assert pres.row_count == 0
+
+
+def test_pipeline_result_rejects_sql_for_clarification():
+    """Verify PipelineResult validator rejects non-None generated_sql for CLARIFICATION_NEEDED."""
+    with pytest.raises(Exception, match="Clarification result must not contain generated_sql"):
+        PipelineResult(
+            question="Ambiguous query",
+            status=PipelineStatus.CLARIFICATION_NEEDED,
+            generated_sql="SELECT * FROM SensitiveUsers;",
+            clarification_prompt="Which role?",
+            generation_explanation="Role ambiguous.",
+        )
+
+
+def test_presentation_clarification_does_not_expose_sql_or_imply_success():
+    """Verify presentation strips any accidental SQL and never implies query ran."""
+    from unittest.mock import MagicMock
+
+    mock_res = MagicMock()
+    mock_res.status = PipelineStatus.CLARIFICATION_NEEDED
+    mock_res.question = "Ambiguous query"
+    mock_res.generated_sql = "SELECT * FROM SensitiveUsers;"
+    mock_res.clarification_prompt = "Which role?"
+    mock_res.clarification_options = []
+    mock_res.generation_explanation = "Role ambiguous."
+    mock_res.request_id = None
+    mock_res.grounded_answer = None
+    mock_res.telemetry = None
+
+    pres = format_pipeline_result(mock_res)
+
+    assert pres.status == "clarification_needed"
+    assert pres.generated_sql is None
+    assert "SensitiveUsers" not in pres.message
+    assert "SELECT" not in pres.message
+    assert "executed" not in pres.message.lower()
+    assert "success" not in pres.message.lower()
+
+
+def test_presentation_clarification_whitespace_prompt_fallback():
+    """Verify whitespace-only prompt is treated as absent and falls back to explanation."""
+    pipe_res = PipelineResult(
+        question="Show departments",
+        status=PipelineStatus.CLARIFICATION_NEEDED,
+        clarification_prompt="   \t\n   ",
+        clarification_options=[],
+        generation_explanation="Department categorization is ambiguous.",
+    )
+
+    pres = format_pipeline_result(pipe_res)
+
+    assert pres.status == "clarification_needed"
+    assert pres.clarification_prompt is None
+    assert "Department categorization is ambiguous." in pres.message
+    assert pres.generated_sql is None
+
+
+def test_presentation_clarification_options_order_preservation():
+    """Verify clarification options are formatted deterministically in the exact provided order."""
+    options = [
+        ClarificationOption(option_id="opt_z", description="Zebra department"),
+        ClarificationOption(option_id="opt_a", description="Alpha department"),
+        ClarificationOption(option_id="opt_m", description="Middle department"),
+    ]
+    pipe_res = PipelineResult(
+        question="Which department?",
+        status=PipelineStatus.CLARIFICATION_NEEDED,
+        clarification_prompt="Choose department:",
+        clarification_options=options,
+        generation_explanation="Ambiguous department.",
+    )
+
+    pres = format_pipeline_result(pipe_res)
+
+    assert pres.status == "clarification_needed"
+    z_pos = pres.message.find("- [opt_z]")
+    a_pos = pres.message.find("- [opt_a]")
+    m_pos = pres.message.find("- [opt_m]")
+
+    assert z_pos != -1
+    assert a_pos != -1
+    assert m_pos != -1
+    assert z_pos < a_pos < m_pos
