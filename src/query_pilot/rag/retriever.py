@@ -72,8 +72,6 @@ TABLE_ALIAS_MAP: Dict[str, str] = {
     "studentmarks": "StudentMarks",
     "mark": "StudentMarks",
     "marks": "StudentMarks",
-    "grade": "StudentMarks",
-    "grades": "StudentMarks",
     "facultyassignment": "FacultyAssignments",
     "facultyassignments": "FacultyAssignments",
     "attendancerecord": "AttendanceRecords",
@@ -340,16 +338,24 @@ class DomainContextRetriever:
         entry: KnowledgeEntry,
         normalized_query: str,
         query_tokens: Set[str],
+        query_tables: Optional[Set[str]] = None,
     ) -> Tuple[float, List[str]]:
         """Compute deterministic relevance score of an entry against query."""
         score = 0.0
         matched_terms: List[str] = []
+        matched_tokens_set: Set[str] = set()
 
         # 1. Exact Qualified Column Reference Match with strict identifier boundaries
+        matched_columns: List[str] = []
         for col_ref in entry.columns_referenced:
             if _matches_column_reference(col_ref, normalized_query):
                 score += SCORE_COLUMN_EXACT
                 matched_terms.append(f"col:{col_ref}")
+                matched_columns.append(col_ref)
+                if "." in col_ref:
+                    tbl_p, col_p = col_ref.lower().split(".", 1)
+                    matched_tokens_set.add(tbl_p)
+                    matched_tokens_set.add(col_p)
 
         # 2. Table Name Match (normalized tokens or explicit phrase boundaries)
         matched_tables: Set[str] = set()
@@ -361,6 +367,8 @@ class DomainContextRetriever:
             for phrase, target_tbl in TABLE_PHRASE_ALIAS_MAP.items():
                 if target_tbl == tbl and re.search(rf"\b{re.escape(phrase)}\b", normalized_query):
                     matched_alias = f"{tbl}(phrase:{phrase})"
+                    for pt in phrase.split():
+                        matched_tokens_set.add(pt)
                     break
 
             # If no phrase matched, check exact normalized tokens
@@ -368,17 +376,21 @@ class DomainContextRetriever:
                 for token in query_tokens:
                     if token == tbl_lower:
                         matched_alias = tbl
+                        matched_tokens_set.add(token)
                         break
                     if TABLE_ALIAS_MAP.get(token) == tbl:
                         matched_alias = f"{tbl}(alias:{token})"
+                        matched_tokens_set.add(token)
                         break
 
             if matched_alias and tbl not in matched_tables:
                 matched_tables.add(tbl)
-                score += SCORE_TABLE_EXACT
                 matched_terms.append(f"table:{matched_alias}")
 
         # 3. Curated Keyword Matching (word-bounded phrase match or exact token match)
+        # If query explicitly targets database tables, single-word keywords for disjoint table cards are unanchored
+        has_table_anchor = bool(matched_tables) or not bool(query_tables)
+        matched_keywords: List[str] = []
         for kw in entry.keywords:
             kw_lower = kw.lower()
             if " " in kw_lower:
@@ -387,23 +399,48 @@ class DomainContextRetriever:
                 if re.search(pattern, normalized_query):
                     score += SCORE_KEYWORD_PHRASE
                     matched_terms.append(f"keyword_phrase:{kw}")
+                    matched_keywords.append(kw)
+                    for kt in kw_lower.split():
+                        matched_tokens_set.add(kt)
             else:
                 # Single-word keyword matching exact token
                 if kw_lower in query_tokens:
-                    score += SCORE_KEYWORD_EXACT
-                    matched_terms.append(f"keyword:{kw}")
+                    if has_table_anchor:
+                        score += SCORE_KEYWORD_EXACT
+                        matched_terms.append(f"keyword:{kw}")
+                        matched_keywords.append(kw)
+                        matched_tokens_set.add(kw_lower)
 
-        # 4. Title Token Overlap
+        # Table scoring logic:
+        # 1. Table inheritance cards focus on primary entity identity: full table score.
+        # 2. Relationship cards focus on their primary table (tables_referenced[0]):
+        #    a secondary table match without the primary table or corroborating signals is partial (1.0).
+        # 3. Semantic trap cards require multi-signal evidence (2+ tables, trap column, or keyword);
+        #    an isolated single-table match without corroboration is partial (1.0).
+        primary_table = entry.tables_referenced[0] if entry.tables_referenced else None
+        has_primary_match = primary_table is not None and primary_table in matched_tables
+        has_corroborating_signal = bool(matched_columns or matched_keywords or len(matched_tables) >= 2)
+
+        for tbl in matched_tables:
+            if entry.category == "semantic_trap" and not has_corroborating_signal:
+                score += 1.0
+            elif entry.category == "relationship" and not (has_primary_match or has_corroborating_signal):
+                score += 1.0
+            else:
+                score += SCORE_TABLE_EXACT
+
+        # 4. Title Token Overlap (evaluated on residual tokens not already matched)
+        residual_tokens = query_tokens - matched_tokens_set
         title_tokens = set(tokenize_query(entry.title))
-        title_matches = title_tokens & query_tokens
+        title_matches = title_tokens & residual_tokens
         if title_matches:
             score += len(title_matches) * SCORE_TITLE_TOKEN
             for tm in sorted(title_matches):
                 matched_terms.append(f"title:{tm}")
 
-        # 5. Content Token Overlap
+        # 5. Content Token Overlap (evaluated on residual tokens not already matched)
         content_tokens = set(tokenize_query(entry.content))
-        content_matches = content_tokens & query_tokens
+        content_matches = content_tokens & residual_tokens
         if content_matches:
             score += len(content_matches) * SCORE_CONTENT_TOKEN
             for cm in sorted(content_matches):
@@ -458,6 +495,19 @@ class DomainContextRetriever:
         if not query_tokens:
             return []
 
+        # Identify all tables explicitly referenced across query to evaluate keyword anchoring
+        query_tables: Set[str] = set()
+        for phrase, tbl in TABLE_PHRASE_ALIAS_MAP.items():
+            if re.search(rf"\b{re.escape(phrase)}\b", normalized_query):
+                query_tables.add(tbl)
+        for tok in query_tokens:
+            if tok in TABLE_ALIAS_MAP:
+                query_tables.add(TABLE_ALIAS_MAP[tok])
+            for entry in self._entries:
+                for tbl in entry.tables_referenced:
+                    if tok == tbl.lower():
+                        query_tables.add(tbl)
+
         k = min(self.default_top_k if top_k is None else top_k, HARD_MAX_TOP_K)
         threshold = self.default_min_score if min_score is None else max(0.0, float(min_score))
         char_budget = self.default_max_chars if max_chars is None else max_chars
@@ -465,7 +515,9 @@ class DomainContextRetriever:
         scored_candidates: List[Tuple[float, str, KnowledgeEntry, List[str]]] = []
 
         for entry in self._entries:
-            score, matched_terms = self._score_entry(entry, normalized_query, query_tokens)
+            score, matched_terms = self._score_entry(
+                entry, normalized_query, query_tokens, query_tables=query_tables
+            )
             if score >= threshold:
                 # Store (score, entry.id) for deterministic tie-breaking
                 scored_candidates.append((score, entry.id, entry, matched_terms))

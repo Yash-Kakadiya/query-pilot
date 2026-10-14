@@ -337,19 +337,40 @@ class TestRetrievalEvaluationDatasetIntegrity:
 class TestRetrievalExecutionAndBaselineMetrics:
     """Verifies offline execution, determinism, character budgets, and baseline metrics."""
 
+    # Historical Task 1.31-G baseline metrics (commit e98e5a8) preserved for comparison
+    BASELINE_MACRO_PRECISION: float = 7.0 / 12.0  # ~0.583333 (58.33%)
+    BASELINE_MACRO_RECALL: float = 1.0  # 100.00%
+    BASELINE_TRAP_RECALL: float = 3.0 / 3.0  # 100.00%
+    BASELINE_EMPTY_SPECIFICITY: float = 3.0 / 5.0  # 60.00%
+    BASELINE_BUDGET_COMPLIANCE: float = 12.0 / 12.0  # 100.00%
+
+    # Tuned Task 1.31-H target metrics
+    TUNED_MACRO_PRECISION: float = 7.5 / 12.0  # 0.625000 (62.50%, +4.17% improvement)
+    TUNED_MACRO_RECALL: float = 1.0  # 100.00%
+    TUNED_TRAP_RECALL: float = 1.0  # 100.00%
+    TUNED_EMPTY_SPECIFICITY: float = 3.0 / 5.0  # 60.00%
+    TUNED_BUDGET_COMPLIANCE: float = 1.0  # 100.00%
+
     def test_baseline_metrics_regression(
         self,
         retriever: DomainContextRetriever,
         evaluation_cases: List[Dict[str, Any]],
     ) -> None:
-        """Verify explicit baseline regression assertions for the 12-case dataset.
+        """Verify tuned metrics and assert strict improvement over the Task 1.31-G historical baseline.
 
-        Asserts baseline metrics observed during Task 1.31-G:
+        Historical comparison (Task 1.31-G baseline at commit e98e5a8):
         - Macro mean precision: 7/12 (~0.583333)
         - Macro mean recall: 1.0 (12/12)
         - Semantic-trap recall: 3/3 (1.0)
         - Empty-result specificity: 3/5 (0.60)
         - Character-budget compliance: 12/12 (1.0)
+
+        Tuned metrics (Task 1.31-H):
+        - Macro mean precision: 7.5/12 (0.625000, +4.17% improvement via unanchored keyword filtering)
+        - Macro mean recall: 1.0 (100.00% preserved)
+        - Semantic-trap recall: 3/3 (100.00% preserved)
+        - Empty-result specificity: 3/5 (60.00% preserved)
+        - Character-budget compliance: 12/12 (100.00% preserved)
 
         Uses pytest.approx with relative tolerance to prevent brittle floating-point comparisons.
         Includes deterministic per-case breakdown in assertion error messages.
@@ -358,20 +379,26 @@ class TestRetrievalExecutionAndBaselineMetrics:
         report_str = summary.format_report()
 
         assert summary.total_cases == 12, f"Expected 12 cases:\n{report_str}"
-        assert summary.mean_precision == pytest.approx(7.0 / 12.0, rel=1e-4), (
-            f"Macro mean precision deviated from 7/12 baseline ({summary.mean_precision:.6f}):\n{report_str}"
+
+        # Assert strict improvement over historical Task 1.31-G baseline
+        assert summary.mean_precision > self.BASELINE_MACRO_PRECISION, (
+            f"Tuned macro precision ({summary.mean_precision:.6f}) must strictly exceed "
+            f"historical baseline ({self.BASELINE_MACRO_PRECISION:.6f}):\n{report_str}"
         )
-        assert summary.mean_recall == pytest.approx(1.0, rel=1e-4), (
-            f"Macro mean recall deviated from 1.0 baseline ({summary.mean_recall:.6f}):\n{report_str}"
+        assert summary.mean_precision == pytest.approx(self.TUNED_MACRO_PRECISION, rel=1e-4), (
+            f"Macro mean precision deviated from tuned {self.TUNED_MACRO_PRECISION:.6f} target ({summary.mean_precision:.6f}):\n{report_str}"
         )
-        assert summary.semantic_trap_recall == pytest.approx(3.0 / 3.0, rel=1e-4), (
-            f"Semantic trap recall deviated from 3/3 baseline ({summary.semantic_trap_recall:.6f}):\n{report_str}"
+        assert summary.mean_recall == pytest.approx(self.TUNED_MACRO_RECALL, rel=1e-4), (
+            f"Macro mean recall deviated from tuned baseline ({summary.mean_recall:.6f}):\n{report_str}"
         )
-        assert summary.empty_result_specificity == pytest.approx(3.0 / 5.0, rel=1e-4), (
-            f"Empty-result specificity deviated from 3/5 baseline ({summary.empty_result_specificity:.6f}):\n{report_str}"
+        assert summary.semantic_trap_recall == pytest.approx(self.TUNED_TRAP_RECALL, rel=1e-4), (
+            f"Semantic trap recall deviated from tuned baseline ({summary.semantic_trap_recall:.6f}):\n{report_str}"
         )
-        assert summary.budget_compliance_rate == pytest.approx(12.0 / 12.0, rel=1e-4), (
-            f"Character budget compliance deviated from 12/12 baseline ({summary.budget_compliance_rate:.6f}):\n{report_str}"
+        assert summary.empty_result_specificity == pytest.approx(self.TUNED_EMPTY_SPECIFICITY, rel=1e-4), (
+            f"Empty-result specificity deviated from tuned baseline ({summary.empty_result_specificity:.6f}):\n{report_str}"
+        )
+        assert summary.budget_compliance_rate == pytest.approx(self.TUNED_BUDGET_COMPLIANCE, rel=1e-4), (
+            f"Character budget compliance deviated from tuned baseline ({summary.budget_compliance_rate:.6f}):\n{report_str}"
         )
 
     def test_per_case_breakdown_reporting(
@@ -398,13 +425,19 @@ class TestRetrievalExecutionAndBaselineMetrics:
         retriever: DomainContextRetriever,
         evaluation_cases: List[Dict[str, Any]],
     ) -> None:
-        """Verify and document the known baseline limitation on unresolved business rule queries.
+        """Verify and document over-retrieval on unresolved business rule queries.
 
         Queries for unresolved business rules ('at-risk' and 'dynamic CGPA') are not cataloged,
-        so expected_entry_ids is empty ([]). However, because the questions contain table-matching
-        tokens ('students', 'enrolled'), the current retriever triggers table-level scoring
-        (SCORE_TABLE_EXACT = 3.0 >= min_score = 2.0), returning irrelevant student knowledge entries.
-        This test explicitly asserts this baseline limitation without failing.
+        so expected_entry_ids is empty ([]).
+
+        In Task 1.31-G baseline:
+        Three entries were over-retrieved (KB_MARKS_STUDENT_ENROLLMENT_REL, KB_STU_USERS_INHERITANCE,
+        KB_TRAP_STUDENT_DEPARTMENT_JOIN) due to table alias 'grade' and unanchored secondary table matches.
+
+        In Task 1.31-H tuned:
+        The erroneous 'grade' -> StudentMarks alias was removed and secondary-table join cards without
+        corroboration were penalized. Over-retrieval is reduced from 3 entries to exactly 1 entry
+        (KB_STU_USERS_INHERITANCE), which matches the primary 'Students' table entity.
         """
         unresolved_cases = [
             c for c in evaluation_cases
@@ -425,14 +458,14 @@ class TestRetrievalExecutionAndBaselineMetrics:
             results = retriever.retrieve(case["question"], intent=case.get("intent"))
             actual_ids = [r.entry_id for r in results]
 
-            # Assert and document baseline limitation: table-level match triggers co-retrieval
-            assert len(actual_ids) > 0, (
-                f"Baseline expectation: case {case_id} over-retrieves due to 'student' table match"
+            # In Task 1.31-H, over-retrieval is reduced from 3 entries to exactly 1 entry
+            assert len(actual_ids) == 1, (
+                f"Task 1.31-H: case {case_id} over-retrieval reduced from 3 to 1, got {actual_ids}"
             )
             prec, rec = compute_case_precision_recall(case["expected_entry_ids"], actual_ids)
             assert prec == 0.0, f"Case {case_id} precision must be 0.0 due to irrelevant retrieval"
             assert rec == 1.0, f"Case {case_id} recall is 1.0 under empty ground-truth convention"
-            assert "KB_STU_USERS_INHERITANCE" in actual_ids
+            assert actual_ids == ["KB_STU_USERS_INHERITANCE"]
 
             # Irrelevant retrieved entries are populated and tracked
             missed = [e for e in case["expected_entry_ids"] if e not in actual_ids]
