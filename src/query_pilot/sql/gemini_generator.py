@@ -28,6 +28,7 @@ from query_pilot.sql.generation import (
     SQLGenerator,
 )
 from query_pilot.sql.prompt import SYSTEM_INSTRUCTION, build_sql_generation_prompt
+from query_pilot.tracing import trace_gemini_call
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +119,7 @@ class GeminiSQLGenerator(SQLGenerator):
                 f"Failed to initialize google-genai Client: {exc}"
             ) from exc
 
+    @trace_gemini_call(name="gemini_generate_sql", run_type="llm")
     def generate(self, request: SQLGenerationRequest) -> SQLGenerationResponse:
         """Generate structured candidate SQL for a natural language question.
 

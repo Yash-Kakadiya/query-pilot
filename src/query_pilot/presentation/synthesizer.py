@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from query_pilot.db.executor import QueryResult
 from query_pilot.observability import LLMUsageMetadata, extract_llm_usage
+from query_pilot.tracing import trace_gemini_call
 
 logger = logging.getLogger(__name__)
 
@@ -278,8 +279,9 @@ class AnswerSynthesisService:
                 system_instruction=SYNTHESIS_SYSTEM_INSTRUCTION,
                 temperature=0.0,
             )
-            response = client.models.generate_content(
-                model=self.model_name,
+            response = self._call_gemini_model(
+                client=client,
+                model_name=self.model_name,
                 contents=prompt_text,
                 config=config,
             )
@@ -322,4 +324,15 @@ class AnswerSynthesisService:
             is_mechanically_verified=False,
             verification_notes=notes,
             usage_metadata=usage_meta,
+        )
+
+    @trace_gemini_call(name="gemini_answer_synthesis", run_type="llm")
+    def _call_gemini_model(
+        self, client: Any, model_name: str, contents: str, config: Any
+    ) -> Any:
+        """Isolated helper for invoking the Gemini models API under tracing."""
+        return client.models.generate_content(
+            model=model_name,
+            contents=contents,
+            config=config,
         )

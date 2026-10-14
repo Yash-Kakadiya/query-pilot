@@ -26,6 +26,7 @@ from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import DataError, OperationalError, ProgrammingError
 
+from query_pilot.config import Settings
 from query_pilot.db.connection import create_db_engine
 from query_pilot.db.executor import (
     QueryExecutionError,
@@ -67,6 +68,7 @@ from query_pilot.sql.generation import (
 )
 from query_pilot.sql.models import ValidationReasonCode, ValidationResult
 from query_pilot.sql.validator import validate_sql
+from query_pilot.tracing import get_runnable_config
 
 logger = logging.getLogger(__name__)
 
@@ -243,6 +245,7 @@ class QueryPilotWorkflow:
         dialect: str = "T-SQL",
         additional_instructions: Optional[str] = None,
         synthesizer: Optional[AnswerSynthesisService] = None,
+        settings: Optional[Settings] = None,
     ):
         self._generator = generator
         self._engine = engine
@@ -253,6 +256,7 @@ class QueryPilotWorkflow:
         self.dialect = dialect
         self.additional_instructions = additional_instructions
         self._synthesizer = synthesizer
+        self._settings = settings
         self._compiled_app: Optional[CompiledStateGraph] = None
 
     @property
@@ -802,7 +806,13 @@ class QueryPilotWorkflow:
                 state["conversation_context"] = conversation_context
 
         app = self.compile()
-        return app.invoke(state)
+        resolved_req_id = state.get("request_id") or request_id
+        config = get_runnable_config(
+            request_id=resolved_req_id,
+            dialect=self.dialect,
+            settings=self._settings,
+        )
+        return app.invoke(state, config=config)
 
 
 def create_query_graph(
@@ -880,7 +890,13 @@ def run_query_graph(
                 state["request_id"] = request_id
             if conversation_context is not None and "conversation_context" not in state:
                 state["conversation_context"] = conversation_context
-        return graph.invoke(state)
+        resolved_req_id = state.get("request_id") or request_id
+        config = get_runnable_config(
+            request_id=resolved_req_id,
+            dialect=kwargs.get("dialect", "T-SQL"),
+            settings=kwargs.get("settings"),
+        )
+        return graph.invoke(state, config=config)
 
     workflow = QueryPilotWorkflow(**kwargs)
     return workflow.run(question, request_id=request_id, conversation_context=conversation_context)
