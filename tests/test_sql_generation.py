@@ -1166,3 +1166,171 @@ def test_generation_obtains_domain_guidance_strictly_via_retriever(mock_model_fa
     gen_disabled.generate(req)
     prompt_disabled = gen_disabled.client.models.generate_content.call_args.kwargs["contents"]
     assert "=== RETRIEVED DOMAIN KNOWLEDGE" not in prompt_disabled
+
+
+# ==============================================================================
+# Gemini Response Schema Compatibility Tests (Task 1.33-B9)
+# ==============================================================================
+
+def test_gemini_response_schema_contains_no_additional_properties():
+    """Verify Gemini response_schema does not contain unsupported additional_properties anywhere in schema tree."""
+    from google.genai import _transformers as t
+
+    schema = t.t_schema(None, _GeminiSQLPayloadSchema)
+    assert schema is not None
+
+    def assert_no_additional_properties(node, path="root"):
+        assert getattr(node, "additional_properties", None) is None, (
+            f"Found unsupported additional_properties at {path}: {getattr(node, 'additional_properties', None)}"
+        )
+        if hasattr(node, "properties") and node.properties:
+            for prop_name, prop_schema in node.properties.items():
+                assert_no_additional_properties(prop_schema, f"{path}.properties['{prop_name}']")
+        if hasattr(node, "items") and node.items:
+            assert_no_additional_properties(node.items, f"{path}.items")
+
+    assert_no_additional_properties(schema)
+
+    # Verify clarification_options specifically (the offending property from Task 1.33-B8)
+    clarification_items = schema.properties["clarification_options"].items
+    assert clarification_items is not None
+    assert getattr(clarification_items, "additional_properties", None) is None
+
+    # Verify dictionary serialization omits any additional_properties / additionalProperties keys
+    dumped = schema.model_dump(exclude_none=True, by_alias=True)
+
+    def assert_no_forbidden_keys(obj, path="root"):
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                assert k not in ("additional_properties", "additionalProperties"), (
+                    f"Found forbidden key '{k}' in serialized schema at {path}"
+                )
+                assert_no_forbidden_keys(v, f"{path}['{k}']")
+        elif isinstance(obj, list):
+            for i, elem in enumerate(obj):
+                assert_no_forbidden_keys(elem, f"{path}[{i}]")
+
+    assert_no_forbidden_keys(dumped)
+
+
+def test_gemini_response_schema_retains_required_fields_and_nested_structure():
+    """Verify Gemini schema retains all required fields, correct types, and nullability."""
+    from google.genai import _transformers as t
+    from google.genai import types
+
+    schema = t.t_schema(None, _GeminiSQLPayloadSchema)
+    assert schema.type == types.Type.OBJECT
+
+    expected_root_props = {
+        "status",
+        "sql",
+        "explanation",
+        "assumptions",
+        "clarification_prompt",
+        "clarification_options",
+    }
+    assert set(schema.properties.keys()) == expected_root_props
+
+    # Status enum
+    status_schema = schema.properties["status"]
+    assert status_schema.type == types.Type.STRING
+    assert set(status_schema.enum) == {"answerable", "unsupported", "clarification_needed"}
+
+    # Nullable string fields
+    assert schema.properties["sql"].type == types.Type.STRING
+    assert schema.properties["sql"].nullable is True
+
+    assert schema.properties["explanation"].type == types.Type.STRING
+    assert schema.properties["explanation"].nullable is True
+
+    assert schema.properties["clarification_prompt"].type == types.Type.STRING
+    assert schema.properties["clarification_prompt"].nullable is True
+
+    # Assumptions array
+    assert schema.properties["assumptions"].type == types.Type.ARRAY
+    assert schema.properties["assumptions"].items.type == types.Type.STRING
+
+    # Clarification options array and nested items
+    options_schema = schema.properties["clarification_options"]
+    assert options_schema.type == types.Type.ARRAY
+    items_schema = options_schema.items
+    assert items_schema.type == types.Type.OBJECT
+
+    expected_item_props = {"option_id", "description", "suggested_question"}
+    assert set(items_schema.properties.keys()) == expected_item_props
+    assert set(items_schema.required) == {"option_id", "description"}
+    assert items_schema.properties["option_id"].type == types.Type.STRING
+    assert items_schema.properties["description"].type == types.Type.STRING
+    assert items_schema.properties["suggested_question"].type == types.Type.STRING
+    assert items_schema.properties["suggested_question"].nullable is True
+
+
+def test_gemini_generator_configures_response_schema_offline(mock_model_facing_schema):
+    """Verify GeminiSQLGenerator configures GenerateContentConfig with the schema offline without API calls."""
+    from google.genai import _transformers as t
+
+    response_json = json.dumps({"status": "answerable", "sql": "SELECT 1"})
+    gen = _mock_gemini_generator(response_json)
+
+    req = SQLGenerationRequest(
+        question="Count total students",
+        schema_context=mock_model_facing_schema,
+    )
+    gen.generate(req)
+
+    assert gen.client.models.generate_content.called
+    call_kwargs = gen.client.models.generate_content.call_args.kwargs
+    config = call_kwargs["config"]
+
+    assert config.response_mime_type == "application/json"
+    assert config.response_schema is _GeminiSQLPayloadSchema
+    assert config.temperature == 0.0
+
+    # Ensure SDK transformation on configured response_schema produces clean Schema without additional_properties
+    converted_schema = t.t_schema(None, config.response_schema)
+    clarification_items = converted_schema.properties["clarification_options"].items
+    assert getattr(clarification_items, "additional_properties", None) is None
+
+
+def test_gemini_generator_parses_clarification_response_into_domain_model(mock_model_facing_schema):
+    """Verify Gemini generator parses clarification output into strict ClarificationOption domain models."""
+    response_json = json.dumps({
+        "status": "clarification_needed",
+        "sql": None,
+        "explanation": "Multiple matching semesters found.",
+        "assumptions": [],
+        "clarification_prompt": "Which semester did you mean?",
+        "clarification_options": [
+            {
+                "option_id": "opt_spring26",
+                "description": "Spring 2026 current semester",
+                "suggested_question": "Show courses in Spring 2026",
+            },
+            {
+                "option_id": "opt_fall25",
+                "description": "Fall 2025 previous semester",
+                "suggested_question": None,
+            },
+        ],
+    })
+    gen = _mock_gemini_generator(response_json)
+    req = SQLGenerationRequest(
+        question="Show courses",
+        schema_context=mock_model_facing_schema,
+    )
+    result = gen.generate(req)
+
+    assert result.status == SQLGenerationStatus.CLARIFICATION_NEEDED
+    assert len(result.clarification_options) == 2
+
+    opt1 = result.clarification_options[0]
+    assert isinstance(opt1, ClarificationOption)
+    assert opt1.option_id == "opt_spring26"
+    assert opt1.description == "Spring 2026 current semester"
+    assert opt1.suggested_question == "Show courses in Spring 2026"
+
+    opt2 = result.clarification_options[1]
+    assert isinstance(opt2, ClarificationOption)
+    assert opt2.option_id == "opt_fall25"
+    assert opt2.description == "Fall 2025 previous semester"
+    assert opt2.suggested_question is None

@@ -33,18 +33,41 @@ from query_pilot.tracing import trace_gemini_call
 logger = logging.getLogger(__name__)
 
 
-class _GeminiSQLPayloadSchema(BaseModel):
-    """Internal Pydantic schema for Gemini structured output.
+class _GeminiClarificationOptionSchema(BaseModel):
+    """Internal Pydantic schema for clarification options in Gemini structured output.
 
-    Guarantees that telemetry fields are never exposed to the LLM prompt schema.
+    Omits extra='forbid' so that Pydantic does not inject 'additionalProperties: false',
+    which the Gemini API backend rejects in response_schema.
     """
+
+    option_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        description="Unique identifier for the clarification option.",
+    )
+    description: str = Field(
+        ...,
+        min_length=1,
+        max_length=500,
+        description="Concise description of this interpretation.",
+    )
+    suggested_question: Optional[str] = Field(
+        default=None,
+        max_length=500,
+        description="Optional unambiguous reformulated question corresponding to this option.",
+    )
+
+
+class _GeminiSQLPayloadSchema(BaseModel):
+    """Internal schema for Gemini structured output."""
 
     status: SQLGenerationStatus = SQLGenerationStatus.ANSWERABLE
     sql: Optional[str] = None
     explanation: Optional[str] = None
     assumptions: List[str] = Field(default_factory=list)
     clarification_prompt: Optional[str] = None
-    clarification_options: List[ClarificationOption] = Field(default_factory=list)
+    clarification_options: List[_GeminiClarificationOptionSchema] = Field(default_factory=list)
 
 
 class GeminiSQLGenerator(SQLGenerator):
