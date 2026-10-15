@@ -17,3 +17,8 @@ pytest>=8.0.0
 
 # Agent Workflow & Orchestration (Phase 2)
 langgraph>=1.0.0
+
+# API & Serving (Phase 3)
+fastapi>=0.110.0
+uvicorn>=0.29.0
+httpx>=0.27.0
