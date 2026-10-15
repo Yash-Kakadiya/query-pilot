@@ -4,7 +4,7 @@ import {
   type QueryRequest,
   type QueryResponse,
   type ValidationErrorDetail,
-} from '../types/api'
+} from '../types/api.ts'
 
 /**
  * Options for client requests.
@@ -17,9 +17,74 @@ export interface RequestOptions {
 }
 
 /**
+ * Resolves the configured API base URL.
+ *
+ * Defaults to '/api' for seamless local development via the Vite reverse proxy.
+ * In split-origin deployments, a direct backend URL (e.g. 'http://127.0.0.1:8000')
+ * can be provided via the VITE_API_BASE_URL environment variable.
+ *
+ * @throws ApiClientError if VITE_API_BASE_URL is explicitly configured with an invalid URL or scheme.
+ */
+export function getApiBaseUrl(customEnvUrl?: string): string {
+  const envUrl =
+    customEnvUrl !== undefined
+      ? customEnvUrl
+      : (import.meta as { env?: Record<string, string | undefined> })?.env?.VITE_API_BASE_URL
+
+  if (envUrl === undefined || envUrl === null) {
+    return '/api'
+  }
+
+  const trimmed = envUrl.trim()
+  if (trimmed === '') {
+    return '/api'
+  }
+
+  // Handle relative root or proxy path
+  if (trimmed.startsWith('/')) {
+    const cleanRelative = trimmed.replace(/\/+$/, '')
+    return cleanRelative === '' ? '' : cleanRelative
+  }
+
+  // Handle absolute HTTP/HTTPS URL
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    try {
+      const parsed = new URL(trimmed)
+      if (!parsed.hostname) {
+        throw new Error('Missing hostname')
+      }
+      return trimmed.replace(/\/+$/, '')
+    } catch {
+      throw new ApiClientError({
+        message: `Invalid VITE_API_BASE_URL configured: "${envUrl}". Must be a valid absolute HTTP or HTTPS URL.`,
+        kind: 'network',
+      })
+    }
+  }
+
+  throw new ApiClientError({
+    message: `Invalid VITE_API_BASE_URL configured: "${envUrl}". Expected an absolute HTTP/HTTPS URL or a relative path starting with "/".`,
+    kind: 'network',
+  })
+}
+
+/**
+ * Resolves the full URL for a given API endpoint path.
+ *
+ * @param path - Target endpoint path (e.g. '/health' or '/query').
+ * @param customEnvUrl - Optional override for testing or dynamic configuration.
+ * @returns Fully qualified or proxy-relative request URL.
+ */
+export function resolveEndpoint(path: string, customEnvUrl?: string): string {
+  const base = getApiBaseUrl(customEnvUrl)
+  const cleanPath = path.startsWith('/') ? path : `/${path}`
+  return `${base}${cleanPath}`
+}
+
+/**
  * Fetch application operational liveness status from the backend.
  *
- * Calls `GET /api/health` via the Vite development proxy.
+ * Calls `GET /health` resolved via getApiBaseUrl().
  *
  * @param signal - Optional AbortSignal for request cancellation on component unmount.
  * @returns Promise resolving to the validated HealthResponse.
@@ -28,7 +93,8 @@ export interface RequestOptions {
 export async function getHealth(signal?: AbortSignal): Promise<HealthResponse> {
   let response: Response
   try {
-    response = await fetch('/api/health', {
+    const url = resolveEndpoint('/health')
+    response = await fetch(url, {
       method: 'GET',
       headers: {
         Accept: 'application/json',
@@ -37,6 +103,9 @@ export async function getHealth(signal?: AbortSignal): Promise<HealthResponse> {
     })
   } catch (err: unknown) {
     if (err instanceof DOMException && err.name === 'AbortError') {
+      throw err
+    }
+    if (err instanceof ApiClientError) {
       throw err
     }
     throw new ApiClientError({
@@ -106,7 +175,8 @@ export async function postQuery(
 
   let response: Response
   try {
-    response = await fetch('/api/query', {
+    const url = resolveEndpoint('/query')
+    response = await fetch(url, {
       method: 'POST',
       headers,
       body: JSON.stringify(request),
@@ -114,6 +184,9 @@ export async function postQuery(
     })
   } catch (err: unknown) {
     if (err instanceof DOMException && err.name === 'AbortError') {
+      throw err
+    }
+    if (err instanceof ApiClientError) {
       throw err
     }
     throw new ApiClientError({

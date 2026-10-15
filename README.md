@@ -249,8 +249,8 @@ Execute the automated test suites:
    QueryPilot currently enforces a strict security boundary in [src/query_pilot/db/connection.py](src/query_pilot/db/connection.py) restricting execution exclusively to a database named `GradeSense_Local`. Connecting to another database triggers a fatal `DatabaseSecurityError`.
 2. **Health Check Semantics:**
    The `GET /health` endpoint is strictly an **application process liveness check**. It verifies that the FastAPI process is up and handling HTTP requests. It **does NOT** test downstream SQL Server connectivity or Gemini API availability.
-3. **Local Reverse Proxy in Vite:**
-   The frontend communicates with the backend via Vite's local dev server proxy configured in `frontend/vite.config.ts`. In a production build (`npm run build`), this proxy does not run; deploying frontend and backend to distinct origins requires configuring CORS middleware and an explicit API base URL.
+3. **Local Reverse Proxy & Split-Origin Deployment:**
+   The frontend defaults to Vite's local dev server proxy configured in `frontend/vite.config.ts`. For production deployments where the frontend and backend reside on distinct origins, configure `VITE_API_BASE_URL` on the frontend at build time and `CORS_ALLOWED_ORIGINS` on the backend (see [API Guide](docs/api.md) for deployment options). Unified deployments behind a reverse proxy do not require CORS.
 4. **Windows Authentication Default:**
    Default configuration assumes Windows Integrated Authentication with SQL Server Express on `localhost`. Linux environments and containerized deployments require SQL Authentication credentials (`DB_USER`, `DB_PASSWORD`) and Linux Microsoft ODBC packages.
 5. **SQL Visibility Policy:**

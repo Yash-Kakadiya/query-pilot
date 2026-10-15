@@ -367,3 +367,37 @@ if response.status_code == 200:
 else:
     print(f"Error {response.status_code}:", response.json())
 ```
+
+---
+
+## 5. Deployment Connectivity & CORS Policy
+
+QueryPilot supports two production deployment architectures:
+
+### 1. Same-Origin Deployment (Unified Reverse Proxy)
+In a unified deployment, the frontend static assets and the FastAPI backend are served behind a single reverse proxy (such as Nginx, Caddy, Cloudflare, or an API gateway):
+* Browser requests hit `/api/*` on the same domain.
+* The reverse proxy strips `/api` and routes directly to FastAPI's root endpoints (`/health`, `/query`).
+* **CORS is not required**: Leave `CORS_ALLOWED_ORIGINS` unset or empty in the backend environment. No CORS headers are emitted.
+
+### 2. Split-Origin Deployment (Separate Frontend & Backend Hosts)
+When the frontend SPA (e.g. deployed on a CDN or Vercel at `https://querypilot.example.com`) communicates directly with a separate backend API host (e.g. `https://api.querypilot.example.com`):
+* Configure the backend with `CORS_ALLOWED_ORIGINS`:
+  ```ini
+  CORS_ALLOWED_ORIGINS=https://querypilot.example.com
+  ```
+* Multiple origins may be supplied as a comma-separated list or JSON array:
+  ```ini
+  CORS_ALLOWED_ORIGINS=https://querypilot.example.com,https://preview.querypilot.example.com
+  ```
+* Configure the frontend build environment with `VITE_API_BASE_URL`:
+  ```ini
+  VITE_API_BASE_URL=https://api.querypilot.example.com
+  ```
+
+### Security & CORS Rules
+* **Explicit Origins Only:** Wildcards (`*`) are strictly rejected. Each origin must specify an explicit `http://` or `https://` scheme and valid host/port without paths, query strings, or fragments.
+* **Credentials Disabled:** `allow_credentials` is set to `False`. QueryPilot queries are uncredentialed and do not accept cross-origin cookies.
+* **Minimal Methods & Headers:** Only `GET`, `POST`, and `OPTIONS` are permitted. Only `Content-Type`, `Accept`, and `X-Request-ID` request headers are accepted.
+* **Header Exposure:** `X-Request-ID` is explicitly exposed in `Access-Control-Expose-Headers` so browser clients can track request correlation IDs.
+* **Important Notice:** CORS is a browser cross-origin policy enforcement mechanism, **not** an authentication system. It restricts which web frontends can invoke the API from a browser, but does not substitute for network boundaries or API authorization.

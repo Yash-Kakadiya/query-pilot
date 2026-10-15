@@ -33,25 +33,31 @@ npm run dev
 
 The Vite development server runs at `http://127.0.0.1:5173` (or `http://localhost:5173`).
 
-### 3. API Proxy Configuration
+### 3. API Proxy & Base URL Configuration
 
-The frontend communicates with the FastAPI backend through the Vite development proxy configured in [vite.config.ts](vite.config.ts):
+The frontend communicates with the FastAPI backend through dynamic endpoint resolution in `src/services/apiClient.ts`:
 
-```typescript
-server: {
-  proxy: {
-    '/api': {
-      target: 'http://127.0.0.1:8000',
-      changeOrigin: true,
-      rewrite: (path) => path.replace(/^\/api/, ''),
+* **Default (Local Development via Vite Proxy):**
+  When `VITE_API_BASE_URL` is unset or empty, the frontend defaults to `/api`. Vite's development proxy ([vite.config.ts](vite.config.ts)) intercepts these requests and transparently forwards them to `http://127.0.0.1:8000`:
+  ```typescript
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, ''),
+      },
     },
-  },
-}
-```
-
-* Browser requests to `/api/health` are transparently forwarded to `http://127.0.0.1:8000/health`.
-* Browser requests to `/api/query` are transparently forwarded to `http://127.0.0.1:8000/query`.
-* Ensure the FastAPI backend is running on port `8000` before submitting queries.
+  }
+  ```
+* **Split-Origin Production Deployment:**
+  When deploying the frontend to a separate origin from the backend (e.g. static CDN/hosting), configure `VITE_API_BASE_URL` in your frontend build environment:
+  ```bash
+  # Example: direct backend host (trailing slash is automatically normalized)
+  VITE_API_BASE_URL=https://api.querypilot.example.com
+  ```
+  > [!IMPORTANT]
+  > `VITE_API_BASE_URL` is a **client-side, build-time setting** embedded directly into the frontend bundle. **NEVER** put API keys, secrets, or database credentials in frontend environment variables.
 
 ---
 
@@ -63,6 +69,7 @@ Verified scripts from [package.json](package.json):
 * `npm run build`: Type-checks the application via `tsc -b` and builds production-optimized static assets in `dist/`.
 * `npm run lint`: Runs Oxlint over TypeScript and React source files for fast static analysis.
 * `npm run preview`: Serves the local `dist/` production bundle for previewing.
+* `npm test`: Runs unit tests for API client endpoint resolution using Node.js native test runner.
 
 ---
 
@@ -116,8 +123,8 @@ frontend/
 
 ## Known Limitations
 
-1. **Local Development Proxy Dependency:**
-   The frontend relies on Vite's dev proxy to route `/api/*` to `http://127.0.0.1:8000`. In a production bundle served outside Vite (`dist/`), an external reverse proxy (e.g. Nginx, Cloudflare) or CORS-enabled backend with a configurable base URL (`VITE_API_BASE_URL`) is required.
+1. **Production Hosting Configuration:**
+   While local development defaults to the Vite reverse proxy (`/api/*`), production builds deployed on a distinct origin from the backend require setting `VITE_API_BASE_URL` at build time and configuring `CORS_ALLOWED_ORIGINS` on the FastAPI server. Unified deployments behind a reverse proxy (e.g. Nginx or Cloudflare) can continue using the default `/api` prefix without CORS.
 2. **No Persistent Session Store:**
    Conversation turns and query history are kept in React memory for the active session and are not persisted to a database or local storage.
 3. **Target Environment:**

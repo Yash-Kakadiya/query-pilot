@@ -21,6 +21,7 @@ import uuid
 
 from fastapi import Depends, FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from query_pilot.api.models import HealthResponse, QueryRequest, QueryResponse
@@ -62,6 +63,30 @@ def create_app(
 
     app.state.runner = runner
     app.state.settings = settings
+
+    # --------------------------------------------------------------------------
+    # CORS Middleware (Conditional on explicit configuration)
+    # --------------------------------------------------------------------------
+    resolved_settings = settings
+    if resolved_settings is None:
+        try:
+            from query_pilot.config import get_settings
+
+            resolved_settings = get_settings()
+        except Exception:
+            resolved_settings = None
+
+    cors_origins = resolved_settings.CORS_ALLOWED_ORIGINS if resolved_settings else []
+    if cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=cors_origins,
+            allow_credentials=False,
+            allow_methods=["GET", "POST", "OPTIONS"],
+            allow_headers=["Content-Type", "Accept", "X-Request-ID"],
+            expose_headers=["X-Request-ID"],
+            max_age=600,
+        )
 
     # --------------------------------------------------------------------------
     # Exception Handlers

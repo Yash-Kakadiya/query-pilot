@@ -18,6 +18,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from query_pilot.api.app import create_app
+from query_pilot.config import Settings
 from query_pilot.db.executor import QueryResult
 from query_pilot.pipeline import PipelineResult, PipelineStatus
 from query_pilot.presentation.synthesizer import GroundedAnswer, GroundedAnswerStatus
@@ -389,3 +390,183 @@ def test_query_endpoint_unhandled_exception_returns_generic_error():
     assert "secret_db.mdf" not in raw_body
     assert "PrivateSalaries" not in raw_body
     assert "admin" not in raw_body
+
+
+# ==============================================================================
+# 6. CORS Configuration & Preflight Tests (Task 1.34-A1-B)
+# ==============================================================================
+
+def test_cors_disabled_by_default():
+    """Verify that when CORS_ALLOWED_ORIGINS is not configured, no CORS headers are emitted."""
+    app = create_app()
+    client = TestClient(app)
+
+    response = client.get("/health", headers={"Origin": "http://localhost:5173"})
+    assert response.status_code == 200
+    assert "access-control-allow-origin" not in response.headers
+
+
+def test_cors_preflight_allowed_origin():
+    """Verify OPTIONS preflight request succeeds with correct headers for whitelisted origin."""
+    settings = Settings(
+        GEMINI_API_KEY="test_gemini_key",
+        CORS_ALLOWED_ORIGINS=["http://localhost:5173", "https://querypilot.example.com"],
+    )
+    app = create_app(settings=settings)
+    client = TestClient(app)
+
+    headers = {
+        "Origin": "http://localhost:5173",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "Content-Type, X-Request-ID",
+    }
+    response = client.options("/query", headers=headers)
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
+    assert "POST" in response.headers["access-control-allow-methods"]
+    assert "GET" in response.headers["access-control-allow-methods"]
+    assert "OPTIONS" in response.headers["access-control-allow-methods"]
+    assert "content-type" in response.headers["access-control-allow-headers"].lower()
+    assert "x-request-id" in response.headers["access-control-allow-headers"].lower()
+    # Credentials must remain disabled
+    assert response.headers.get("access-control-allow-credentials") in (None, "false")
+
+
+def test_cors_preflight_disallowed_origin():
+    """Verify OPTIONS preflight request omits CORS headers for unauthorized origin."""
+    settings = Settings(
+        GEMINI_API_KEY="test_gemini_key",
+        CORS_ALLOWED_ORIGINS=["https://querypilot.example.com"],
+    )
+    app = create_app(settings=settings)
+    client = TestClient(app)
+
+    headers = {
+        "Origin": "http://malicious-site.com",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "Content-Type",
+    }
+    response = client.options("/query", headers=headers)
+    assert "access-control-allow-origin" not in response.headers
+
+
+def test_cors_actual_request_allowed_origin():
+    """Verify actual POST /query request from whitelisted origin includes CORS headers and exposes X-Request-ID."""
+    mock_runner = MagicMock()
+    mock_runner.run.return_value = PipelineResult(
+        question="Count total students",
+        status=PipelineStatus.SUCCESS,
+        generated_sql="SELECT COUNT(*) FROM Students",
+        execution_result=QueryResult(
+            columns=["Total"],
+            rows=[{"Total": 40}],
+            row_count=1,
+            truncated=False,
+            execution_time_ms=5.0,
+        ),
+        request_id="req-cors-test-01",
+        grounded_answer=GroundedAnswer(
+            text="There are 40 students enrolled.",
+            status=GroundedAnswerStatus.TEMPLATE_DETERMINISTIC,
+            is_mechanically_verified=True,
+        ),
+    )
+
+    settings = Settings(
+        GEMINI_API_KEY="test_gemini_key",
+        CORS_ALLOWED_ORIGINS="https://app.querypilot.example.com",
+    )
+    app = create_app(runner=mock_runner, settings=settings)
+    client = TestClient(app)
+
+    response = client.post(
+        "/query",
+        json={"question": "Count total students"},
+        headers={"Origin": "https://app.querypilot.example.com", "X-Request-ID": "req-custom-client-id"},
+    )
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "https://app.querypilot.example.com"
+    assert response.headers["access-control-expose-headers"] == "X-Request-ID"
+    assert response.headers["X-Request-ID"] == "req-cors-test-01"
+
+
+def test_cors_actual_request_disallowed_origin():
+    """Verify request from unauthorized origin does not receive Access-Control-Allow-Origin header."""
+    mock_runner = MagicMock()
+    mock_runner.run.return_value = PipelineResult(
+        question="Count total students",
+        status=PipelineStatus.SUCCESS,
+        execution_result=QueryResult(
+            columns=["Total"],
+            rows=[{"Total": 40}],
+            row_count=1,
+            truncated=False,
+        ),
+        request_id="req-cors-test-02",
+    )
+
+    settings = Settings(
+        GEMINI_API_KEY="test_gemini_key",
+        CORS_ALLOWED_ORIGINS=["https://authorized.example.com"],
+    )
+    app = create_app(runner=mock_runner, settings=settings)
+    client = TestClient(app)
+
+    response = client.post(
+        "/query",
+        json={"question": "Count total students"},
+        headers={"Origin": "https://unauthorized.org"},
+    )
+    assert response.status_code == 200
+    assert "access-control-allow-origin" not in response.headers
+
+
+def test_cors_settings_parsing_and_normalization():
+    """Verify Settings parses comma-separated strings, JSON arrays, and normalizes trailing slashes."""
+    # Comma-separated with whitespace and trailing slashes
+    s1 = Settings(
+        GEMINI_API_KEY="key",
+        CORS_ALLOWED_ORIGINS="http://localhost:5173/ , https://app.example.com/// , http://127.0.0.1:5173",
+    )
+    assert s1.CORS_ALLOWED_ORIGINS == [
+        "http://localhost:5173",
+        "https://app.example.com",
+        "http://127.0.0.1:5173",
+    ]
+
+    # JSON array
+    s2 = Settings(
+        GEMINI_API_KEY="key",
+        CORS_ALLOWED_ORIGINS='["http://localhost:5173/", "https://preview.domain.net"]',
+    )
+    assert s2.CORS_ALLOWED_ORIGINS == [
+        "http://localhost:5173",
+        "https://preview.domain.net",
+    ]
+
+    # Empty string or whitespace
+    s3 = Settings(GEMINI_API_KEY="key", CORS_ALLOWED_ORIGINS="   ")
+    assert s3.CORS_ALLOWED_ORIGINS == []
+
+    # None
+    s4 = Settings(GEMINI_API_KEY="key", CORS_ALLOWED_ORIGINS=None)
+    assert s4.CORS_ALLOWED_ORIGINS == []
+
+
+def test_cors_settings_rejection_of_invalid_origins():
+    """Verify Settings strictly rejects wildcards, paths, queries, fragments, and invalid schemes."""
+    invalid_cases = [
+        ("*", "Wildcard CORS origin"),
+        ("https://*", "Wildcard CORS origin"),
+        ("http://localhost:5173/api", "path components are not permitted"),
+        ("https://example.com/some/path", "path components are not permitted"),
+        ("https://example.com?param=value", "query parameters are not permitted"),
+        ("https://example.com#section", "fragments are not permitted"),
+        ("ftp://example.com", "must start with 'http://' or 'https://'"),
+        ("localhost:5173", "must start with 'http://' or 'https://'"),
+        ("http://user:pass@example.com", "user credentials are not permitted"),
+    ]
+
+    for invalid_origin, err_snippet in invalid_cases:
+        with pytest.raises(ValueError, match=err_snippet):
+            Settings(GEMINI_API_KEY="key", CORS_ALLOWED_ORIGINS=invalid_origin)
