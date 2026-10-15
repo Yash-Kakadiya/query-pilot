@@ -48,10 +48,32 @@ cp .env.example .env
 # Edit .env and supply your GEMINI_API_KEY and database configuration
 ```
 
-### 4. Run Test Suite
+### 4. Start the API Server
+Launch the local FastAPI service using Uvicorn bound to localhost:
 ```powershell
-pytest
+uvicorn query_pilot.api.app:app --host 127.0.0.1 --port 8000
 ```
+Once started, the API is accessible at `http://127.0.0.1:8000`.
+* Interactive OpenAPI documentation (Swagger UI): `http://127.0.0.1:8000/docs`
+* Alternative documentation (ReDoc): `http://127.0.0.1:8000/redoc`
+
+For detailed endpoint contracts, request/response schemas, error handling, request ID correlation, and curl examples, see the [API Guide](docs/api.md).
+
+### 5. Run Test Suite
+Run the test suites using the project virtual environment:
+
+* **API Integration & Model Tests:**
+  ```powershell
+  pytest tests/test_api.py tests/test_api_models.py -v
+  ```
+* **Full Offline Suite (live database and external API calls excluded):**
+  ```powershell
+  pytest -k "not live" --tb=short
+  ```
+* **Full Test Suite:**
+  ```powershell
+  pytest
+  ```
 
 ---
 
