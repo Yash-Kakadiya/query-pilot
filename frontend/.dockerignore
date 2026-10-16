@@ -1,0 +1,24 @@
+# ==============================================================================
+# QueryPilot Frontend Docker Build Ignore Rules
+# ==============================================================================
+
+# Node dependencies and local build outputs
+node_modules/
+dist/
+
+# Environment files and secrets
+.env
+.env.*
+!.env.example
+
+# Test artifacts and coverage
+tests/
+coverage/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log
+.oxlintrc.json

@@ -1,0 +1,54 @@
+# ==============================================================================
+# QueryPilot Root Docker Build Ignore Rules
+# Excludes secrets, local environments, tests, caches, and developer artifacts
+# ==============================================================================
+
+# Secrets and environment files
+.env
+.env.*
+!.env.example
+
+# Version control
+.git
+.gitignore
+.gitattributes
+
+# Python virtual environments and caches
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Testing and development scripts
+tests/
+scripts/
+
+# Frontend local build outputs and dependencies
+frontend/node_modules/
+frontend/dist/
+frontend/.oxlintrc.json
+
+# IDEs and OS metadata
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Documentation and design scratch files
+docs/
+*.md
+!README.md
+
+# Agent and brain scratch files
+scratch/
+*.log
+tmp/
