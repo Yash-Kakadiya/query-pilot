@@ -8,7 +8,7 @@ from functools import lru_cache
 import json
 from typing import Any, List, Optional, Set
 import urllib.parse
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -216,6 +216,51 @@ class Settings(DatabaseSettings):
                 validated.append(canonical)
 
         return validated
+
+    # --------------------------------------------------------------------------
+    # Prototype Security & Safeguards (Task 1.34-B1-F14)
+    # --------------------------------------------------------------------------
+    QUERY_PILOT_FORCE_SQL_ONLY: bool = Field(
+        default=False,
+        description="Server-side enforcement forcing all queries to SQL-only mode regardless of client request.",
+    )
+    QUERY_PILOT_ACCESS_KEY: Optional[SecretStr] = Field(
+        default=None,
+        description="Shared prototype access key for private evaluation. If set, required on /query via X-QueryPilot-Access-Key.",
+    )
+    QUERY_PILOT_REQUIRE_ACCESS_KEY: bool = Field(
+        default=False,
+        description="If True, startup fails if QUERY_PILOT_ACCESS_KEY is empty/unset, enforcing fail-closed deployment.",
+    )
+    QUERY_PILOT_MAX_REQUEST_BYTES: int = Field(
+        default=65536,
+        ge=1024,
+        le=10485760,
+        description="Maximum allowed request body size in bytes on /query (default: 64 KB).",
+    )
+    QUERY_PILOT_RATE_LIMIT_PER_MINUTE: int = Field(
+        default=20,
+        ge=1,
+        le=1000,
+        description="Maximum requests per minute allowed on /query across the prototype (default: 20 RPM).",
+    )
+    QUERY_PILOT_MAX_CONCURRENT_QUERIES: int = Field(
+        default=3,
+        ge=1,
+        le=50,
+        description="Maximum concurrent active queries allowed on /query (default: 3).",
+    )
+
+    @model_validator(mode="after")
+    def validate_access_key_requirement(self) -> "Settings":
+        """Fail startup if access key is required but missing or empty."""
+        if self.QUERY_PILOT_REQUIRE_ACCESS_KEY:
+            if not self.QUERY_PILOT_ACCESS_KEY or not self.QUERY_PILOT_ACCESS_KEY.get_secret_value().strip():
+                raise ValueError(
+                    "QUERY_PILOT_REQUIRE_ACCESS_KEY is enabled, but QUERY_PILOT_ACCESS_KEY is empty or not set. "
+                    "A non-empty access key must be configured."
+                )
+        return self
 
     @field_validator("GEMINI_API_KEY")
     @classmethod

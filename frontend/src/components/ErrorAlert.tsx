@@ -14,11 +14,14 @@ export function ErrorAlert({ error, onDismiss }: ErrorAlertProps) {
   let title = 'An error occurred'
   if (isApiClientError) {
     switch (error.kind) {
+      case 'unauthorized':
+        title = 'Access Key Required (HTTP 401)'
+        break
       case 'validation':
-        title = 'Validation Error (HTTP 422)'
+        title = statusCode === 413 ? 'Payload Too Large (HTTP 413)' : 'Validation Error (HTTP 422)'
         break
       case 'server':
-        title = statusCode ? `Server Error (HTTP ${statusCode})` : 'Server Error'
+        title = statusCode === 429 ? 'Rate Limit Exceeded (HTTP 429)' : (statusCode ? `Server Error (HTTP ${statusCode})` : 'Server Error')
         break
       case 'network':
         title = 'Network Connection Error'

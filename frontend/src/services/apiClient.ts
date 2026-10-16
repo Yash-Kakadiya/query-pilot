@@ -14,6 +14,37 @@ export interface RequestOptions {
   signal?: AbortSignal
   /** Optional client-supplied request tracking ID. */
   requestId?: string
+  /** Optional explicit prototype access key override. */
+  accessKey?: string
+}
+
+export const ACCESS_KEY_STORAGE_KEY = 'querypilot_access_key'
+export const ACCESS_KEY_HEADER = 'X-QueryPilot-Access-Key'
+
+/**
+ * Retrieve the active prototype access key from browser session storage.
+ */
+export function getSessionAccessKey(): string {
+  try {
+    return sessionStorage.getItem(ACCESS_KEY_STORAGE_KEY) || ''
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * Save or clear the active prototype access key in browser session storage.
+ */
+export function setSessionAccessKey(key: string | null): void {
+  try {
+    if (key && key.trim()) {
+      sessionStorage.setItem(ACCESS_KEY_STORAGE_KEY, key.trim())
+    } else {
+      sessionStorage.removeItem(ACCESS_KEY_STORAGE_KEY)
+    }
+  } catch {
+    // Ignore storage errors in restricted contexts
+  }
 }
 
 /**
@@ -175,6 +206,11 @@ export async function postQuery(
     headers['X-Request-ID'] = options.requestId
   }
 
+  const effectiveKey = options?.accessKey ?? getSessionAccessKey()
+  if (effectiveKey) {
+    headers[ACCESS_KEY_HEADER] = effectiveKey
+  }
+
   let response: Response
   try {
     const url = resolveEndpoint('/query')
@@ -199,7 +235,67 @@ export async function postQuery(
 
   const requestId = response.headers.get('X-Request-ID')
 
-  // 1. Handle HTTP 422 Unprocessable Content (Schema validation error)
+  // 1. Handle HTTP 401 Unauthorized (Invalid or missing prototype access key)
+  if (response.status === 401) {
+    let message = 'Invalid or missing prototype access key.'
+    try {
+      const errorBody = (await response.json()) as { detail?: string }
+      if (typeof errorBody?.detail === 'string' && errorBody.detail.trim()) {
+        message = errorBody.detail
+      }
+    } catch {
+      // Discard JSON parse failure
+    }
+
+    throw new ApiClientError({
+      message,
+      kind: 'unauthorized',
+      statusCode: 401,
+      requestId,
+    })
+  }
+
+  // 2. Handle HTTP 413 Payload Too Large (Oversized request body)
+  if (response.status === 413) {
+    let message = 'Request payload exceeds maximum allowed size.'
+    try {
+      const errorBody = (await response.json()) as { detail?: string }
+      if (typeof errorBody?.detail === 'string' && errorBody.detail.trim()) {
+        message = errorBody.detail
+      }
+    } catch {
+      // Discard JSON parse failure
+    }
+
+    throw new ApiClientError({
+      message,
+      kind: 'validation',
+      statusCode: 413,
+      requestId,
+    })
+  }
+
+  // 3. Handle HTTP 429 Too Many Requests (Rate or concurrency limit exceeded)
+  if (response.status === 429) {
+    let message = 'Rate or concurrency limit exceeded. Please wait before submitting another query.'
+    try {
+      const errorBody = (await response.json()) as { detail?: string }
+      if (typeof errorBody?.detail === 'string' && errorBody.detail.trim()) {
+        message = errorBody.detail
+      }
+    } catch {
+      // Discard JSON parse failure
+    }
+
+    throw new ApiClientError({
+      message,
+      kind: 'server',
+      statusCode: 429,
+      requestId,
+    })
+  }
+
+  // 4. Handle HTTP 422 Unprocessable Content (Schema validation error)
   if (response.status === 422) {
     let validationErrors: ValidationErrorDetail[] | undefined
     let message = 'Request validation failed.'
@@ -226,7 +322,7 @@ export async function postQuery(
     })
   }
 
-  // 2. Handle HTTP 500 or other non-success statuses
+  // 5. Handle HTTP 500 or other non-success statuses
   if (!response.ok) {
     let message = `Server error (HTTP ${response.status}).`
     try {

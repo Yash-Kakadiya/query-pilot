@@ -105,7 +105,7 @@ export interface QueryResponse {
 // Error Handling Contracts (Task 1.33-B3)
 // =============================================================================
 
-export type ApiErrorKind = 'validation' | 'server' | 'network' | 'parse'
+export type ApiErrorKind = 'validation' | 'server' | 'network' | 'parse' | 'unauthorized'
 
 export interface ValidationErrorDetail {
   loc: (string | number)[]

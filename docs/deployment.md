@@ -58,6 +58,9 @@ Deploy the backend as a Docker Web Service on Render:
    | `GEMINI_API_KEY` | `AIzaSy...` (your secret key) | Required for Gemini model reasoning and SQL generation. |
    | `PORT` | `8000` | The backend container dynamically binds to `${PORT:-8000}`. Configuring `PORT=8000` (matching `EXPOSE 8000`) directs Render to route traffic to container port 8000. |
    | `CORS_ALLOWED_ORIGINS` | `https://<frontend-site>.onrender.com` | Whitelists your frontend domain for Cross-Origin Resource Sharing (CORS). *(Update with your exact frontend URL after Step 2).* |
+   | `QUERY_PILOT_FORCE_SQL_ONLY` | `true` | Server-side enforcement forcing all queries to SQL-only mode using the in-memory demo schema, preventing any database connection attempts regardless of client request. |
+   | `QUERY_PILOT_ACCESS_KEY` | `<your-private-key>` | Shared prototype access key required for `/query` requests via `X-QueryPilot-Access-Key`. |
+   | `QUERY_PILOT_REQUIRE_ACCESS_KEY` | `true` | Enforces fail-closed startup validation, preventing unprotected public deployment if the access key is missing. |
 5. Click **Create Web Service**. Wait for the Docker image to build and deploy.
 6. Note your backend URL: `https://<backend-service>.onrender.com`.
 
@@ -105,7 +108,8 @@ Now that you have your assigned frontend URL:
 ### 1. Build-Time vs. Runtime Variables
 - Variables prefixed with `VITE_*` (such as `VITE_API_BASE_URL` and `VITE_DEFAULT_EXECUTION_MODE`) are **baked into the client-side JavaScript bundle during the build step** (`npm run build`).
 - Modifying a `VITE_*` variable in the Render Dashboard will **not** take effect on running clients until a **Manual Deploy $\rightarrow$ Clear build cache & deploy** is triggered.
-- Conversely, backend variables like `GEMINI_API_KEY` and `CORS_ALLOWED_ORIGINS` are runtime variables read by Python on service startup.
+- Conversely, backend variables like `GEMINI_API_KEY`, `QUERY_PILOT_ACCESS_KEY`, and `CORS_ALLOWED_ORIGINS` are runtime variables read by Python on service startup.
+- **Never** place the prototype access key or Gemini API key into `VITE_*` variables.
 
 ### 2. Operational Health Check Semantics
 - The `GET /health` endpoint ([src/query_pilot/api/app.py](file:///d:/01.%20Github/query-pilot/src/query_pilot/api/app.py)) is an **application process liveness check**.
@@ -122,13 +126,17 @@ Now that you have your assigned frontend URL:
 - **Zero database connections** are established, and zero queries are executed against a live database.
 - **LLM Reasoning Still Occurs**: The user's question, bounded conversation context, and schema metadata are sent to the configured Google Gemini API (`gemini-3.8-flash`) to generate and explain the candidate SQL. Do not submit sensitive personal information in query text.
 
-### 5. Manual Mode Override
-- While `VITE_DEFAULT_EXECUTION_MODE=sql_only` initializes the interface to SQL-Only mode on fresh page loads, users can still manually switch the radio button to "Execute Query" if an external database has been configured.
+### 5. Server-Enforced Execution Mode vs. Client UI Default
+- The frontend UI initializes to SQL-Only mode via `VITE_DEFAULT_EXECUTION_MODE=sql_only`.
+- **Security Boundary**: When `QUERY_PILOT_FORCE_SQL_ONLY=true` is set in the backend environment, the server **strictly overrides** client input. Even if a client crafts a direct API request with `execution_mode="execute"`, the backend forces execution to `sql_only`, ensuring no database engine is initialized, no schema is introspected against a live database, and no SQL is executed.
 
-### 6. Public Deployment Safety & Abuse Considerations
-- **Gemini Context Transmission**: Although SQL-Only mode eliminates live database access, questions, conversation history, and schema definitions are transmitted to Google Gemini (`gemini-3.8-flash`). Sensitive PII must never be submitted.
-- **CORS Is Not Authentication**: CORS configuration only restricts web browsers from invoking the API across origins. It provides **zero protection** against direct non-browser HTTP requests (such as `curl`, Postman, or automated scripts).
-- **No Incoming User Authentication**: The backend API currently exposes no authentication, user session tokens, or API keys on the `/query` endpoint. Anyone who obtains or inspects the backend service URL can send requests directly.
-- **API Quota & Denial of Wallet/Service**: Unrestricted public access can be abused to consume your configured Gemini API quota, trigger rate limits (HTTP 429), or cause Render bandwidth/pipeline exhaustion.
-- **Render Free-Tier Account Risks**: If inbound/outbound limits (such as Render's 5 GB monthly bandwidth) are exceeded, services may be suspended or incur charges depending on workspace billing settings.
-- **Recommended Next Step**: Before exposing this prototype beyond trusted evaluators, implement lightweight incoming bearer token authentication or API key header validation middleware on the FastAPI backend.
+### 6. Prototype Security & Abuse Protection Safeguards
+- **Runtime Access Code Gate**: Protected `/query` requests require the `X-QueryPilot-Access-Key` header verified via constant-time comparison against `QUERY_PILOT_ACCESS_KEY`. Missing or invalid keys return generic HTTP 401 Unauthorized before any LLM or database processing.
+- **Client Session Storage**: The frontend provides an Access Key bar that stores the evaluator's code in `sessionStorage` for the current browser session only, without embedding it into compiled bundles.
+- **Fail-Closed Deployment**: Setting `QUERY_PILOT_REQUIRE_ACCESS_KEY=true` ensures the application aborts startup validation if `QUERY_PILOT_ACCESS_KEY` is not configured.
+- **Payload Size Ceiling**: Enforced while streaming ASGI request-body chunks (default: 64 KB via `QUERY_PILOT_MAX_REQUEST_BYTES`). Oversized requests are rejected with HTTP 413 Content Too Large as soon as accumulated bytes exceed the ceiling, safely handling chunked, absent, or understated Content-Length headers without buffering full bodies into memory.
+- **In-Memory Rate & Concurrency Limiting**: Active queries are bounded by `QUERY_PILOT_RATE_LIMIT_PER_MINUTE` (default: 20 RPM) and `QUERY_PILOT_MAX_CONCURRENT_QUERIES` (default: 3). Over-limit requests return HTTP 429 Too Many Requests without invoking Gemini.
+- **Limitations & Scope**:
+  - A shared prototype access code is appropriate for invited evaluators and course review; it is **not a substitute for user-level authentication** (e.g. Clerk, Supabase Auth) in a public product.
+  - In-memory rate and concurrency limits operate per-process and reset upon container restarts or spin-down.
+  - Application rate limiting alone does not eliminate all quota exhaustion risks. Configure daily request quotas and spending alerts in Google AI Studio / Google Cloud Console to ensure hard cost protection.

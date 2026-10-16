@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { AccessKeyBar } from './components/AccessKeyBar'
 import { ErrorAlert } from './components/ErrorAlert'
 import { QueryInput } from './components/QueryInput'
 import { QueryResults } from './components/QueryResults'
@@ -196,6 +197,13 @@ function App() {
 
       <main className="app-main">
         <div className="workspace-container">
+          {/* Prototype Access Key Authorization (Task 1.34-B1-F14) */}
+          <section className="access-key-section" aria-label="Access Key Configuration">
+            <AccessKeyBar
+              authRequired={queryError !== null && 'kind' in queryError && queryError.kind === 'unauthorized'}
+            />
+          </section>
+
           {/* Query Input Section */}
           <section className="query-input-section" aria-label="Query Workspace">
             <QueryInput

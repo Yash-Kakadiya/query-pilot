@@ -25,9 +25,15 @@ export async function load(url, context, nextLoad) {
 register('data:text/javascript,' + encodeURIComponent(loaderCode))
 
 const { ApiClientError } = await import('../src/types/api.ts')
-const { getApiBaseUrl, resolveEndpoint, getHealth, postQuery } = await import(
-  '../src/services/apiClient.ts'
-)
+const {
+  getApiBaseUrl,
+  resolveEndpoint,
+  getHealth,
+  postQuery,
+  getSessionAccessKey,
+  setSessionAccessKey,
+  ACCESS_KEY_HEADER,
+} = await import('../src/services/apiClient.ts')
 
 function setTestApiBaseUrl(url: string | undefined): void {
   ;(globalThis as unknown as { __TEST_VITE_API_BASE_URL__?: string }).__TEST_VITE_API_BASE_URL__ = url
@@ -486,5 +492,163 @@ test('Frontend API Client - Public Request Methods (getHealth & postQuery)', asy
       }
     )
     assert.strictEqual(fetchCalled, false)
+  })
+})
+
+test('Frontend API Client - Prototype Access Key and Security Safeguards', async (t) => {
+  const originalFetch = globalThis.fetch
+  const originalSessionStorage = globalThis.sessionStorage
+
+  // Mock sessionStorage if in Node environment
+  const mockStorage = new Map<string, string>()
+  const mockSessionStorageObj = {
+    getItem: (key: string) => mockStorage.get(key) ?? null,
+    setItem: (key: string, val: string) => {
+      mockStorage.set(key, val)
+    },
+    removeItem: (key: string) => {
+      mockStorage.delete(key)
+    },
+    clear: () => {
+      mockStorage.clear()
+    },
+  }
+
+  Object.defineProperty(globalThis, 'sessionStorage', {
+    value: mockSessionStorageObj,
+    writable: true,
+    configurable: true,
+  })
+
+  t.afterEach(() => {
+    globalThis.fetch = originalFetch
+    mockStorage.clear()
+    setTestApiBaseUrl(undefined)
+  })
+
+  t.after(() => {
+    Object.defineProperty(globalThis, 'sessionStorage', {
+      value: originalSessionStorage,
+      writable: true,
+      configurable: true,
+    })
+  })
+
+  await t.test('getSessionAccessKey() and setSessionAccessKey() persist session key correctly', () => {
+    assert.strictEqual(getSessionAccessKey(), '')
+    setSessionAccessKey('my-secret-key')
+    assert.strictEqual(getSessionAccessKey(), 'my-secret-key')
+    setSessionAccessKey('   ')
+    assert.strictEqual(getSessionAccessKey(), '')
+  })
+
+  await t.test('postQuery() transmits X-QueryPilot-Access-Key from sessionStorage when set', async () => {
+    setSessionAccessKey('session-passcode-123')
+    let capturedHeaders: Record<string, string> = {}
+
+    globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+      capturedHeaders = (init?.headers as Record<string, string>) || {}
+      return new Response(
+        JSON.stringify({
+          status: 'SUCCESS',
+          question: 'Valid question',
+          columns: [],
+          rows: [],
+          row_count: 0,
+        }),
+        { status: 200 }
+      )
+    }) as typeof fetch
+
+    await postQuery({ question: 'Valid question' })
+    assert.strictEqual(capturedHeaders[ACCESS_KEY_HEADER], 'session-passcode-123')
+  })
+
+  await t.test('postQuery() honors explicit options.accessKey override over sessionStorage', async () => {
+    setSessionAccessKey('session-passcode-123')
+    let capturedHeaders: Record<string, string> = {}
+
+    globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+      capturedHeaders = (init?.headers as Record<string, string>) || {}
+      return new Response(
+        JSON.stringify({
+          status: 'SUCCESS',
+          question: 'Valid question',
+          columns: [],
+          rows: [],
+          row_count: 0,
+        }),
+        { status: 200 }
+      )
+    }) as typeof fetch
+
+    await postQuery(
+      { question: 'Valid question' },
+      { accessKey: 'explicit-override-key' }
+    )
+    assert.strictEqual(capturedHeaders[ACCESS_KEY_HEADER], 'explicit-override-key')
+  })
+
+  await t.test('postQuery() throws unauthorized ApiClientError on HTTP 401', async () => {
+    globalThis.fetch = (async () => {
+      return new Response(
+        JSON.stringify({ detail: 'Invalid or missing access key.' }),
+        { status: 401, headers: { 'X-Request-ID': 'req-auth-fail' } }
+      )
+    }) as typeof fetch
+
+    await assert.rejects(
+      postQuery({ question: 'Test question' }),
+      (err: unknown) => {
+        assert(err instanceof ApiClientError)
+        assert.strictEqual(err.kind, 'unauthorized')
+        assert.strictEqual(err.statusCode, 401)
+        assert.strictEqual(err.requestId, 'req-auth-fail')
+        assert.strictEqual(err.message, 'Invalid or missing access key.')
+        return true
+      }
+    )
+  })
+
+  await t.test('postQuery() throws validation ApiClientError on HTTP 413 Payload Too Large', async () => {
+    globalThis.fetch = (async () => {
+      return new Response(
+        JSON.stringify({ detail: 'Request payload exceeds maximum allowed size.' }),
+        { status: 413, headers: { 'X-Request-ID': 'req-payload-large' } }
+      )
+    }) as typeof fetch
+
+    await assert.rejects(
+      postQuery({ question: 'Big question' }),
+      (err: unknown) => {
+        assert(err instanceof ApiClientError)
+        assert.strictEqual(err.kind, 'validation')
+        assert.strictEqual(err.statusCode, 413)
+        assert.strictEqual(err.requestId, 'req-payload-large')
+        assert.strictEqual(err.message, 'Request payload exceeds maximum allowed size.')
+        return true
+      }
+    )
+  })
+
+  await t.test('postQuery() throws server ApiClientError on HTTP 429 Rate / Concurrency Limit', async () => {
+    globalThis.fetch = (async () => {
+      return new Response(
+        JSON.stringify({ detail: 'Rate limit exceeded. Please wait before submitting another query.' }),
+        { status: 429, headers: { 'X-Request-ID': 'req-rate-limit' } }
+      )
+    }) as typeof fetch
+
+    await assert.rejects(
+      postQuery({ question: 'Spam query' }),
+      (err: unknown) => {
+        assert(err instanceof ApiClientError)
+        assert.strictEqual(err.kind, 'server')
+        assert.strictEqual(err.statusCode, 429)
+        assert.strictEqual(err.requestId, 'req-rate-limit')
+        assert.strictEqual(err.message, 'Rate limit exceeded. Please wait before submitting another query.')
+        return true
+      }
+    )
   })
 })

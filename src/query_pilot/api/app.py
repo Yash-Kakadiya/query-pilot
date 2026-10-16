@@ -19,12 +19,21 @@ import logging
 from typing import Optional
 import uuid
 
-from fastapi import Depends, FastAPI, Request, Response, status
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from query_pilot.api.models import HealthResponse, QueryRequest, QueryResponse
+from query_pilot.api.security import (
+    ACCESS_KEY_HEADER,
+    ConcurrencyGuard,
+    ConcurrencyLimitExceeded,
+    InMemoryRateLimiter,
+    PayloadTooLargeError,
+    StreamingPayloadSizeMiddleware,
+    verify_prototype_access_key,
+)
 from query_pilot.config import Settings
 from query_pilot.presentation.formatter import sanitize_message
 from query_pilot.runner import QueryRunner
@@ -65,7 +74,7 @@ def create_app(
     app.state.settings = settings
 
     # --------------------------------------------------------------------------
-    # CORS Middleware (Conditional on explicit configuration)
+    # Security Infrastructure & Resource Limiting (Task 1.34-B1-F14)
     # --------------------------------------------------------------------------
     resolved_settings = settings
     if resolved_settings is None:
@@ -76,6 +85,20 @@ def create_app(
         except Exception:
             resolved_settings = None
 
+    rate_limit_rpm = getattr(resolved_settings, "QUERY_PILOT_RATE_LIMIT_PER_MINUTE", 20) if resolved_settings else 20
+    max_concurrent = getattr(resolved_settings, "QUERY_PILOT_MAX_CONCURRENT_QUERIES", 3) if resolved_settings else 3
+    app.state.rate_limiter = InMemoryRateLimiter(rate_limit_rpm)
+    app.state.concurrency_guard = ConcurrencyGuard(max_concurrent)
+
+    # --------------------------------------------------------------------------
+    # Streaming Request Payload Size Limit Middleware (Task 1.34-B1-F14.2)
+    # Added BEFORE CORSMiddleware so CORSMiddleware wraps it as the outer layer.
+    # --------------------------------------------------------------------------
+    app.add_middleware(StreamingPayloadSizeMiddleware)
+
+    # --------------------------------------------------------------------------
+    # CORS Middleware (Conditional on explicit configuration)
+    # --------------------------------------------------------------------------
     cors_origins = resolved_settings.CORS_ALLOWED_ORIGINS if resolved_settings else []
     if cors_origins:
         app.add_middleware(
@@ -83,7 +106,7 @@ def create_app(
             allow_origins=cors_origins,
             allow_credentials=False,
             allow_methods=["GET", "POST", "OPTIONS"],
-            allow_headers=["Content-Type", "Accept", "X-Request-ID"],
+            allow_headers=["Content-Type", "Accept", "X-Request-ID", ACCESS_KEY_HEADER],
             expose_headers=["X-Request-ID"],
             max_age=600,
         )
@@ -91,6 +114,32 @@ def create_app(
     # --------------------------------------------------------------------------
     # Exception Handlers
     # --------------------------------------------------------------------------
+
+    @app.exception_handler(PayloadTooLargeError)
+    def payload_too_large_exception_handler(
+        request: Request, exc: PayloadTooLargeError
+    ) -> JSONResponse:
+        """Handle 413 Content Too Large when streaming request body exceeds configured limit."""
+        client_req_id = request.headers.get("X-Request-ID")
+        req_id = sanitize_safe_identifier(client_req_id, default="")
+        headers = {"X-Request-ID": req_id} if req_id else {}
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail},
+            headers=headers,
+        )
+
+    @app.exception_handler(HTTPException)
+    def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+        """Handle HTTP exceptions preserving status codes and sanitized messages."""
+        client_req_id = request.headers.get("X-Request-ID")
+        req_id = sanitize_safe_identifier(client_req_id, default="")
+        headers = {"X-Request-ID": req_id} if req_id else {}
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail},
+            headers=headers,
+        )
 
     @app.exception_handler(RequestValidationError)
     def validation_exception_handler(
@@ -166,23 +215,60 @@ def create_app(
         if not req_id:
             req_id = f"req-{uuid.uuid4().hex[:12]}"
 
-        # 2. Log safe operational metrics (never log question text, turns, or credentials)
-        logger.info(
-            "Processing query request [request_id=%s, question_length=%d, context_turns=%d]",
-            req_id,
-            len(body.question),
-            len(body.conversation_context) if body.conversation_context else 0,
-        )
+        # 2. Authorization check: Validate prototype access key BEFORE any LLM or DB work
+        app_settings = getattr(request.app.state, "settings", None)
+        if app_settings is None:
+            try:
+                from query_pilot.config import get_settings
 
-        # 3. Synchronous execution through established pipeline/runner
-        pipeline_result = runner_dep.run(
-            question=body.question,
-            request_id=req_id,
-            conversation_context=body.conversation_context,
-            execution_mode=body.execution_mode,
-        )
+                app_settings = get_settings()
+            except Exception:
+                app_settings = None
 
-        # 4. Project into safe public response model (honors include_sql contract)
+        verify_prototype_access_key(request, app_settings)
+
+        # 3. Rate limiting check (in-memory token bucket across prototype)
+        rate_limiter = getattr(request.app.state, "rate_limiter", None)
+        if rate_limiter and not rate_limiter.acquire():
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Rate limit exceeded. Please wait before submitting another query.",
+            )
+
+        # 4. Concurrency limiting and server-enforced execution mode
+        concurrency_guard = getattr(request.app.state, "concurrency_guard", None)
+        force_sql_only = bool(getattr(app_settings, "QUERY_PILOT_FORCE_SQL_ONLY", False))
+        effective_mode = "sql_only" if force_sql_only else body.execution_mode
+
+        def _run_pipeline():
+            logger.info(
+                "Processing query request [request_id=%s, question_length=%d, context_turns=%d, mode=%s]",
+                req_id,
+                len(body.question),
+                len(body.conversation_context) if body.conversation_context else 0,
+                effective_mode,
+            )
+            return runner_dep.run(
+                question=body.question,
+                request_id=req_id,
+                conversation_context=body.conversation_context,
+                execution_mode=effective_mode,
+            )
+
+        # 5. Synchronous execution through established pipeline/runner within concurrency limit
+        if concurrency_guard:
+            try:
+                with concurrency_guard.limit(timeout=0.0):
+                    pipeline_result = _run_pipeline()
+            except ConcurrencyLimitExceeded:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Server is busy processing concurrent queries. Please retry shortly.",
+                )
+        else:
+            pipeline_result = _run_pipeline()
+
+        # 6. Project into safe public response model (honors include_sql contract)
         query_response = QueryResponse.from_pipeline_result(
             pipeline_result, include_sql=body.include_sql
         )
@@ -190,7 +276,7 @@ def create_app(
         final_req_id = query_response.request_id or req_id
         response.headers["X-Request-ID"] = final_req_id
 
-        # 5. Log completion status
+        # 7. Log completion status
         logger.info(
             "Completed query request [request_id=%s, status=%s, row_count=%d]",
             final_req_id,

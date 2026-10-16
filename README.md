@@ -265,6 +265,8 @@ QueryPilot supports both unified container deployment and split-origin cloud hos
    In compliance with security best practices, the public API omits raw SQL statements from responses by default (`include_sql=False`).
 6. **Observability Privacy:**
    LangSmith tracing is disabled by default (`LANGCHAIN_TRACING_V2=false`). When enabled, strict payload redaction strips questions, schemas, raw SQL, and errors to prevent data leakage.
+7. **Prototype Security & Safeguards (Task 1.34-B1-F14):**
+   For cloud prototypes and evaluation environments without user authentication, QueryPilot supports a runtime access-code gate (`QUERY_PILOT_ACCESS_KEY` via `X-QueryPilot-Access-Key` header), server-enforced SQL-only mode (`QUERY_PILOT_FORCE_SQL_ONLY`), in-memory request-body size limits (`QUERY_PILOT_MAX_REQUEST_BYTES`), sliding-window rate limiting (`QUERY_PILOT_RATE_LIMIT_PER_MINUTE`), and a concurrency guard (`QUERY_PILOT_MAX_CONCURRENT_QUERIES`). A shared access code is suitable for invited evaluators, but does not substitute for user-level authentication in a public product. Hard daily quota and spending caps should always be configured in Google AI Studio / Google Cloud Console.
 
 ---
 

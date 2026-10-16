@@ -82,6 +82,7 @@ Executes a natural-language query through the autonomous QueryPilot workflow.
 * **Headers:**
   * `Content-Type: application/json` (required)
   * `X-Request-ID: <string>` (optional client-supplied tracking ID)
+  * `X-QueryPilot-Access-Key: <string>` (required when QUERY_PILOT_ACCESS_KEY is configured on backend)
 
 #### Request Model (`QueryRequest`)
 `extra = "forbid"` (Unknown fields trigger HTTP 422)
@@ -401,6 +402,38 @@ When the frontend SPA (e.g. deployed on a CDN or Vercel at `https://querypilot.e
 ### Security & CORS Rules
 * **Explicit Origins Only:** Wildcards (`*`) are strictly rejected. Each origin must specify an explicit `http://` or `https://` scheme and valid host/port without paths, query strings, or fragments.
 * **Credentials Disabled:** `allow_credentials` is set to `False`. QueryPilot queries are uncredentialed and do not accept cross-origin cookies.
-* **Minimal Methods & Headers:** Only `GET`, `POST`, and `OPTIONS` are permitted. Only `Content-Type`, `Accept`, and `X-Request-ID` request headers are accepted.
+* **Minimal Methods & Headers:** Only `GET`, `POST`, and `OPTIONS` are permitted. Accepted request headers: `Content-Type`, `Accept`, `X-Request-ID`, and `X-QueryPilot-Access-Key`.
 * **Header Exposure:** `X-Request-ID` is explicitly exposed in `Access-Control-Expose-Headers` so browser clients can track request correlation IDs.
 * **Important Notice:** CORS is a browser cross-origin policy enforcement mechanism, **not** an authentication system. It restricts which web frontends can invoke the API from a browser, but does not substitute for network boundaries or API authorization.
+
+---
+
+## 6. Prototype Security & Abuse Protection (Task 1.34-B1-F14)
+
+QueryPilot includes built-in protective controls intended for private evaluator deployments (such as Render prototypes):
+
+### 1. Prototype Access Key (`X-QueryPilot-Access-Key`)
+* When `QUERY_PILOT_ACCESS_KEY` is configured on the backend, every `/query` request must provide this value in the `X-QueryPilot-Access-Key` header.
+* Missing or invalid keys immediately receive `HTTP 401 Unauthorized` (`{"detail": "Invalid or missing access key."}`).
+* Constant-time comparison (`secrets.compare_digest`) prevents timing attacks.
+* When `QUERY_PILOT_ACCESS_KEY` is unset or empty, access-key verification is inactive (allowing unauthenticated local development and testing).
+* Setting `QUERY_PILOT_REQUIRE_ACCESS_KEY=true` causes the server to abort startup if `QUERY_PILOT_ACCESS_KEY` is missing or empty, enforcing a fail-closed deployment.
+
+### 2. Server-Enforced SQL-Only Mode (`QUERY_PILOT_FORCE_SQL_ONLY`)
+* When `QUERY_PILOT_FORCE_SQL_ONLY=true` is set on the backend, all queries are forced to `execution_mode="sql_only"` regardless of what `execution_mode` was requested in the request body.
+* The request uses the in-memory GradeSense demo schema and bypasses database engine creation, live introspection, and SQL execution entirely, returning `status="VALIDATED_ONLY"`.
+
+### 3. Request Payload Size Ceiling (`QUERY_PILOT_MAX_REQUEST_BYTES`)
+* Enforces a hard ceiling on request body bytes (default: `65536` = 64 KB).
+* Enforced while streaming ASGI request-body chunks: oversized requests are rejected with `HTTP 413 Content Too Large` as soon as accumulated bytes exceed the limit, without buffering the complete body in memory.
+* Safely handles absent (chunked), invalid, or understated `Content-Length` headers, and rejects oversized requests before JSON parsing, Pydantic validation, pipeline execution, or runner invocation.
+
+### 4. In-Memory Rate Limiting & Concurrency Guard
+* **Rate Limit (`QUERY_PILOT_RATE_LIMIT_PER_MINUTE`):** Sliding 60-second window across the prototype (default: `20 RPM`). Excess requests receive `HTTP 429 Too Many Requests`.
+* **Concurrency Guard (`QUERY_PILOT_MAX_CONCURRENT_QUERIES`):** Thread-safe semaphore capping active simultaneous queries (default: `3`). Prevents thread starvation and memory exhaustion on resource-constrained containers.
+
+### 5. Architectural Limitations & Disclosures
+* **Private Prototype Scope:** A shared access key is designed for invited reviewers and course evaluation. It is **not a substitute for user-level authentication** (e.g., Clerk, Supabase Auth) in a public SaaS product.
+* **Process In-Memory State:** Rate limiter timestamps and concurrency semaphores are stored in memory and reset upon container restarts or spin-down.
+* **LLM Context Transmission:** In SQL-only mode, user questions, conversation history, and schema definitions are still transmitted to Google Gemini (`gemini-3.8-flash`) for Text-to-SQL generation.
+* **External Quota Limits:** Application-level rate limits do not guarantee complete protection against quota exhaustion or cost overruns. Hard spending limits and alert budgets must be configured in Google AI Studio / Google Cloud Console.
