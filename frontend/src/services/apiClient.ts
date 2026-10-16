@@ -25,6 +25,8 @@ export interface RequestOptions {
  *
  * @throws ApiClientError if VITE_API_BASE_URL is explicitly configured with an invalid URL or scheme.
  */
+export { getDefaultExecutionMode } from './config.ts'
+
 export function getApiBaseUrl(customEnvUrl?: string): string {
   const envUrl =
     customEnvUrl !== undefined

@@ -3,7 +3,7 @@ import { ErrorAlert } from './components/ErrorAlert'
 import { QueryInput } from './components/QueryInput'
 import { QueryResults } from './components/QueryResults'
 import { getHealth, postQuery } from './services/apiClient'
-import type { HealthResponse, QueryResponse } from './types/api'
+import type { ExecutionMode, HealthResponse, QueryResponse } from './types/api'
 import './App.css'
 
 type HealthStatus = 'checking' | 'online' | 'unavailable'
@@ -84,7 +84,7 @@ function App() {
   // Query execution handler with lifecycle & stale-response hardening
   const handleQuerySubmit = async (
     question: string,
-    options?: { executionMode?: 'execute' | 'sql_only'; includeSql?: boolean }
+    options?: { executionMode?: ExecutionMode; includeSql?: boolean }
   ) => {
     setQueryError(null)
     setIsLoading(true)

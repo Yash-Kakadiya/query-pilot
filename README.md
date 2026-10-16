@@ -238,9 +238,16 @@ Execute the automated test suites:
 * **Frontend Code Quality & Build Checks:**
   ```powershell
   cd frontend
+  npm test
   npm run lint
   npm run build
   ```
+
+### 8. Cloud & Container Deployment
+
+QueryPilot supports both unified container deployment and split-origin cloud hosting:
+* **Docker Compose (Unified Local / VM):** See `docker-compose.yml` for running the backend and frontend reverse proxy together on a private network.
+* **Render SQL-Only Prototype (Split Origin):** See the [Deployment Guide](docs/deployment.md) for step-by-step instructions on deploying a zero-cost prototype using a Render Static Site and Web Service.
 
 ---
 
@@ -251,7 +258,7 @@ Execute the automated test suites:
 2. **Health Check Semantics:**
    The `GET /health` endpoint is strictly an **application process liveness check**. It verifies that the FastAPI process is up and handling HTTP requests. It **does NOT** test downstream SQL Server connectivity or Gemini API availability.
 3. **Local Reverse Proxy & Split-Origin Deployment:**
-   The frontend defaults to Vite's local dev server proxy configured in `frontend/vite.config.ts`. For production deployments where the frontend and backend reside on distinct origins, configure `VITE_API_BASE_URL` on the frontend at build time and `CORS_ALLOWED_ORIGINS` on the backend (see [API Guide](docs/api.md) for deployment options). Unified deployments behind a reverse proxy do not require CORS.
+   The frontend defaults to Vite's local dev server proxy configured in `frontend/vite.config.ts`. For production deployments where the frontend and backend reside on distinct origins, configure `VITE_API_BASE_URL` and `VITE_DEFAULT_EXECUTION_MODE` on the frontend at build time, and `CORS_ALLOWED_ORIGINS` on the backend (see [API Guide](docs/api.md) and [Deployment Guide](docs/deployment.md) for detailed configuration). Unified deployments behind a reverse proxy do not require CORS.
 4. **Windows Authentication Default:**
    Default configuration assumes Windows Integrated Authentication with SQL Server Express on `localhost`. Linux environments and containerized deployments require SQL Authentication credentials (`DB_USER`, `DB_PASSWORD`) and Linux Microsoft ODBC packages.
 5. **SQL Visibility Policy:**

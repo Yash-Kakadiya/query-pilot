@@ -47,13 +47,15 @@ export interface ConversationTurnContext {
   result_columns?: string[]
 }
 
+export type ExecutionMode = 'execute' | 'sql_only'
+
 export interface QueryRequest {
   /** Natural-language question (non-empty, max 1000 characters). */
   question: string
   /** Optional prior turns context (max 3 turns). */
   conversation_context?: ConversationTurnContext[] | null
   /** Execution mode: 'execute' (default) or 'sql_only'. */
-  execution_mode?: 'execute' | 'sql_only'
+  execution_mode?: ExecutionMode
   /** Whether to return eligible validated SQL in response (default: false). */
   include_sql?: boolean
 }

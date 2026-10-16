@@ -1,7 +1,9 @@
 import { useState } from 'react'
+import { resolveInitialExecutionMode } from '../services/config.ts'
+import type { ExecutionMode } from '../types/api.ts'
 
 export interface QueryInputSubmitOptions {
-  executionMode?: 'execute' | 'sql_only'
+  executionMode?: ExecutionMode
   includeSql?: boolean
 }
 
@@ -11,6 +13,7 @@ interface QueryInputProps {
   onCancel?: () => void
   onClear?: () => void
   hasResult: boolean
+  initialExecutionMode?: ExecutionMode
 }
 
 const MAX_QUESTION_LENGTH = 1000
@@ -21,9 +24,12 @@ export function QueryInput({
   onCancel,
   onClear,
   hasResult,
+  initialExecutionMode,
 }: QueryInputProps) {
   const [question, setQuestion] = useState('')
-  const [executionMode, setExecutionMode] = useState<'execute' | 'sql_only'>('execute')
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>(
+    () => resolveInitialExecutionMode(initialExecutionMode)
+  )
   const [includeSql, setIncludeSql] = useState(false)
 
   const trimmed = question.trim()
