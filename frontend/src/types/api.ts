@@ -19,6 +19,7 @@ export interface HealthResponse {
 
 export type KnownPipelineStatus =
   | 'SUCCESS'
+  | 'VALIDATED_ONLY'
   | 'UNSUPPORTED'
   | 'CLARIFICATION_NEEDED'
   | 'GENERATION_FAILED'
@@ -27,7 +28,7 @@ export type KnownPipelineStatus =
 
 /**
  * High-level pipeline execution outcome.
- * Preserves the 6 known statuses while safely allowing unrecognized status strings.
+ * Preserves the 7 known statuses while safely allowing unrecognized status strings.
  */
 export type PipelineStatus = KnownPipelineStatus | (string & {})
 
@@ -51,6 +52,10 @@ export interface QueryRequest {
   question: string
   /** Optional prior turns context (max 3 turns). */
   conversation_context?: ConversationTurnContext[] | null
+  /** Execution mode: 'execute' (default) or 'sql_only'. */
+  execution_mode?: 'execute' | 'sql_only'
+  /** Whether to return eligible validated SQL in response (default: false). */
+  include_sql?: boolean
 }
 
 // =============================================================================

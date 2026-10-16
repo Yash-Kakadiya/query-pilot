@@ -229,6 +229,9 @@ class QueryPilotState(TypedDict):
     request_id: NotRequired[Optional[str]]
     """Correlated unique request ID for structured observability across stages."""
 
+    execution_mode: NotRequired[Optional[str]]
+    """Execution mode: 'execute' (default) or 'sql_only'."""
+
     # -------------------------------------------------------------------------
     # 3. Bounded Recovery Attempt & Retry Counters
     #
@@ -297,6 +300,7 @@ def create_initial_state(
     conversation_context: Optional[Sequence[Union[ConversationTurn, ConversationTurnContext, Dict[str, Any]]]] = None,
     request_id: Optional[str] = None,
     max_retries: int = DEFAULT_MAX_RETRIES,
+    execution_mode: str = "execute",
 ) -> QueryPilotState:
     """Create a valid minimal initial state for graph execution.
 
@@ -332,8 +336,15 @@ def create_initial_state(
     if max_retries < 0:
         raise ValueError(f"max_retries cannot be negative, got {max_retries}.")
 
+    if not isinstance(execution_mode, str):
+        raise TypeError(f"execution_mode must be a string, got {type(execution_mode).__name__}.")
+    cleaned_mode = execution_mode.strip().lower()
+    if cleaned_mode not in ("execute", "sql_only"):
+        raise ValueError(f"Invalid execution_mode {execution_mode!r}. Must be 'execute' or 'sql_only'.")
+
     state: QueryPilotState = {
         "question": cleaned_question,
+        "execution_mode": cleaned_mode,
         "generation_attempts": 0,
         "retry_count": 0,
         "max_retries": max_retries,
@@ -435,6 +446,13 @@ def validate_initial_state(state: object) -> QueryPilotState:
             )
         for idx, turn in enumerate(cc):
             validate_conversation_turn(turn, idx)
+
+    if "execution_mode" in state and state["execution_mode"] is not None:
+        mode_val = state["execution_mode"]
+        if not isinstance(mode_val, str):
+            raise TypeError(f"Field 'execution_mode' must be a string, got {type(mode_val).__name__}.")
+        if mode_val.strip().lower() not in ("execute", "sql_only"):
+            raise ValueError(f"Invalid execution_mode {mode_val!r}. Must be 'execute' or 'sql_only'.")
 
     # Ensure intermediate result fields remain absent in initial state
     for field_name in INTERMEDIATE_RESULT_FIELDS:

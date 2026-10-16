@@ -132,6 +132,7 @@ The versions and libraries in use are verified directly against the project conf
 4. **Data Privacy:** Sensitive columns (e.g., credentials, password hashes) are masked at the schema introspection layer and blocked at the AST validation layer.
 5. **No Hallucinated Insights:** Grounded answers backed directly by verified scalar templates or explicitly tagged as `UNVERIFIED_NARRATIVE`.
 6. **SQL Visibility Policy:** By default, generated SQL is hidden from the public client response (`include_sql=False`), protecting database internals while surfacing answers and tabular data.
+7. **Validated SQL-Only Mode:** Callers can request `execution_mode="sql_only"` to generate and validate queries against QueryPilot's checked-in GradeSense demo schema without connecting to or executing against a database (arbitrary user-supplied schemas are not supported). Approved queries return `status="VALIDATED_ONLY"` without executed row results.
 
 ---
 

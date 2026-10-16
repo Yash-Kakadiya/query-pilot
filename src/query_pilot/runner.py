@@ -135,6 +135,9 @@ def graph_state_to_pipeline_result(state: QueryPilotState) -> PipelineResult:
     elif status == PipelineStatus.EXECUTION_FAILED:
         candidate_sql = gen_resp.sql if gen_resp else None
         exec_result = None
+    elif status == PipelineStatus.VALIDATED_ONLY:
+        candidate_sql = gen_resp.sql if gen_resp else None
+        exec_result = None
     else:
         # SUCCESS
         candidate_sql = gen_resp.sql if gen_resp else None
@@ -260,6 +263,7 @@ class QueryRunner:
         request_id: Optional[str] = None,
         mode: Optional[Union[ExecutionMode, str]] = None,
         conversation_context: Optional[List[Any]] = None,
+        execution_mode: str = "execute",
     ) -> PipelineResult:
         """Execute a natural-language question using the selected execution path.
 
@@ -268,6 +272,7 @@ class QueryRunner:
             request_id: Optional correlation ID for structured observability.
             mode: Optional per-run execution mode override. If None, uses default_mode.
             conversation_context: Optional caller-supplied prior-turn context.
+            execution_mode: 'execute' (default) or 'sql_only'.
 
         Returns:
             Structured PipelineResult.
@@ -283,18 +288,27 @@ class QueryRunner:
 
         selected_mode = normalize_execution_mode(mode) if mode is not None else self.default_mode
 
+        run_kwargs: Dict[str, Any] = {}
+        if conversation_context is not None:
+            run_kwargs["conversation_context"] = conversation_context
+        if execution_mode != "execute":
+            run_kwargs["execution_mode"] = execution_mode
+
         if selected_mode == ExecutionMode.SEQUENTIAL:
             pipeline = self._create_pipeline()
-            if conversation_context is not None:
-                return pipeline.run(question, request_id=request_id, conversation_context=conversation_context)
-            return pipeline.run(question, request_id=request_id)
+            return pipeline.run(
+                question,
+                request_id=request_id,
+                **run_kwargs,
+            )
 
         elif selected_mode == ExecutionMode.GRAPH:
             workflow = self._create_workflow()
-            if conversation_context is not None:
-                state = workflow.run(question, request_id=request_id, conversation_context=conversation_context)
-            else:
-                state = workflow.run(question, request_id=request_id)
+            state = workflow.run(
+                question,
+                request_id=request_id,
+                **run_kwargs,
+            )
             return graph_state_to_pipeline_result(state)
 
         # Unreachable due to normalize_execution_mode validation, but defensive fallback
@@ -306,6 +320,7 @@ def run_query(
     mode: Union[ExecutionMode, str] = ExecutionMode.SEQUENTIAL,
     request_id: Optional[str] = None,
     conversation_context: Optional[List[Any]] = None,
+    execution_mode: str = "execute",
     runner: Optional[QueryRunner] = None,
     **kwargs: Any,
 ) -> PipelineResult:
@@ -318,6 +333,7 @@ def run_query(
         mode: Execution mode ('sequential' or 'graph'). Defaults to 'sequential'.
         request_id: Optional correlation ID for the request.
         conversation_context: Optional caller-supplied prior-turn context.
+        execution_mode: 'execute' (default) or 'sql_only'.
         runner: Optional pre-configured QueryRunner instance.
         **kwargs: Arguments passed to QueryRunner if runner is None.
 
@@ -325,11 +341,18 @@ def run_query(
         Structured PipelineResult.
     """
     if runner is not None:
-        if conversation_context is not None:
-            return runner.run(question, request_id=request_id, mode=mode, conversation_context=conversation_context)
-        return runner.run(question, request_id=request_id, mode=mode)
+        return runner.run(
+            question,
+            request_id=request_id,
+            mode=mode,
+            conversation_context=conversation_context,
+            execution_mode=execution_mode,
+        )
 
     active_runner = QueryRunner(mode=mode, **kwargs)
-    if conversation_context is not None:
-        return active_runner.run(question, request_id=request_id, conversation_context=conversation_context)
-    return active_runner.run(question, request_id=request_id)
+    return active_runner.run(
+        question,
+        request_id=request_id,
+        conversation_context=conversation_context,
+        execution_mode=execution_mode,
+    )

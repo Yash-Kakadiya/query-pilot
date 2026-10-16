@@ -294,6 +294,118 @@ test('Frontend API Client - Public Request Methods (getHealth & postQuery)', asy
     assert.strictEqual(result.status, 'SUCCESS')
   })
 
+  await t.test('postQuery() supports execution_mode="sql_only" and include_sql=true with VALIDATED_ONLY response', async () => {
+    let capturedOptions: RequestInit | undefined
+
+    globalThis.fetch = (async (_url: string | URL | Request, options?: RequestInit) => {
+      capturedOptions = options
+      return new Response(
+        JSON.stringify({
+          status: 'VALIDATED_ONLY',
+          question: 'Show batches',
+          message: 'Query validated successfully. Execution was skipped.',
+          generated_sql: 'SELECT TOP 100 Id, Name FROM Batches',
+          columns: [],
+          rows: [],
+          row_count: 0,
+          truncated: false,
+          request_id: 'req-sql-only-123',
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json', 'X-Request-ID': 'req-sql-only-123' },
+        }
+      )
+    }) as typeof fetch
+
+    const queryReq: QueryRequest = {
+      question: 'Show batches',
+      execution_mode: 'sql_only',
+      include_sql: true,
+    }
+    const result = await postQuery(queryReq)
+
+    assert.strictEqual(capturedOptions?.method, 'POST')
+    assert.strictEqual(capturedOptions?.body, JSON.stringify(queryReq))
+    assert.strictEqual(result.status, 'VALIDATED_ONLY')
+    assert.strictEqual(result.generated_sql, 'SELECT TOP 100 Id, Name FROM Batches')
+    assert.strictEqual(result.row_count, 0)
+    assert.strictEqual(result.message, 'Query validated successfully. Execution was skipped.')
+  })
+
+  await t.test('postQuery() supports execution_mode="sql_only" with include_sql=false (omitted SQL)', async () => {
+    let capturedOptions: RequestInit | undefined
+
+    globalThis.fetch = (async (_url: string | URL | Request, options?: RequestInit) => {
+      capturedOptions = options
+      return new Response(
+        JSON.stringify({
+          status: 'VALIDATED_ONLY',
+          question: 'Show batches',
+          message: 'Query validated successfully. Execution was skipped.',
+          generated_sql: null,
+          columns: [],
+          rows: [],
+          row_count: 0,
+          truncated: false,
+          request_id: 'req-sql-only-456',
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json', 'X-Request-ID': 'req-sql-only-456' },
+        }
+      )
+    }) as typeof fetch
+
+    const queryReq: QueryRequest = {
+      question: 'Show batches',
+      execution_mode: 'sql_only',
+      include_sql: false,
+    }
+    const result = await postQuery(queryReq)
+
+    assert.strictEqual(capturedOptions?.method, 'POST')
+    assert.strictEqual(capturedOptions?.body, JSON.stringify(queryReq))
+    assert.strictEqual(result.status, 'VALIDATED_ONLY')
+    assert.strictEqual(result.generated_sql, null)
+    assert.strictEqual(result.row_count, 0)
+  })
+
+  await t.test('postQuery() defaults preserve execution without SQL disclosure', async () => {
+    let capturedOptions: RequestInit | undefined
+
+    globalThis.fetch = (async (_url: string | URL | Request, options?: RequestInit) => {
+      capturedOptions = options
+      return new Response(
+        JSON.stringify({
+          status: 'SUCCESS',
+          question: 'Count students',
+          generated_sql: null,
+          columns: ['Total'],
+          rows: [{ Total: 42 }],
+          row_count: 1,
+          truncated: false,
+          request_id: 'req-exec-01',
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json', 'X-Request-ID': 'req-exec-01' },
+        }
+      )
+    }) as typeof fetch
+
+    const queryReq: QueryRequest = {
+      question: 'Count students',
+    }
+    const result = await postQuery(queryReq)
+
+    assert.strictEqual(capturedOptions?.method, 'POST')
+    assert.strictEqual(capturedOptions?.body, JSON.stringify(queryReq))
+    assert.strictEqual(result.status, 'SUCCESS')
+    assert.strictEqual(result.generated_sql, null)
+    assert.strictEqual(result.row_count, 1)
+  })
+
   await t.test('postQuery() error handling covers HTTP 422 with ApiClientError', async () => {
     globalThis.fetch = (async () => {
       return new Response(

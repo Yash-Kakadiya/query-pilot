@@ -82,7 +82,10 @@ function App() {
   }
 
   // Query execution handler with lifecycle & stale-response hardening
-  const handleQuerySubmit = async (question: string) => {
+  const handleQuerySubmit = async (
+    question: string,
+    options?: { executionMode?: 'execute' | 'sql_only'; includeSql?: boolean }
+  ) => {
     setQueryError(null)
     setIsLoading(true)
 
@@ -96,7 +99,11 @@ function App() {
 
     try {
       const response = await postQuery(
-        { question },
+        {
+          question,
+          execution_mode: options?.executionMode,
+          include_sql: options?.includeSql,
+        },
         { signal: controller.signal }
       )
       // Only commit if this controller is still the active one (prevent race conditions)

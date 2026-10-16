@@ -348,6 +348,22 @@ def format_pipeline_result(pipeline_result: "PipelineResult") -> PresentationRes
             telemetry=telemetry,
         )
 
+    if status == PipelineStatus.VALIDATED_ONLY:
+        return PresentationResult(
+            status="validated_only",
+            request_id=req_id,
+            title=question,
+            message="Query validated successfully. Execution was skipped.",
+            columns=[],
+            rows=[],
+            row_count=0,
+            truncated=False,
+            explanation=explanation,
+            generated_sql=sql,
+            grounded_answer=answer,
+            telemetry=telemetry,
+        )
+
     if status == PipelineStatus.CLARIFICATION_NEEDED:
         prompt_text = (
             pipeline_result.clarification_prompt.strip()

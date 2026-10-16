@@ -304,7 +304,12 @@ class QueryPilotWorkflow:
         try:
             schema = state.get("schema_context")
             if schema is None:
-                schema = self.get_schema()
+                if state.get("execution_mode") == "sql_only":
+                    from query_pilot.db.demo_schema import get_demo_schema
+
+                    schema = get_demo_schema()
+                else:
+                    schema = self.get_schema()
             elif not schema.is_model_facing:
                 introspector = self._introspector or DatabaseIntrospector(engine=self.engine)
                 schema = introspector.filter_model_facing(schema)
@@ -541,6 +546,14 @@ class QueryPilotWorkflow:
                 "recovery_feedback": None,
             }
 
+        if state.get("execution_mode") == "sql_only":
+            return {
+                "status": PipelineStatus.VALIDATED_ONLY,
+                "error_category": None,
+                "error_message": None,
+                "recovery_feedback": None,
+            }
+
         gen_resp = state.get("generation_response")
         candidate_sql = gen_resp.sql if gen_resp else None
 
@@ -611,9 +624,17 @@ class QueryPilotWorkflow:
 
     def present_result(self, state: QueryPilotState) -> Dict[str, Any]:
         """Node 5: Convert state into deterministic user-facing presentation."""
-        status = state.get("status") or PipelineStatus.SUCCESS
-        gen_resp = state.get("generation_response")
         val_result = state.get("validation_result")
+        if (
+            state.get("execution_mode") == "sql_only"
+            and val_result
+            and val_result.allowed is True
+            and not state.get("status")
+        ):
+            status = PipelineStatus.VALIDATED_ONLY
+        else:
+            status = state.get("status") or PipelineStatus.SUCCESS
+        gen_resp = state.get("generation_response")
         exec_result = state.get("execution_result")
         telemetry = state.get("telemetry")
         grounded_answer = state.get("grounded_answer")
@@ -701,6 +722,8 @@ class QueryPilotWorkflow:
         """Route to execute_sql if validation allowed query; generate_sql if recoverable; present_result if terminal."""
         val_result = state.get("validation_result")
         if val_result and val_result.allowed is True:
+            if state.get("execution_mode") == "sql_only":
+                return "present_result"
             return "execute_sql"
 
         if state.get("recovery_feedback") is not None and state.get("generation_attempts", 0) < MAX_GENERATION_ATTEMPTS:
@@ -786,6 +809,7 @@ class QueryPilotWorkflow:
         question: str | QueryPilotState,
         request_id: Optional[str] = None,
         conversation_context: Optional[List[Any]] = None,
+        execution_mode: str = "execute",
     ) -> QueryPilotState:
         """Execute the compiled workflow for a given question or state.
 
@@ -797,6 +821,7 @@ class QueryPilotWorkflow:
                 schema_context=self._schema,
                 request_id=request_id,
                 conversation_context=conversation_context,
+                execution_mode=execution_mode,
             )
         else:
             state = dict(validate_initial_state(question))
@@ -804,6 +829,8 @@ class QueryPilotWorkflow:
                 state["request_id"] = request_id
             if conversation_context is not None and "conversation_context" not in state:
                 state["conversation_context"] = conversation_context
+            if "execution_mode" not in state and execution_mode != "execute":
+                state["execution_mode"] = execution_mode
 
         app = self.compile()
         resolved_req_id = state.get("request_id") or request_id

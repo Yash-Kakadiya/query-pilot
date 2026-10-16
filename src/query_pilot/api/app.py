@@ -179,11 +179,12 @@ def create_app(
             question=body.question,
             request_id=req_id,
             conversation_context=body.conversation_context,
+            execution_mode=body.execution_mode,
         )
 
-        # 4. Project into safe public response model (excludes SQL by default)
+        # 4. Project into safe public response model (honors include_sql contract)
         query_response = QueryResponse.from_pipeline_result(
-            pipeline_result, include_sql=False
+            pipeline_result, include_sql=body.include_sql
         )
 
         final_req_id = query_response.request_id or req_id

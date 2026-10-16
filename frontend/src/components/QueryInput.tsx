@@ -1,8 +1,13 @@
 import { useState } from 'react'
 
+export interface QueryInputSubmitOptions {
+  executionMode?: 'execute' | 'sql_only'
+  includeSql?: boolean
+}
+
 interface QueryInputProps {
   isLoading: boolean
-  onSubmit: (question: string) => void
+  onSubmit: (question: string, options?: QueryInputSubmitOptions) => void
   onCancel?: () => void
   onClear?: () => void
   hasResult: boolean
@@ -18,6 +23,8 @@ export function QueryInput({
   hasResult,
 }: QueryInputProps) {
   const [question, setQuestion] = useState('')
+  const [executionMode, setExecutionMode] = useState<'execute' | 'sql_only'>('execute')
+  const [includeSql, setIncludeSql] = useState(false)
 
   const trimmed = question.trim()
   const charCount = question.length
@@ -28,7 +35,7 @@ export function QueryInput({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (canSubmit) {
-      onSubmit(trimmed)
+      onSubmit(trimmed, { executionMode, includeSql })
     }
   }
 
@@ -36,7 +43,7 @@ export function QueryInput({
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
       e.preventDefault()
       if (canSubmit) {
-        onSubmit(trimmed)
+        onSubmit(trimmed, { executionMode, includeSql })
       }
     }
   }
@@ -88,6 +95,51 @@ export function QueryInput({
         </div>
       </div>
 
+      <div className="query-options-bar">
+        <fieldset className="execution-mode-group">
+          <legend className="options-legend">Execution Mode:</legend>
+          <label className="radio-label">
+            <input
+              type="radio"
+              name="execution_mode"
+              value="execute"
+              checked={executionMode === 'execute'}
+              onChange={() => setExecutionMode('execute')}
+              disabled={isLoading}
+            />
+            <span>Execute Query</span>
+          </label>
+          <label className="radio-label">
+            <input
+              type="radio"
+              name="execution_mode"
+              value="sql_only"
+              checked={executionMode === 'sql_only'}
+              onChange={() => setExecutionMode('sql_only')}
+              disabled={isLoading}
+            />
+            <span>SQL Only (Validate, Skip Execution)</span>
+          </label>
+        </fieldset>
+
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            name="include_sql"
+            checked={includeSql}
+            onChange={(e) => setIncludeSql(e.target.checked)}
+            disabled={isLoading}
+          />
+          <span>Include SQL in response</span>
+        </label>
+      </div>
+
+      {executionMode === 'sql_only' && (
+        <div className="mode-explainer" role="note">
+          ℹ️ <strong>SQL-Only Mode:</strong> Validates generated SQL against QueryPilot&apos;s checked-in GradeSense demo schema without executing against or inspecting a live database. (Arbitrary custom schemas for external databases are not yet supported.)
+        </div>
+      )}
+
       <div className="form-actions">
         {hasResult && !isLoading && (
           <button
@@ -117,10 +169,10 @@ export function QueryInput({
           {isLoading ? (
             <span className="submit-loading">
               <span className="spinner" aria-hidden="true" />
-              Running Query...
+              {executionMode === 'sql_only' ? 'Validating SQL...' : 'Running Query...'}
             </span>
           ) : (
-            'Run Query'
+            executionMode === 'sql_only' ? 'Validate SQL Only' : 'Run Query'
           )}
         </button>
       </div>

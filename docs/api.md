@@ -90,6 +90,8 @@ Executes a natural-language query through the autonomous QueryPilot workflow.
 | :--- | :--- | :---: | :--- |
 | `question` | `string` | **Yes** | Natural-language question. Automatically trimmed. Minimum 1 non-whitespace character, maximum 1,000 characters. |
 | `conversation_context` | `array[object]` | No | Optional list of prior user conversation turns (maximum 3 turns). |
+| `execution_mode` | `string` | No | `"execute"` (default) or `"sql_only"`. When `"sql_only"`, validates generated SQL against QueryPilot's checked-in GradeSense demo schema without executing against or inspecting a live database. (This is not arbitrary-schema support for user-owned databases.) |
+| `include_sql` | `boolean` | No | `false` (default) or `true`. When `true`, returns validated SQL if approved (`SUCCESS`, `VALIDATED_ONLY`, or `EXECUTION_FAILED` after passing safety validation). Rejected candidate SQL is never disclosed. |
 
 ##### Turn Context Object (`ConversationTurnContext`)
 `extra = "forbid"`
@@ -113,8 +115,8 @@ Executes a natural-language query through the autonomous QueryPilot workflow.
 | `question` | `string` | The natural-language question processed. |
 | `message` | `string \| null` | User-facing summary or sanitized error description. |
 | `columns` | `array[string]` | Output column names in result order (default: `[]`). |
-| `rows` | `array[object]` | Output row records as key-value objects (default: `[]`). |
-| `row_count` | `integer` | Number of rows returned (default: `0`). |
+| `rows` | `array[object]` | Output row records as key-value objects (default: `[]`). Empty for `VALIDATED_ONLY`. |
+| `row_count` | `integer` | Number of rows returned (default: `0`). Zero for `VALIDATED_ONLY`. |
 | `truncated` | `boolean` | `true` if rows exceeded `DB_MAX_ROW_LIMIT` and were truncated. |
 | `scalar_value` | `any \| null` | Scalar value if the result is 1 row and 1 column; `null` otherwise. |
 | `markdown_table` | `string \| null` | Formatted Markdown table representation of tabular results. |
@@ -123,7 +125,7 @@ Executes a natural-language query through the autonomous QueryPilot workflow.
 | `clarification_options` | `array[object]` | Structured disambiguation choices (each with `option_id`, `description`, and optional `suggested_question`). |
 | `validation_reasons` | `array[object]` | Sanitized policy rejection reasons when status is `VALIDATION_REJECTED` (each with `code` and `message`). |
 | `grounded_answer` | `object \| null` | Structured natural-language answer with `text`, `status`, `is_mechanically_verified`, and `verification_notes`. |
-| `generated_sql` | `string \| null` | Generated SQL query. **Omitted (`null`) by default** in public responses. |
+| `generated_sql` | `string \| null` | Approved SQL query if `include_sql=true` was requested and query passed validation; `null` otherwise. Rejected SQL is never disclosed. |
 
 ---
 
@@ -135,6 +137,7 @@ All completed pipeline workflows return HTTP 200. The specific operational resul
 | `status` | Meaning | Key Response Fields Populated |
 | :--- | :--- | :--- |
 | `SUCCESS` | SQL generated, AST validated, executed read-only, results structured. | `columns`, `rows`, `row_count`, `markdown_table`, `grounded_answer` |
+| `VALIDATED_ONLY` | SQL generated and validated against checked-in GradeSense demo schema; execution was skipped. | `message`, `generated_sql` (if requested), empty `rows` |
 | `UNSUPPORTED` | Question falls outside the database domain or schema. | `message`, `explanation` |
 | `CLARIFICATION_NEEDED` | Question is ambiguous; options provided for disambiguation. | `clarification_prompt`, `clarification_options` |
 | `GENERATION_FAILED` | Model failed to generate valid SQL or hit quota limits. | `message` (sanitized) |

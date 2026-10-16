@@ -10,6 +10,7 @@ export function QueryResults({ response }: QueryResultsProps) {
   const isKnownStatus = (s: string): s is KnownPipelineStatus => {
     return [
       'SUCCESS',
+      'VALIDATED_ONLY',
       'UNSUPPORTED',
       'CLARIFICATION_NEEDED',
       'VALIDATION_REJECTED',
@@ -22,6 +23,8 @@ export function QueryResults({ response }: QueryResultsProps) {
     switch (s) {
       case 'SUCCESS':
         return 'badge-success'
+      case 'VALIDATED_ONLY':
+        return 'badge-validated'
       case 'UNSUPPORTED':
         return 'badge-info'
       case 'CLARIFICATION_NEEDED':
@@ -188,7 +191,42 @@ export function QueryResults({ response }: QueryResultsProps) {
         </div>
       )}
 
-      {/* 2. UNSUPPORTED Status */}
+      {/* 2. VALIDATED_ONLY Status */}
+      {status === 'VALIDATED_ONLY' && (
+        <div className="outcome-card outcome-validated">
+          <div className="outcome-icon" aria-hidden="true">🔒</div>
+          <div className="outcome-content">
+            <h4 className="outcome-title">Validated SQL — Not Executed</h4>
+            <p className="outcome-message">
+              {response.message ||
+                'Query validated successfully against SQL safety guardrails. Database execution was skipped.'}
+            </p>
+            {response.generated_sql && (
+              <div className="validated-sql-box">
+                <div className="validated-sql-header">
+                  <span className="sql-box-label">Approved SQL:</span>
+                  <button
+                    type="button"
+                    className="copy-sql-btn"
+                    onClick={() => {
+                      if (response.generated_sql && navigator.clipboard) {
+                        navigator.clipboard.writeText(response.generated_sql)
+                      }
+                    }}
+                  >
+                    Copy SQL
+                  </button>
+                </div>
+                <pre className="sql-code-block">
+                  <code>{response.generated_sql}</code>
+                </pre>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 3. UNSUPPORTED Status */}
       {status === 'UNSUPPORTED' && (
         <div className="outcome-card outcome-unsupported">
           <div className="outcome-icon" aria-hidden="true">ℹ️</div>
@@ -306,9 +344,24 @@ export function QueryResults({ response }: QueryResultsProps) {
         </summary>
         <div className="sql-disclosure-body">
           {response.generated_sql ? (
-            <pre className="sql-code-block">
-              <code>{response.generated_sql}</code>
-            </pre>
+            <div className="sql-disclosure-content">
+              <div className="sql-disclosure-actions">
+                <button
+                  type="button"
+                  className="copy-sql-btn"
+                  onClick={() => {
+                    if (response.generated_sql && navigator.clipboard) {
+                      navigator.clipboard.writeText(response.generated_sql)
+                    }
+                  }}
+                >
+                  Copy SQL
+                </button>
+              </div>
+              <pre className="sql-code-block">
+                <code>{response.generated_sql}</code>
+              </pre>
+            </div>
           ) : (
             <p className="sql-policy-notice">
               Generated SQL is excluded from public responses by server safety policy.

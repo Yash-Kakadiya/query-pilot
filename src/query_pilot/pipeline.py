@@ -67,6 +67,7 @@ class PipelineStatus(str, Enum):
     """Execution status codes for the QueryPilot pipeline."""
 
     SUCCESS = "SUCCESS"
+    VALIDATED_ONLY = "VALIDATED_ONLY"
     UNSUPPORTED = "UNSUPPORTED"
     CLARIFICATION_NEEDED = "CLARIFICATION_NEEDED"
     GENERATION_FAILED = "GENERATION_FAILED"
@@ -174,6 +175,11 @@ class PipelineResult(BaseModel):
     def is_success(self) -> bool:
         """Return True if pipeline successfully completed generation, validation, and execution."""
         return self.status == PipelineStatus.SUCCESS
+
+    @property
+    def is_validated_only(self) -> bool:
+        """Return True if pipeline successfully generated and validated SQL, but skipped execution."""
+        return self.status == PipelineStatus.VALIDATED_ONLY
 
     @property
     def is_unsupported(self) -> bool:
@@ -322,13 +328,17 @@ class QueryPipeline:
         return self._engine
 
 
-    def get_schema(self) -> DatabaseSchema:
-        """Obtain model-facing schema, using injected schema or introspecting from engine."""
+    def get_schema(self, execution_mode: str = "execute") -> DatabaseSchema:
+        """Obtain model-facing schema, using injected schema, demo schema (for sql_only), or introspecting from engine."""
         if self._schema is not None:
             if not self._schema.is_model_facing:
                 introspector = self._introspector or DatabaseIntrospector(engine=self.engine)
                 self._schema = introspector.filter_model_facing(self._schema)
             return self._schema
+
+        if execution_mode == "sql_only":
+            from query_pilot.db.demo_schema import get_demo_schema
+            return get_demo_schema()
 
         if self._introspector is None:
             self._introspector = DatabaseIntrospector(self.engine)
@@ -340,6 +350,7 @@ class QueryPipeline:
         question: str,
         request_id: Optional[str] = None,
         conversation_context: Optional[List[Any]] = None,
+        execution_mode: str = "execute",
     ) -> PipelineResult:
         """Execute end-to-end question processing through strict pipeline stages.
 
@@ -401,7 +412,7 @@ class QueryPipeline:
         # Stage A: Schema acquisition
         observer.start_stage(PipelineStage.SCHEMA_ACQUISITION)
         try:
-            schema = self.get_schema()
+            schema = self.get_schema(execution_mode=execution_mode)
             observer.end_stage(PipelineStage.SCHEMA_ACQUISITION, StageStatus.SUCCEEDED)
         except Exception as exc:
             err_code, err_type = classify_error(exc, PipelineStage.SCHEMA_ACQUISITION)
@@ -587,7 +598,23 @@ class QueryPipeline:
 
         observer.end_stage(PipelineStage.SQL_VALIDATION, StageStatus.SUCCEEDED)
 
-        # Stage D: Conditional execution (ONLY if val_result.allowed is True)
+        # Stage D: Conditional execution (ONLY if val_result.allowed is True and execution_mode != "sql_only")
+        if execution_mode == "sql_only":
+            return _finalize(
+                PipelineResult(
+                    question=question,
+                    status=PipelineStatus.VALIDATED_ONLY,
+                    generation_status=gen_resp.status,
+                    generated_sql=candidate_sql,
+                    generation_explanation=explanation,
+                    generation_assumptions=assumptions,
+                    validation_result=val_result,
+                    execution_result=None,
+                ),
+                PipelineStatus.VALIDATED_ONLY.value,
+                StageStatus.SUCCEEDED,
+            )
+
         observer.start_stage(PipelineStage.READ_ONLY_EXECUTION)
         try:
             exec_result = execute_read_only(
@@ -691,6 +718,7 @@ def run_question(
     question: str,
     pipeline: Optional[QueryPipeline] = None,
     request_id: Optional[str] = None,
+    execution_mode: str = "execute",
     **kwargs,
 ) -> PipelineResult:
     """Convenience helper to run a question through the QueryPilot pipeline.
@@ -699,11 +727,12 @@ def run_question(
         question: User natural-language question.
         pipeline: Optional preconfigured QueryPipeline instance.
         request_id: Optional correlation ID for the request.
+        execution_mode: 'execute' (default) or 'sql_only'.
         **kwargs: Arguments passed to QueryPipeline constructor if pipeline is None.
 
     Returns:
         PipelineResult with structured execution data or controlled error.
     """
     pipe = pipeline or QueryPipeline(**kwargs)
-    return pipe.run(question, request_id=request_id)
+    return pipe.run(question, request_id=request_id, execution_mode=execution_mode)
 

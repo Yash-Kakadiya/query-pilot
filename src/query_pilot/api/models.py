@@ -47,6 +47,14 @@ class QueryRequest(BaseModel):
         default=None,
         description="Optional prior user conversation turns (at most 3 turns).",
     )
+    execution_mode: str = Field(
+        default="execute",
+        description="Execution mode: 'execute' (default) or 'sql_only'.",
+    )
+    include_sql: bool = Field(
+        default=False,
+        description="Whether to include validated SQL in response (default: false).",
+    )
 
     @field_validator("question")
     @classmethod
@@ -75,6 +83,27 @@ class QueryRequest(BaseModel):
             raise ValueError(
                 f"conversation_context cannot exceed {MAX_CONVERSATION_TURNS} turns, received {len(v)}."
             )
+        return v
+
+    @field_validator("execution_mode", mode="before")
+    @classmethod
+    def validate_execution_mode(cls, v: Any) -> str:
+        """Enforce execution_mode is strictly 'execute' or 'sql_only'."""
+        if not isinstance(v, str):
+            raise ValueError(f"execution_mode must be a string, got {type(v).__name__}.")
+        cleaned = v.strip().lower()
+        if cleaned not in ("execute", "sql_only"):
+            raise ValueError(
+                f"Invalid execution_mode {v!r}. Must be 'execute' or 'sql_only'."
+            )
+        return cleaned
+
+    @field_validator("include_sql", mode="before")
+    @classmethod
+    def validate_include_sql(cls, v: Any) -> bool:
+        """Enforce include_sql is strictly a boolean."""
+        if not isinstance(v, bool):
+            raise ValueError(f"include_sql must be a boolean, got {type(v).__name__}.")
         return v
 
 
@@ -279,6 +308,26 @@ class QueryResponse(BaseModel):
         raw_explanation = presentation.explanation or result.generation_explanation
         raw_clarification = result.clarification_prompt or presentation.clarification_prompt
 
+        # SQL disclosure policy (Section C):
+        # - Validated-only result: SQL may be returned when requested.
+        # - Successful execution: SQL may be returned when requested.
+        # - Execution failure after validation: validated SQL may be returned when requested.
+        # - Validation rejection: never return rejected candidate SQL as approved/safe SQL.
+        # - Generation failure, unsupported, or clarification: return no SQL.
+        # - include_sql=False: return None.
+        disclosed_sql: Optional[str] = None
+        if include_sql:
+            if result.status in (PipelineStatus.SUCCESS, PipelineStatus.VALIDATED_ONLY):
+                disclosed_sql = result.generated_sql
+            elif (
+                result.status == PipelineStatus.EXECUTION_FAILED
+                and result.validation_result
+                and result.validation_result.allowed is True
+            ):
+                disclosed_sql = result.generated_sql
+            else:
+                disclosed_sql = None
+
         return cls(
             request_id=result.request_id or presentation.request_id,
             status=result.status,
@@ -295,7 +344,7 @@ class QueryResponse(BaseModel):
             clarification_options=clarification_opts,
             validation_reasons=validation_reasons,
             grounded_answer=grounded_answer_resp,
-            generated_sql=result.generated_sql if include_sql else None,
+            generated_sql=disclosed_sql,
         )
 
     @classmethod
@@ -383,6 +432,19 @@ class QueryResponse(BaseModel):
                 elif isinstance(opt, dict):
                     clarification_opts.append(ClarificationOption(**opt))
 
+        disclosed_sql: Optional[str] = None
+        if include_sql:
+            if resolved_status in (PipelineStatus.SUCCESS, PipelineStatus.VALIDATED_ONLY):
+                disclosed_sql = presentation.generated_sql
+            elif (
+                resolved_status == PipelineStatus.EXECUTION_FAILED
+                and presentation.status == "execution_failed"
+                and not presentation.validation_reasons
+            ):
+                disclosed_sql = presentation.generated_sql
+            else:
+                disclosed_sql = None
+
         return cls(
             request_id=presentation.request_id,
             status=resolved_status,
@@ -399,7 +461,7 @@ class QueryResponse(BaseModel):
             clarification_options=clarification_opts,
             validation_reasons=validation_reasons,
             grounded_answer=grounded_answer_resp,
-            generated_sql=presentation.generated_sql if include_sql else None,
+            generated_sql=disclosed_sql,
         )
 
 
