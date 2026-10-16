@@ -1,0 +1,78 @@
+# ==============================================================================
+# QueryPilot Docker Compose Configuration
+# Services:
+#   - backend: FastAPI REST API on private network (port 8000)
+#   - frontend: React SPA served via Nginx reverse proxy (host port 8080 -> 80)
+#
+# Prerequisites & Architecture:
+#   - Database: SQL Server remains external on the host or network.
+#     The backend container runs Linux (Debian 12) with ODBC Driver 18.
+#     Linux containers cannot use Windows Integrated Authentication (Trusted_Connection=yes);
+#     use SQL Server Authentication (DB_USER, DB_PASSWORD) or SQL-only mode.
+#   - Security: DB_NAME is strictly enforced to 'GradeSense_Local' by code invariant.
+#   - Secrets: Configure secrets in a local .env file (excluded from Git).
+# ==============================================================================
+
+name: query-pilot
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: querypilot-backend
+    restart: unless-stopped
+    # Port 8000 is intentionally NOT published to host; accessible only within Compose network
+    expose:
+      - "8000"
+    environment:
+      # LLM Provider Configuration (Google Gemini)
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.0-flash}
+
+      # Observability (LangSmith, optional)
+      - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2:-false}
+      - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY:-}
+      - LANGCHAIN_PROJECT=${LANGCHAIN_PROJECT:-query-pilot}
+
+      # Database Configuration (External MSSQL / SQL Server)
+      # Target database must remain GradeSense_Local (enforced by application invariant).
+      # For host SQL Server access from Linux container, use host.docker.internal.
+      - DB_SERVER=${DB_SERVER:-host.docker.internal\SQLEXPRESS}
+      - DB_NAME=${DB_NAME:-GradeSense_Local}
+      - DB_DRIVER=${DB_DRIVER:-ODBC Driver 18 for SQL Server}
+      - DB_USE_TRUSTED_CONNECTION=${DB_USE_TRUSTED_CONNECTION:-false}
+      - DB_USER=${DB_USER:-}
+      - DB_PASSWORD=${DB_PASSWORD:-}
+
+      # Safety & Execution Guardrails
+      - DB_QUERY_TIMEOUT_SECONDS=${DB_QUERY_TIMEOUT_SECONDS:-15}
+      - DB_MAX_ROW_LIMIT=${DB_MAX_ROW_LIMIT:-100}
+
+      # CORS Configuration (optional, empty enables default same-origin reverse-proxy policy)
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-}
+    env_file:
+      - path: .env
+        required: false
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - querypilot-network
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: querypilot-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    depends_on:
+      - backend
+    networks:
+      - querypilot-network
+
+networks:
+  querypilot-network:
+    name: querypilot-network
+    driver: bridge
