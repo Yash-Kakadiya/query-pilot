@@ -100,7 +100,7 @@ class Settings(DatabaseSettings):
         description="Google Gemini API Key for LLM reasoning and SQL generation.",
     )
     GEMINI_MODEL: str = Field(
-        default="gemini-2.0-flash",
+        default="gemini-3.8-flash",
         description="Gemini model identifier to use.",
     )
 

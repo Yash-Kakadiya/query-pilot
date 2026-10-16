@@ -1032,7 +1032,7 @@ def test_finding_3_synthesis_usage_included_once_in_both_paths() -> None:
     )
     synth_usage = LLMUsageMetadata(
         stage="answer_synthesis",
-        model_name="gemini-2.0-flash",
+        model_name="gemini-3.8-flash",
         prompt_tokens=70,
         completion_tokens=15,
         total_tokens=85,

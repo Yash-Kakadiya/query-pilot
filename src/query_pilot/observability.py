@@ -416,7 +416,7 @@ class PipelineRunTelemetry(BaseModel):
 def extract_llm_usage(
     response: Any,
     stage: str = "sql_generation",
-    model_name: str = "gemini-2.0-flash",
+    model_name: str = "gemini-3.8-flash",
     latency_ms: float = 0.0,
 ) -> LLMUsageMetadata:
     """Safely extract token usage and metadata from provider response.

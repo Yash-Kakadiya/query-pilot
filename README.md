@@ -48,7 +48,7 @@ flowchart TD
     end
 
     subgraph External ["External Services & Storage"]
-        Gemini["Google Gemini API\n(gemini-2.0-flash)"]
+        Gemini["Google Gemini API\n(gemini-3.8-flash)"]
         MSSQL[("Microsoft SQL Server\n(GradeSense_Local)")]
         LangSmith["LangSmith Tracing\n(Opt-in / Redacted)"]
         Graph <-->|"Generate SQL & Synthesis"| Gemini
@@ -118,7 +118,7 @@ The versions and libraries in use are verified directly against the project conf
 | **Deterministic SQL** | sqlglot | `>=25.0.0` | SQL parsing, AST inspection, dialect-specific query validation |
 | **Database Engine** | SQL Server (T-SQL) | `>=2017` / Express | Target relational database engine with ODBC Driver 17 |
 | **Database ORM/Core** | SQLAlchemy / pyodbc| `>=2.0.0` / `>=5.1.0`| Connection pooling, parameterized execution, read-only session control |
-| **LLM Provider** | Google Gemini API | `google-genai >=0.1.0` | Gemini 2.0 Flash (`gemini-2.0-flash`) for structured text-to-SQL |
+| **LLM Provider** | Google Gemini API | `google-genai >=0.1.0` | Gemini 3.8 Flash (`gemini-3.8-flash`) for structured text-to-SQL |
 | **Observability** | LangSmith | `>=0.1.0` | Privacy-safe, opt-in tracing (redacts queries, tables, and secrets) |
 | **Test Suite** | pytest | `>=8.0.0` | Comprehensive unit, offline integration, and regression suites |
 
@@ -179,7 +179,7 @@ cp .env.example .env
 
 Edit `.env` with your settings:
 * **`GEMINI_API_KEY`**: Your Google Gemini API key (**required**).
-* **`GEMINI_MODEL`**: `gemini-2.0-flash` (default).
+* **`GEMINI_MODEL`**: `gemini-3.8-flash` (default).
 * **`DB_SERVER`**: `localhost\SQLEXPRESS` (default for local SQL Server Express).
 * **`DB_NAME`**: `GradeSense_Local` (default isolated testing database).
 * **`DB_DRIVER`**: `ODBC Driver 17 for SQL Server`.

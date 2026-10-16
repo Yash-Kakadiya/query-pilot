@@ -6,6 +6,7 @@ the SQLGenerationResponse model. Strictly generates candidate SQL without execut
 
 import logging
 from pathlib import Path
+import re
 import time
 from typing import List, Optional, Union
 
@@ -70,6 +71,37 @@ class _GeminiSQLPayloadSchema(BaseModel):
     clarification_options: List[_GeminiClarificationOptionSchema] = Field(default_factory=list)
 
 
+def should_include_sampling_parameters(model_name: Optional[str]) -> bool:
+    """Determine whether custom sampling parameters (temperature, top_p, top_k) should be sent.
+
+    Aligned with Google guidance:
+    - Gemini 3.x and Gemini 4.x: custom sampling parameters are omitted (Gemini 3.6+ and 4 ignore
+      these parameters and return deprecation-warning headers; earlier Gemini 3 models perform
+      optimally with provider defaults to prevent degraded reasoning).
+    - Gemini 1.x and 2.x: preserve existing legacy sampling behavior (e.g. temperature=0.0).
+    - Unknown or unrecognized model formats: conservatively omit custom sampling overrides.
+
+    Returns True for Gemini 1.x and 2.x models, False for Gemini 3.x+, Gemini 4.x+, and unrecognized models.
+    """
+    if not isinstance(model_name, str):
+        return False
+
+    cleaned = model_name.strip().lower()
+    match = re.search(r"gemini-(\d+)(?:\.(\d+))?", cleaned)
+    if not match:
+        # Conservative fallback: do not send custom sampling overrides for unknown model formats
+        return False
+
+    major = int(match.group(1))
+
+    # Gemini 1.x and 2.x retain legacy sampling overrides
+    if major in (1, 2):
+        return True
+
+    # Gemini 3.x, 4.x, and beyond omit custom sampling overrides
+    return False
+
+
 class GeminiSQLGenerator(SQLGenerator):
     """Generates candidate read-only SQL queries using Google Gemini."""
 
@@ -99,7 +131,7 @@ class GeminiSQLGenerator(SQLGenerator):
             ValueError: If the catalog file is malformed or invalid.
         """
         resolved_key: Optional[str] = None
-        resolved_model: str = "gemini-2.0-flash"
+        resolved_model: str = "gemini-3.8-flash"
 
         if api_key is not None:
             resolved_key = api_key.strip()
@@ -175,12 +207,15 @@ class GeminiSQLGenerator(SQLGenerator):
 
         prompt = build_sql_generation_prompt(request, domain_context=domain_guidance)
 
-        config = types.GenerateContentConfig(
-            system_instruction=SYSTEM_INSTRUCTION,
-            response_mime_type="application/json",
-            response_schema=_GeminiSQLPayloadSchema,
-            temperature=0.0,
-        )
+        config_kwargs: dict = {
+            "system_instruction": SYSTEM_INSTRUCTION,
+            "response_mime_type": "application/json",
+            "response_schema": _GeminiSQLPayloadSchema,
+        }
+        if should_include_sampling_parameters(self.model_name):
+            config_kwargs["temperature"] = 0.0
+
+        config = types.GenerateContentConfig(**config_kwargs)
 
         start_time = time.perf_counter()
         response = None

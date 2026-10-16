@@ -11,7 +11,11 @@ from unittest.mock import MagicMock
 from query_pilot.db.models import ColumnMetadata, DatabaseSchema, ForeignKeyMetadata, TableMetadata
 from query_pilot.observability import LLMUsageMetadata
 from query_pilot.rag.retriever import DomainContextRetriever, RetrievalResult
-from query_pilot.sql.gemini_generator import GeminiSQLGenerator, _GeminiSQLPayloadSchema
+from query_pilot.sql.gemini_generator import (
+    GeminiSQLGenerator,
+    _GeminiSQLPayloadSchema,
+    should_include_sampling_parameters,
+)
 from query_pilot.sql.generation import (
     MAX_CLARIFICATION_OPTIONS,
     MAX_CONVERSATION_TURNS,
@@ -403,6 +407,57 @@ def test_gemini_generator_raises_configuration_error_on_missing_key(monkeypatch)
     with pytest.raises(ConfigurationError) as exc_info:
         GeminiSQLGenerator(settings=None, api_key=None)
     assert "Failed to load application settings" in str(exc_info.value)
+
+
+def test_gemini_generator_model_resolution():
+    """Verify GeminiSQLGenerator resolves default model and preserves explicit overrides."""
+    gen = GeminiSQLGenerator(api_key="test-api-key")
+    assert gen.model_name == "gemini-3.8-flash"
+
+    gen_custom = GeminiSQLGenerator(api_key="test-api-key", model_name="custom-model")
+    assert gen_custom.model_name == "custom-model"
+
+
+def test_should_include_sampling_parameters():
+    """Verify model-aware sampling parameter inclusion policy aligned with Google guidance."""
+    # Gemini 3.x and 4.x models omit sampling parameters
+    assert should_include_sampling_parameters("gemini-3.8-flash") is False
+    assert should_include_sampling_parameters("gemini-3.6-flash") is False
+    assert should_include_sampling_parameters("gemini-3.5-flash") is False
+    assert should_include_sampling_parameters("gemini-3.1-flash-lite") is False
+    assert should_include_sampling_parameters("gemini-4-flash") is False
+    assert should_include_sampling_parameters("gemini-4.0-flash") is False
+    assert should_include_sampling_parameters("models/gemini-3.8-flash") is False
+
+    # Supported legacy Gemini 1.x and 2.x overrides retain legacy sampling behavior (temperature=0.0)
+    assert should_include_sampling_parameters("gemini-2.0-flash") is True
+    assert should_include_sampling_parameters("gemini-2.5-flash") is True
+    assert should_include_sampling_parameters("gemini-1.5-flash") is True
+    assert should_include_sampling_parameters("gemini-1.5-pro") is True
+
+    # Unknown or unrecognized model identifiers conservatively omit sampling parameters
+    assert should_include_sampling_parameters("unknown-model") is False
+    assert should_include_sampling_parameters("") is False
+    assert should_include_sampling_parameters(None) is False
+
+
+def test_gemini_generator_legacy_model_includes_temperature(mock_model_facing_schema):
+    """Verify GeminiSQLGenerator includes temperature=0.0 when a legacy model is specified."""
+    response_json = json.dumps({"status": "answerable", "sql": "SELECT 1"})
+    gen = _mock_gemini_generator(response_json)
+    gen.model_name = "gemini-2.5-flash"
+
+    req = SQLGenerationRequest(
+        question="Count total students",
+        schema_context=mock_model_facing_schema,
+    )
+    gen.generate(req)
+
+    call_kwargs = gen.client.models.generate_content.call_args.kwargs
+    config = call_kwargs["config"]
+    assert config.temperature == 0.0
+    assert config.response_mime_type == "application/json"
+    assert config.response_schema is _GeminiSQLPayloadSchema
 
 
 # ==============================================================================
@@ -1284,7 +1339,8 @@ def test_gemini_generator_configures_response_schema_offline(mock_model_facing_s
 
     assert config.response_mime_type == "application/json"
     assert config.response_schema is _GeminiSQLPayloadSchema
-    assert config.temperature == 0.0
+    # For default gemini-3.8-flash, custom temperature is omitted to comply with modern Gemini 3.6+/4 API policy
+    assert config.temperature is None
 
     # Ensure SDK transformation on configured response_schema produces clean Schema without additional_properties
     converted_schema = t.t_schema(None, config.response_schema)

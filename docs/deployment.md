@@ -20,7 +20,7 @@ flowchart LR
         Backend["Render Web Service\n(Docker: Dockerfile.backend :8000)\nhttps://<backend-service>.onrender.com"]
     end
 
-    Gemini["Google Gemini API\n(gemini-2.0-flash)"]
+    Gemini["Google Gemini API\n(gemini-3.8-flash)"]
 
     User -->|"1. HTTPS /"| Frontend
     Frontend -->|"2. Cross-Origin API Calls\nPOST /query & GET /health"| Backend
@@ -56,7 +56,7 @@ Deploy the backend as a Docker Web Service on Render:
    | Variable | Value | Purpose |
    | :--- | :--- | :--- |
    | `GEMINI_API_KEY` | `AIzaSy...` (your secret key) | Required for Gemini model reasoning and SQL generation. |
-   | `PORT` | `8000` | Instructs Render's routing proxy to forward traffic to container port 8000 (matching `EXPOSE 8000` in `Dockerfile.backend`). |
+   | `PORT` | `8000` | The backend container dynamically binds to `${PORT:-8000}`. Configuring `PORT=8000` (matching `EXPOSE 8000`) directs Render to route traffic to container port 8000. |
    | `CORS_ALLOWED_ORIGINS` | `https://<frontend-site>.onrender.com` | Whitelists your frontend domain for Cross-Origin Resource Sharing (CORS). *(Update with your exact frontend URL after Step 2).* |
 5. Click **Create Web Service**. Wait for the Docker image to build and deploy.
 6. Note your backend URL: `https://<backend-service>.onrender.com`.
@@ -120,7 +120,15 @@ Now that you have your assigned frontend URL:
 ### 4. SQL-Only Mode Privacy & LLM Usage
 - In **SQL-Only mode**, QueryPilot relies entirely on an in-memory representation of the 17 relational tables in the GradeSense demo schema ([src/query_pilot/db/demo_schema.py](file:///d:/01.%20Github/query-pilot/src/query_pilot/db/demo_schema.py)).
 - **Zero database connections** are established, and zero queries are executed against a live database.
-- **LLM Reasoning Still Occurs**: The user's question, bounded conversation context, and schema metadata are sent to the configured Google Gemini API (`gemini-2.0-flash`) to generate and explain the candidate SQL. Do not submit sensitive personal information in query text.
+- **LLM Reasoning Still Occurs**: The user's question, bounded conversation context, and schema metadata are sent to the configured Google Gemini API (`gemini-3.8-flash`) to generate and explain the candidate SQL. Do not submit sensitive personal information in query text.
 
 ### 5. Manual Mode Override
 - While `VITE_DEFAULT_EXECUTION_MODE=sql_only` initializes the interface to SQL-Only mode on fresh page loads, users can still manually switch the radio button to "Execute Query" if an external database has been configured.
+
+### 6. Public Deployment Safety & Abuse Considerations
+- **Gemini Context Transmission**: Although SQL-Only mode eliminates live database access, questions, conversation history, and schema definitions are transmitted to Google Gemini (`gemini-3.8-flash`). Sensitive PII must never be submitted.
+- **CORS Is Not Authentication**: CORS configuration only restricts web browsers from invoking the API across origins. It provides **zero protection** against direct non-browser HTTP requests (such as `curl`, Postman, or automated scripts).
+- **No Incoming User Authentication**: The backend API currently exposes no authentication, user session tokens, or API keys on the `/query` endpoint. Anyone who obtains or inspects the backend service URL can send requests directly.
+- **API Quota & Denial of Wallet/Service**: Unrestricted public access can be abused to consume your configured Gemini API quota, trigger rate limits (HTTP 429), or cause Render bandwidth/pipeline exhaustion.
+- **Render Free-Tier Account Risks**: If inbound/outbound limits (such as Render's 5 GB monthly bandwidth) are exceeded, services may be suspended or incur charges depending on workspace billing settings.
+- **Recommended Next Step**: Before exposing this prototype beyond trusted evaluators, implement lightweight incoming bearer token authentication or API key header validation middleware on the FastAPI backend.

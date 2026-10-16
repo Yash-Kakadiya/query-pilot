@@ -51,7 +51,7 @@ def test_settings_valid_defaults(monkeypatch):
     settings = Settings(_env_file=None)
 
     assert settings.GEMINI_API_KEY.get_secret_value() == "valid_test_gemini_api_key"
-    assert settings.GEMINI_MODEL == "gemini-2.0-flash"
+    assert settings.GEMINI_MODEL == "gemini-3.8-flash"
     assert settings.LANGCHAIN_TRACING_V2 is False
     assert settings.LANGCHAIN_API_KEY is None
     assert settings.LANGCHAIN_PROJECT == "query-pilot"
@@ -61,6 +61,14 @@ def test_settings_valid_defaults(monkeypatch):
     assert settings.DB_USE_TRUSTED_CONNECTION is True
     assert settings.DB_QUERY_TIMEOUT_SECONDS == 15
     assert settings.DB_MAX_ROW_LIMIT == 100
+
+
+def test_settings_explicit_gemini_model_override(monkeypatch):
+    """Verify that explicit user-supplied GEMINI_MODEL overrides are preserved."""
+    monkeypatch.setenv("GEMINI_API_KEY", "valid_test_gemini_api_key")
+    monkeypatch.setenv("GEMINI_MODEL", "custom-experimental-model")
+    settings = Settings(_env_file=None)
+    assert settings.GEMINI_MODEL == "custom-experimental-model"
 
 
 def test_settings_still_requires_gemini_api_key(monkeypatch):

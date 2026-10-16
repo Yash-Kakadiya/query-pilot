@@ -26,9 +26,12 @@ services:
     expose:
       - "8000"
     environment:
+      # Backend Port (explicitly 8000 to isolate Compose from host-shell PORT and match Nginx reverse proxy upstream)
+      - PORT=8000
+
       # LLM Provider Configuration (Google Gemini)
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.0-flash}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.8-flash}
 
       # Observability (LangSmith, optional)
       - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2:-false}

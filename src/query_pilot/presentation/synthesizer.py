@@ -159,7 +159,7 @@ class AnswerSynthesisService:
         self,
         client: Optional[Any] = None,
         gemini_client: Optional[Any] = None,
-        model_name: str = "gemini-2.0-flash",
+        model_name: str = "gemini-3.8-flash",
         enabled: bool = True,
         max_sample_rows: int = 15,
     ):
@@ -274,11 +274,15 @@ class AnswerSynthesisService:
         response = None
         try:
             from google.genai import types
+            from query_pilot.sql.gemini_generator import should_include_sampling_parameters
 
-            config = types.GenerateContentConfig(
-                system_instruction=SYNTHESIS_SYSTEM_INSTRUCTION,
-                temperature=0.0,
-            )
+            config_kwargs: dict = {
+                "system_instruction": SYNTHESIS_SYSTEM_INSTRUCTION,
+            }
+            if should_include_sampling_parameters(self.model_name):
+                config_kwargs["temperature"] = 0.0
+
+            config = types.GenerateContentConfig(**config_kwargs)
             response = self._call_gemini_model(
                 client=client,
                 model_name=self.model_name,

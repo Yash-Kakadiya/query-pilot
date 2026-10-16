@@ -488,7 +488,7 @@ class TestTransportBoundaryPayloads:
         with temporary_tracing_context(enabled_tracing_settings):
             res = service._call_gemini_model(
                 client=mock_genai_client,
-                model_name="gemini-2.0-flash",
+                model_name="gemini-3.8-flash",
                 contents="SECRET_PROMPT_WITH_PASSWORDS",
                 config={},
             )
