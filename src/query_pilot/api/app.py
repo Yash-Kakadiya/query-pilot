@@ -1,4 +1,4 @@
-"""FastAPI application factory and routing layer for QueryPilot (Task 1.32-C).
+"""FastAPI application factory and routing layer for QueryPilot.
 
 Exposes:
 - GET  /health: Lightweight operational readiness check (non-sensitive).
@@ -71,7 +71,7 @@ def create_app(
     )
 
     # --------------------------------------------------------------------------
-    # Security Infrastructure & Resource Limiting (Task 1.34-B1-F14)
+    # Security Infrastructure & Resource Limiting
     # --------------------------------------------------------------------------
     resolved_settings = settings
     if resolved_settings is None:
@@ -97,7 +97,7 @@ def create_app(
     app.state.concurrency_guard = ConcurrencyGuard(max_concurrent)
 
     # --------------------------------------------------------------------------
-    # Streaming Request Payload Size Limit Middleware (Task 1.34-B1-F14.2)
+    # Streaming Request Payload Size Limit Middleware
     # Added BEFORE CORSMiddleware so CORSMiddleware wraps it as the outer layer.
     # --------------------------------------------------------------------------
     app.add_middleware(StreamingPayloadSizeMiddleware)

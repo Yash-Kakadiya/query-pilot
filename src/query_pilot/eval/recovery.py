@@ -1,4 +1,4 @@
-"""Deterministic Recovery Evaluation Harness for QueryPilot (Task 1.24).
+"""Deterministic Recovery Evaluation Harness for QueryPilot.
 
 Implements pure offline evaluation of the LangGraph bounded recovery workflow
 across 15 distinct operational, safety, and baseline scenarios.

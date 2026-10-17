@@ -74,7 +74,7 @@ The baseline dataset evaluates clarification handling as a first-class outcome v
 
 ## Dataset Versioning and Historical Benchmark Compatibility
 
-- **Dataset Evolution**: The baseline question suite originally contained 32 cases (`Q001`–`Q032`). Task 1.30-B expanded the active suite to 34 cases with the addition of `C001` and `C002`.
+- **Dataset Evolution**: The baseline question suite originally contained 32 cases (`Q001`–`Q032`). The active suite was expanded to 34 cases with the addition of `C001` and `C002`.
 - **Preservation of Historical Artifacts**: Saved historical evaluation artifacts (e.g., `baseline_results.json`, `baseline_results_1_14.json`, `comparison_1_22_audited.json`, `semantic_audit_1_26.json`) remain unchanged on their original 32-case baseline.
 - **Comparability Warning**: Metrics derived from the historical 32-case dataset and the expanded 34-case dataset must not be compared directly without acknowledging the dataset difference, particularly regarding overall accuracy, execution rates, and the introduction of clarification recognition metrics.
 
@@ -82,12 +82,12 @@ The baseline dataset evaluates clarification handling as a first-class outcome v
 
 ## Semantic Trap Analysis
 
-A critical principle established in QueryPilot Tasks 1.9 & 1.10 is:
+A critical principle established in QueryPilot is:
 
 $$\text{Syntax Validity} \neq \text{Safety Validation} \neq \text{Semantic Correctness}$$
 
 Cases `Q028`, `Q029`, and `Q030` test this boundary:
-1. **`Q028` (Table Inheritance)**: `Students.Id` inherits from `Users.Id`. If an LLM erroneously joins `Students.DepartmentId = Users.Id`, both columns are valid `INT` types in the model-facing schema and pass Task 1.8 deterministic validation, but semantically pair students with HODs/Deans.
+1. **`Q028` (Table Inheritance)**: `Students.Id` inherits from `Users.Id`. If an LLM erroneously joins `Students.DepartmentId = Users.Id`, both columns are valid `INT` types in the model-facing schema and pass deterministic AST validation, but semantically pair students with HODs/Deans.
 2. **`Q029` (Primary vs Foreign Keys)**: `Faculties` has `Faculties.Id` (User inheritance) and `Faculties.DepartmentId` (FK to `Departments.Id`). Joining `Faculties.Id = Departments.Id` passes safety validation but joins user IDs to department IDs.
 3. **`Q030` (Multi-Hop Join Disambiguation)**: `CourseOfferings` contains `SubjectId` and `SubjectCoordinatorId`. Equating `SubjectId = Faculties.Id` passes validation but conflates subjects with faculty members.
 
@@ -96,7 +96,7 @@ Cases `Q028`, `Q029`, and `Q030` test this boundary:
 ## Safety Fixtures
 
 Cases `S001` and `S002` are **validation regression fixtures only**:
-- They test that destructive DML (`DELETE`) and DDL (`DROP TABLE`) statements are deterministically caught by the Task 1.8 AST policy layer before execution.
+- They test that destructive DML (`DELETE`) and DDL (`DROP TABLE`) statements are deterministically caught by the deterministic AST policy layer before execution.
 - They are **never executed** against any database.
 
 ---
@@ -104,7 +104,7 @@ Cases `S001` and `S002` are **validation regression fixtures only**:
 ## Ground-Truth Verification
 
 All 26 `answerable` reference SQL statements:
-1. Were verified against Task 1.8 `validate_sql()` (100% approved, 0 policy violations).
+1. Were verified against `validate_sql()` (100% approved, 0 policy violations).
 2. Were executed directly on `GradeSense_Local` using `execute_read_only()`.
 3. Have their actual, non-fabricated results stored in `reference_result`.
 4. Include explicit `ORDER BY` clauses to ensure deterministic row comparisons.

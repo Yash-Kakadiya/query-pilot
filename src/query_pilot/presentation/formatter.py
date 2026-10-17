@@ -1,4 +1,4 @@
-"""Deterministic Result Presentation Layer for QueryPilot (Task 1.15).
+"""Deterministic Result Presentation Layer for QueryPilot.
 
 Converts QueryResult and PipelineResult into clean, typed, user-facing
 representations without natural-language interpretation, business inferences,

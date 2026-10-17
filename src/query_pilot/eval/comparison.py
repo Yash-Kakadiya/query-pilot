@@ -1,4 +1,4 @@
-"""Sequential vs. LangGraph comparative evaluation framework for QueryPilot (Task 1.21).
+"""Sequential vs. LangGraph comparative evaluation framework for QueryPilot.
 
 Enables paired, reproducible evaluation of natural language cases across both:
 1. The sequential `QueryPipeline` (ExecutionMode.SEQUENTIAL).

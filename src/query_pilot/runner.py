@@ -1,4 +1,4 @@
-"""Unified execution interface for QueryPilot (Task 1.20).
+"""Unified execution interface for QueryPilot.
 
 Provides a stable, application-facing facade allowing callers to execute
 queries using either:

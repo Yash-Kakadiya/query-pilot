@@ -1,4 +1,4 @@
-"""Privacy-safe, opt-in LangSmith tracing instrumentation for QueryPilot (Task 1.31-I-R3).
+"""Privacy-safe, opt-in LangSmith tracing instrumentation for QueryPilot.
 
 Provides:
 - Fully opt-in, disabled-by-default execution.

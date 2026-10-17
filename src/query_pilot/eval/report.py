@@ -1,4 +1,4 @@
-"""Deterministic evaluation report generator and regression metrics for QueryPilot (Task 1.17).
+"""Deterministic evaluation report generator and regression metrics for QueryPilot.
 
 Consumes saved evaluation results (e.g. baseline_results_1_14.json) and produces
 a reproducible, evidence-based Markdown reliability report without secondary

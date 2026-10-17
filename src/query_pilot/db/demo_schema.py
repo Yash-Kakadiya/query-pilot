@@ -1,4 +1,4 @@
-"""Checked-in, trusted model-facing demo schema provider for QueryPilot (Task 1.34-B1-C1).
+"""Checked-in, trusted model-facing demo schema provider for QueryPilot.
 
 Provides an in-memory, deterministic model-facing DatabaseSchema for GradeSense_Local,
 derived directly from the canonical DDL definition in data/schemas/gradesense_schema.sql.

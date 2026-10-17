@@ -1,4 +1,4 @@
-"""Structured Pipeline Observability for QueryPilot (Task 1.16).
+"""Structured Pipeline Observability for QueryPilot.
 
 Provides lightweight, machine-readable, correlated lifecycle tracking for
 text-to-SQL requests without external dependencies, telemetry services,
@@ -324,7 +324,7 @@ class PipelineObserver:
 
 
 # ==============================================================================
-# Model Invocation & Token Usage Telemetry (Task 1.28)
+# Model Invocation & Token Usage Telemetry
 # ==============================================================================
 
 class LLMUsageMetadata(BaseModel):
@@ -392,7 +392,7 @@ class PipelineRunTelemetry(BaseModel):
         else:
             self.total_tokens = None
 
-        # Cost remains strictly None in Task 1.28
+        # Cost calculation is currently not tracked (remains None)
         self.total_estimated_cost_usd = None
 
     @property

@@ -1,4 +1,4 @@
-"""Strict Pydantic request and response models for QueryPilot API layer (Task 1.32-B).
+"""Strict Pydantic request and response models for QueryPilot API layer.
 
 Defines:
 - QueryRequest: strictly validated input model enforcing trimmed non-empty questions

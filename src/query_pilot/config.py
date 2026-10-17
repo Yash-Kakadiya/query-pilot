@@ -218,7 +218,7 @@ class Settings(DatabaseSettings):
         return validated
 
     # --------------------------------------------------------------------------
-    # Prototype Security & Safeguards (Task 1.34-B1-F14)
+    # Prototype Security & Safeguards
     # --------------------------------------------------------------------------
     QUERY_PILOT_FORCE_SQL_ONLY: bool = Field(
         default=False,

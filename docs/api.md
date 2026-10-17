@@ -408,7 +408,7 @@ When the frontend SPA (e.g. deployed on a CDN or Vercel at `https://querypilot.e
 
 ---
 
-## 6. Prototype Security & Abuse Protection (Task 1.34-B1-F14)
+## 6. Prototype Security & Abuse Protection
 
 QueryPilot includes built-in protective controls intended for private evaluator deployments (such as Render prototypes):
 

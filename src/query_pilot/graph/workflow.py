@@ -1,4 +1,4 @@
-"""LangGraph workflow for QueryPilot text-to-SQL processing (Task 1.19).
+"""LangGraph workflow for QueryPilot text-to-SQL processing.
 
 Coordinates the five logical pipeline stages as explicit graph nodes:
 1. acquire_schema: Acquires model-facing database schema metadata.

@@ -1,4 +1,4 @@
-"""Deterministic in-memory knowledge retriever for QueryPilot (Task 1.31-C).
+"""Deterministic in-memory knowledge retriever for QueryPilot.
 
 Selects relevant schema and domain knowledge entries from the version-controlled
 knowledge catalog without external network services, embeddings, or vector databases.

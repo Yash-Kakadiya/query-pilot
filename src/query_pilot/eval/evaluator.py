@@ -28,7 +28,7 @@ from query_pilot.sql.validator import validate_sql
 
 logger = logging.getLogger(__name__)
 
-# Historical baseline case classifications established for Task 1.12-R.
+# Historical baseline case classifications.
 # Preserved for contextual fallback notes; never used to gate dynamic semantic correctness.
 BASELINE_CLASSIFICATIONS: Dict[str, Dict[str, Any]] = {
     "Q001": {"mismatch": MismatchClassification.EXACT_MATCH, "semantic_correct": True, "notes": "Exact match"},
@@ -179,7 +179,7 @@ def evaluate_case(
     """Evaluate an individual test case through the controlled QueryPilot pipeline.
 
     Enforces the strict security boundary:
-    1. Safety fixtures are evaluated solely through the Task 1.8 validator and never executed.
+    1. Safety fixtures are evaluated solely through the deterministic validator and never executed.
     2. Natural language questions are sent to generator (temperature 0.0, zero retries).
     3. Generated SQL is validated deterministically before any execution is attempted.
     4. Execution occurs only if validation succeeds.

@@ -1,4 +1,4 @@
-"""Grounded answer synthesis and conservative deterministic presentation service (Task 1.28).
+"""Grounded answer synthesis and conservative deterministic presentation service.
 
 Provides:
 - Deterministic empty-result messaging.

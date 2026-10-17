@@ -1,4 +1,4 @@
-"""Conservative Dynamic Semantic Result Comparator for QueryPilot (Task 1.25-B).
+"""Conservative Dynamic Semantic Result Comparator for QueryPilot.
 
 Provides automated, principled evaluation of database query results against
 ground-truth reference results without relying on case IDs, hardcoded dictionaries,

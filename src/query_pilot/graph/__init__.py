@@ -1,4 +1,4 @@
-"""Graph-based agent workflow package for QueryPilot (Task 1.18 & Task 1.19).
+"""Graph-based agent workflow package for QueryPilot.
 
 Provides typed state contracts, foundational abstractions, and executable
 LangGraph workflow orchestration.

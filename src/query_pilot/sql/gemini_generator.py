@@ -103,7 +103,7 @@ def should_include_sampling_parameters(model_name: Optional[str]) -> bool:
 
 
 # ==============================================================================
-# Transient Error Retry Configuration (Task 1.34-B1-F20-B)
+# Transient Error Retry Configuration
 # ==============================================================================
 
 GEMINI_RETRY_ATTEMPTS: int = 3

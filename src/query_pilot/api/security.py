@@ -1,4 +1,4 @@
-"""Security, authorization, and resource limiting utilities for QueryPilot API (Task 1.34-B1-F14).
+"""Security, authorization, and resource limiting utilities for QueryPilot API.
 
 Provides:
 - Constant-time verification of runtime prototype access codes via X-QueryPilot-Access-Key.
