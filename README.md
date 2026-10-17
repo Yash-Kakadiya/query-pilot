@@ -145,94 +145,131 @@ Before installing, ensure your environment meets the minimum version requirement
 * **Python:** `>=3.12` (tested with Python 3.12 and 3.13)
 * **Node.js:** `^20.19.0 || >=22.12.0` (LTS Node 20.19+ or Node 22.12+ required by modern Vite/Oxc lockfile dependencies)
 * **npm:** `>=10.0.0`
-* **Database:** Microsoft SQL Server Express or LocalDB with **ODBC Driver 17 for SQL Server** installed
 * **Git**
+* **Google Gemini API Key:** Required for natural-language SQL generation and answer synthesis.
+* **Database (Optional):** Microsoft SQL Server Express or LocalDB with **ODBC Driver 17 for SQL Server** installed. *(Only required for live database execution; not required for Zero-Database evaluation).*
 
-### 2. Clone the Repository
+---
 
-```powershell
-git clone https://github.com/Yash-Kakadiya/query-pilot.git
-cd query-pilot
-```
+### Option A: Zero-Database Quickstart (No SQL Server Required)
 
-### 3. Backend Setup
+If you want to immediately explore QueryPilot without installing SQL Server, configuring ODBC drivers, or provisioning a database, run in **Zero-Database (SQL-Only) Mode**:
 
-Open your first terminal and set up the Python environment:
+1. **Clone the repository:**
+   ```powershell
+   git clone https://github.com/Yash-Kakadiya/query-pilot.git
+   cd query-pilot
+   ```
 
-```powershell
-# Create and activate Python virtual environment
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-# On Linux/macOS: source .venv/bin/activate
+2. **Set up Python virtual environment:**
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   # On Linux/macOS: source .venv/bin/activate
 
-# Install required backend dependencies
-pip install -r requirements.txt
-```
+   pip install -r requirements.txt
+   ```
 
-### 4. Configure Environment Variables
+3. **Configure environment:**
+   ```powershell
+   cp .env.example .env
+   ```
+   Edit `.env` and set:
+   ```text
+   GEMINI_API_KEY=your_gemini_api_key_here
+   QUERY_PILOT_FORCE_SQL_ONLY=true
+   ```
 
-Create your `.env` configuration file from the template:
+4. **Start the FastAPI backend:**
+   ```powershell
+   uvicorn query_pilot.api.app:app --host 127.0.0.1 --port 8000
+   ```
 
-```powershell
-cp .env.example .env
-```
+5. **Start the React frontend (in a second terminal):**
+   ```powershell
+   cd frontend
+   npm install
+   npm run dev
+   ```
 
-Edit `.env` with your settings:
-* **`GEMINI_API_KEY`**: Your Google Gemini API key (**required**).
-* **`GEMINI_MODEL`**: `gemini-3.8-flash` (default).
-* **`DB_SERVER`**: `localhost\SQLEXPRESS` (default for local SQL Server Express).
-* **`DB_NAME`**: `GradeSense_Local` (default isolated testing database).
-* **`DB_DRIVER`**: `ODBC Driver 17 for SQL Server`.
-* **`DB_USE_TRUSTED_CONNECTION`**: `true` (uses Windows Integrated Authentication).
-* **`LANGCHAIN_TRACING_V2`**: `false` (default: tracing is disabled).
+6. **Open in browser:**
+   * **Web App:** [http://127.0.0.1:5173](http://127.0.0.1:5173)
+   * **API Docs (Swagger UI):** [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+   * **Process Health Check:** [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
 
 > [!NOTE]
-> Never commit `.env` or your API keys to version control.
+> **What Zero-Database Mode Does:** Natural-language questions are processed by Gemini, enriched with domain definitions, and validated against QueryPilot's checked-in GradeSense demo schema. Approved queries return `status="VALIDATED_ONLY"` with the generated SQL, AST validation metrics, and structured explanations.
+>
+> **Limitation:** Live database queries are bypassed; tabular row results are not executed or returned in this mode.
 
-### 5. Start the FastAPI Backend
+---
 
-In your first terminal, launch the Uvicorn server:
+### Option B: Full Local Database Setup (SQL Server Express)
 
-```powershell
-uvicorn query_pilot.api.app:app --host 127.0.0.1 --port 8000
+When you want to execute queries against a live relational database:
+
+#### 1. Configure Local SQL Server Database
+
+Execute the setup scripts in strict dependency order:
+
+1. **Create the Database (`init_db.sql`):**
+   Idempotently creates the isolated `[GradeSense_Local]` database on your local SQL Server instance:
+   ```powershell
+   sqlcmd -S "localhost\SQLEXPRESS" -E -i data/schemas/init_db.sql
+   ```
+   *(Or execute [data/schemas/init_db.sql](data/schemas/init_db.sql) using SQL Server Management Studio / Azure Data Studio).*
+
+2. **Apply DDL Schema (`gradesense_schema.sql`):**
+   Deploys 17 core relational tables, foreign keys, check constraints, and 60 performance indexes. Contains safety checks enforcing execution against `[GradeSense_Local]`:
+   ```powershell
+   sqlcmd -S "localhost\SQLEXPRESS" -d GradeSense_Local -E -i data/schemas/gradesense_schema.sql
+   ```
+   *(Or execute [data/schemas/gradesense_schema.sql](data/schemas/gradesense_schema.sql) in SSMS with active database `GradeSense_Local`).*
+
+3. **Seed Database Records (`seed_db.py`):**
+   Populates tables in topological foreign-key dependency order using memory-sanitized credentials:
+   ```powershell
+   # Validate configuration and connectivity without writing
+   python data/seeds/seed_db.py --dry-run
+
+   # Seed database records
+   python data/seeds/seed_db.py
+   ```
+   *Source Data Note:* [data/seeds/seed_db.py](data/seeds/seed_db.py) merges checked-in supplemental records ([data/seeds/supplemental_faculty_assignments.json](data/seeds/supplemental_faculty_assignments.json), [data/seeds/supplemental_predictions.json](data/seeds/supplemental_predictions.json)) with raw CSV tables located at `D:\01. Github\gradesense-ml\data\raw`. In environments where this external path is absent, use the `--dry-run` flag or evaluate via Zero-Database Mode.
+
+#### 2. Configure Environment Variables
+
+Edit `.env` with your SQL Server connection:
+```text
+GEMINI_API_KEY=your_gemini_api_key_here
+DB_SERVER=localhost\SQLEXPRESS
+DB_NAME=GradeSense_Local
+DB_DRIVER=ODBC Driver 17 for SQL Server
+DB_USE_TRUSTED_CONNECTION=true
+QUERY_PILOT_FORCE_SQL_ONLY=false
 ```
 
-The API will be available at `http://127.0.0.1:8000`:
-* OpenAPI Documentation (Swagger UI): `http://127.0.0.1:8000/docs`
-* Alternative Documentation (ReDoc): `http://127.0.0.1:8000/redoc`
-* Operational Health Check: `http://127.0.0.1:8000/health`
+#### 3. Launch Services
 
-### 6. Frontend Setup & Startup
+Start backend and frontend as described in Option A:
+* **Terminal 1:** `uvicorn query_pilot.api.app:app --host 127.0.0.1 --port 8000`
+* **Terminal 2:** `cd frontend; npm run dev`
 
-Open a **second terminal** and navigate to the frontend directory:
+---
 
-```powershell
-cd frontend
-
-# Install frontend dependencies
-npm install
-
-# Start the Vite development server
-npm run dev
-```
-
-The Vite development server will start at:
-* **Local Web App:** `http://127.0.0.1:5173` (or `http://localhost:5173`)
-
-Vite automatically proxies any `/api/*` calls from the browser to the backend at `http://127.0.0.1:8000/*`.
-
-### 7. Run Verification Checks & Tests
+### Verification Checks & Automated Tests
 
 Execute the automated test suites:
 
-* **Backend Offline Suite (516 tests, no database or external API needed):**
+* **Backend Offline Suite (743 passed tests, no database or external API needed):**
   ```powershell
   pytest -k "not live" --tb=short
   ```
+  *(Collects 765 tests, deselects 22 live-service tests, and runs 743 tests offline covering AST validation, executor safeguards, LangGraph workflow, bounded Gemini retries, and API security).*
 
-* **Backend API & Model Tests:**
+* **Backend API & Security Tests:**
   ```powershell
-  pytest tests/test_api.py tests/test_api_models.py -v
+  pytest tests/test_api.py tests/test_api_security.py tests/test_config.py -v
   ```
 
 * **Frontend Code Quality & Build Checks:**
@@ -243,7 +280,7 @@ Execute the automated test suites:
   npm run build
   ```
 
-### 8. Cloud & Container Deployment
+### Cloud & Container Deployment
 
 QueryPilot supports both unified container deployment and split-origin cloud hosting:
 * **Docker Compose (Unified Local / VM):** See `docker-compose.yml` for running the backend and frontend reverse proxy together on a private network.
