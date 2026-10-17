@@ -612,3 +612,176 @@ def test_startup_succeeds_when_access_key_required_and_provided():
         QUERY_PILOT_ACCESS_KEY=SecretStr("valid_secret_code_123"),
     )
     assert settings.QUERY_PILOT_ACCESS_KEY.get_secret_value() == "valid_secret_code_123"
+
+
+# ==============================================================================
+# 8. Environment-Backed CORS and Fail-Closed Startup Tests (Task 1.34-B1-F19)
+# ==============================================================================
+
+def test_cors_middleware_from_environment_plain_single_url(monkeypatch, mock_success_runner):
+    """Verify create_app() configures CORS correctly when CORS_ALLOWED_ORIGINS is a plain URL."""
+    from query_pilot.config import get_settings
+
+    origin = "https://querypilot-frontend-3tz3.onrender.com"
+    monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+    monkeypatch.setenv("CORS_ALLOWED_ORIGINS", origin)
+    get_settings.cache_clear()
+    try:
+        app = create_app(runner=mock_success_runner)
+        client = TestClient(app)
+
+        # GET /health returns Access-Control-Allow-Origin for allowed origin
+        resp = client.get("/health", headers={"Origin": origin})
+        assert resp.status_code == 200
+        assert resp.headers.get("access-control-allow-origin") == origin
+
+        # OPTIONS preflight succeeds with expected CORS headers
+        preflight = client.options(
+            "/health",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": "content-type",
+            },
+        )
+        assert preflight.status_code == 200
+        assert preflight.headers.get("access-control-allow-origin") == origin
+        assert "GET" in preflight.headers.get("access-control-allow-methods", "")
+
+        # Disallowed origin does not receive Access-Control-Allow-Origin
+        disallowed = client.get("/health", headers={"Origin": "https://unauthorized.com"})
+        assert disallowed.status_code == 200
+        assert "access-control-allow-origin" not in disallowed.headers
+    finally:
+        get_settings.cache_clear()
+
+
+def test_cors_middleware_from_environment_csv_and_json_array(monkeypatch, mock_success_runner):
+    """Verify create_app() configures CORS for multiple origins via CSV and JSON array."""
+    from query_pilot.config import get_settings
+
+    origins = ["https://a.example.com", "https://b.example.com"]
+    monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+    monkeypatch.setenv("CORS_ALLOWED_ORIGINS", ",".join(origins))
+    get_settings.cache_clear()
+    try:
+        app = create_app(runner=mock_success_runner)
+        client = TestClient(app)
+
+        for o in origins:
+            resp = client.get("/health", headers={"Origin": o})
+            assert resp.status_code == 200
+            assert resp.headers.get("access-control-allow-origin") == o
+    finally:
+        get_settings.cache_clear()
+
+
+def test_cors_middleware_disabled_when_empty_or_unset(monkeypatch, mock_success_runner):
+    """Verify CORS middleware is omitted when CORS_ALLOWED_ORIGINS is empty or unset."""
+    from query_pilot.config import get_settings
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+    monkeypatch.setenv("CORS_ALLOWED_ORIGINS", "")
+    get_settings.cache_clear()
+    try:
+        app = create_app(runner=mock_success_runner)
+        client = TestClient(app)
+
+        resp = client.get("/health", headers={"Origin": "https://any.com"})
+        assert resp.status_code == 200
+        assert "access-control-allow-origin" not in resp.headers
+    finally:
+        get_settings.cache_clear()
+
+
+def test_create_app_fails_closed_when_settings_invalid(monkeypatch):
+    """Verify create_app() aborts startup with RuntimeError when settings fail validation."""
+    from query_pilot.config import get_settings
+
+    # Scenario A: Invalid CORS origin
+    monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+    monkeypatch.setenv("CORS_ALLOWED_ORIGINS", "https://*.wildcard-disallowed.com")
+    get_settings.cache_clear()
+    try:
+        with pytest.raises(RuntimeError) as exc_info:
+            create_app()
+        assert "Application startup failed: unable to load or validate settings" in str(exc_info.value)
+        assert "ValidationError" in str(exc_info.value)
+    finally:
+        get_settings.cache_clear()
+
+    # Scenario B: QUERY_PILOT_REQUIRE_ACCESS_KEY enabled without access key
+    monkeypatch.setenv("CORS_ALLOWED_ORIGINS", "")
+    monkeypatch.setenv("QUERY_PILOT_REQUIRE_ACCESS_KEY", "true")
+    monkeypatch.delenv("QUERY_PILOT_ACCESS_KEY", raising=False)
+    get_settings.cache_clear()
+    try:
+        with pytest.raises(RuntimeError) as exc_info:
+            create_app()
+        assert "Application startup failed: unable to load or validate settings" in str(exc_info.value)
+    finally:
+        get_settings.cache_clear()
+
+
+def test_query_fails_closed_when_settings_cannot_be_resolved(monkeypatch):
+    """Verify verify_prototype_access_key returns 500 fail-closed if settings cannot be loaded."""
+    from fastapi import HTTPException
+    from query_pilot.api.security import verify_prototype_access_key
+    from unittest.mock import MagicMock
+
+    mock_request = MagicMock()
+    mock_request.app.state.settings = None
+
+    def mock_broken_get_settings():
+        raise RuntimeError("Config failure")
+
+    monkeypatch.setattr("query_pilot.config.get_settings", mock_broken_get_settings)
+
+    with pytest.raises(HTTPException) as exc_info:
+        verify_prototype_access_key(mock_request, settings=None)
+    assert exc_info.value.status_code == 500
+    assert "Security configuration unavailable" in exc_info.value.detail
+
+
+def test_execute_query_fails_closed_when_settings_unresolvable(monkeypatch, mock_success_runner):
+    """Verify POST /query fails closed with HTTP 500 if application settings are missing."""
+    app = create_app(runner=mock_success_runner)
+    app.state.settings = None
+
+    def mock_broken_get_settings():
+        raise RuntimeError("Config failure")
+
+    monkeypatch.setattr("query_pilot.config.get_settings", mock_broken_get_settings)
+
+    client = TestClient(app)
+    resp = client.post("/query", json={"question": "Test question"})
+    assert resp.status_code == 500
+    assert resp.json()["detail"] == "Server configuration unavailable."
+
+
+def test_forced_sql_only_and_access_key_enforced_from_environment(monkeypatch, mock_success_runner):
+    """Verify environment-backed QUERY_PILOT_FORCE_SQL_ONLY and access key enforcement."""
+    from query_pilot.config import get_settings
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+    monkeypatch.setenv("QUERY_PILOT_ACCESS_KEY", "env_secret_key_777")
+    monkeypatch.setenv("QUERY_PILOT_FORCE_SQL_ONLY", "true")
+    get_settings.cache_clear()
+    try:
+        app = create_app(runner=mock_success_runner)
+        client = TestClient(app)
+
+        # 1. Unauthenticated request rejected
+        unauth = client.post("/query", json={"question": "Test query"})
+        assert unauth.status_code == 401
+
+        # 2. Authenticated request succeeds and forces sql_only mode
+        auth = client.post(
+            "/query",
+            json={"question": "Test query", "execution_mode": "execute"},
+            headers={ACCESS_KEY_HEADER: "env_secret_key_777"},
+        )
+        assert auth.status_code == 200
+        assert mock_success_runner.run.call_args.kwargs["execution_mode"] == "sql_only"
+    finally:
+        get_settings.cache_clear()

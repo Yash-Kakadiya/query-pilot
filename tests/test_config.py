@@ -161,3 +161,84 @@ def test_guardrails_validation_bounds(monkeypatch):
 
     with pytest.raises(ValidationError):
         Settings(_env_file=None, DB_MAX_ROW_LIMIT=5000)
+
+
+# ==============================================================================
+# CORS Origin Environment Parsing & Validation Tests (Task 1.34-B1-F19)
+# ==============================================================================
+
+def test_cors_origins_env_single_plain_url(monkeypatch):
+    """Verify single plain URL in environment variable loads correctly without JSON decoding error."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+    monkeypatch.setenv("CORS_ALLOWED_ORIGINS", "https://querypilot-frontend-3tz3.onrender.com/")
+
+    settings = Settings(_env_file=None)
+    assert settings.CORS_ALLOWED_ORIGINS == ["https://querypilot-frontend-3tz3.onrender.com"]
+
+
+def test_cors_origins_env_comma_separated_urls(monkeypatch):
+    """Verify comma-separated URLs in environment variable load and normalize correctly."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+    monkeypatch.setenv(
+        "CORS_ALLOWED_ORIGINS",
+        "https://querypilot-frontend-3tz3.onrender.com, https://admin.querypilot.com/ , http://localhost:5173",
+    )
+
+    settings = Settings(_env_file=None)
+    assert settings.CORS_ALLOWED_ORIGINS == [
+        "https://querypilot-frontend-3tz3.onrender.com",
+        "https://admin.querypilot.com",
+        "http://localhost:5173",
+    ]
+
+
+def test_cors_origins_env_json_array(monkeypatch):
+    """Verify JSON array in environment variable loads correctly (production workaround compatibility)."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+    monkeypatch.setenv(
+        "CORS_ALLOWED_ORIGINS",
+        '["https://querypilot-frontend-3tz3.onrender.com/", "https://admin.querypilot.com"]',
+    )
+
+    settings = Settings(_env_file=None)
+    assert settings.CORS_ALLOWED_ORIGINS == [
+        "https://querypilot-frontend-3tz3.onrender.com",
+        "https://admin.querypilot.com",
+    ]
+
+
+def test_cors_origins_env_empty_and_unset(monkeypatch):
+    """Verify empty string, whitespace, and unset environment values disable CORS (empty list)."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+
+    monkeypatch.setenv("CORS_ALLOWED_ORIGINS", "")
+    assert Settings(_env_file=None).CORS_ALLOWED_ORIGINS == []
+
+    monkeypatch.setenv("CORS_ALLOWED_ORIGINS", "   ")
+    assert Settings(_env_file=None).CORS_ALLOWED_ORIGINS == []
+
+    monkeypatch.delenv("CORS_ALLOWED_ORIGINS", raising=False)
+    assert Settings(_env_file=None).CORS_ALLOWED_ORIGINS == []
+
+
+@pytest.mark.parametrize(
+    "invalid_origin",
+    [
+        "*",
+        "https://*",
+        "https://*.onrender.com",
+        "https://example.com/path",
+        "https://example.com?query=val",
+        "https://example.com#fragment",
+        "https://user:pass@example.com",
+        "ftp://example.com",
+        "example.com",
+    ],
+)
+def test_cors_origins_env_rejects_invalid_and_wildcard(monkeypatch, invalid_origin):
+    """Verify wildcard, paths, queries, fragments, credentials, and non-http(s) schemes are rejected."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+    monkeypatch.setenv("CORS_ALLOWED_ORIGINS", invalid_origin)
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)

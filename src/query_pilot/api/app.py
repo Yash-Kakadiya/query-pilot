@@ -70,9 +70,6 @@ def create_app(
         description="Autonomous data analyst API with safe, self-correcting text-to-SQL workflows.",
     )
 
-    app.state.runner = runner
-    app.state.settings = settings
-
     # --------------------------------------------------------------------------
     # Security Infrastructure & Resource Limiting (Task 1.34-B1-F14)
     # --------------------------------------------------------------------------
@@ -82,8 +79,17 @@ def create_app(
             from query_pilot.config import get_settings
 
             resolved_settings = get_settings()
-        except Exception:
-            resolved_settings = None
+        except Exception as exc:
+            logger.error(
+                "Application startup failed: unable to load or validate settings [%s]",
+                type(exc).__name__,
+            )
+            raise RuntimeError(
+                f"Application startup failed: unable to load or validate settings ({type(exc).__name__})."
+            ) from None
+
+    app.state.runner = runner
+    app.state.settings = resolved_settings
 
     rate_limit_rpm = getattr(resolved_settings, "QUERY_PILOT_RATE_LIMIT_PER_MINUTE", 20) if resolved_settings else 20
     max_concurrent = getattr(resolved_settings, "QUERY_PILOT_MAX_CONCURRENT_QUERIES", 3) if resolved_settings else 3
@@ -222,8 +228,16 @@ def create_app(
                 from query_pilot.config import get_settings
 
                 app_settings = get_settings()
-            except Exception:
-                app_settings = None
+            except Exception as exc:
+                logger.error(
+                    "Request execution failed: unable to resolve application settings [%s]",
+                    type(exc).__name__,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Server configuration unavailable.",
+                ) from None
+            request.app.state.settings = app_settings
 
         verify_prototype_access_key(request, app_settings)
 

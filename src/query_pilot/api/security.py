@@ -288,18 +288,41 @@ def verify_prototype_access_key(request: Request, settings: Optional[Any] = None
         try:
             from query_pilot.config import get_settings
             app_settings = get_settings()
-        except Exception:
-            app_settings = None
+        except Exception as exc:
+            logger.error(
+                "Security check failed: unable to resolve application settings [%s]",
+                type(exc).__name__,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Security configuration unavailable.",
+            ) from None
 
     if not app_settings:
-        return
+        logger.error("Security check failed: application settings are unavailable.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Security configuration unavailable.",
+        )
 
     expected_secret = getattr(app_settings, "QUERY_PILOT_ACCESS_KEY", None)
-    if not expected_secret:
-        return
-
-    expected_val = expected_secret.get_secret_value() if hasattr(expected_secret, "get_secret_value") else str(expected_secret)
+    expected_val = (
+        expected_secret.get_secret_value()
+        if hasattr(expected_secret, "get_secret_value")
+        else (str(expected_secret) if expected_secret is not None else "")
+    )
     expected_clean = expected_val.strip()
+
+    require_key = bool(getattr(app_settings, "QUERY_PILOT_REQUIRE_ACCESS_KEY", False))
+    if require_key and not expected_clean:
+        logger.error(
+            "Security check failed: QUERY_PILOT_REQUIRE_ACCESS_KEY is enabled but key is missing."
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Security configuration unavailable.",
+        )
+
     if not expected_clean:
         return
 

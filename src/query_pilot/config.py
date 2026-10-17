@@ -6,10 +6,10 @@ Ensures fail-fast environment variable validation and prevents secret leakage.
 
 from functools import lru_cache
 import json
-from typing import Any, List, Optional, Set
+from typing import Annotated, Any, List, Optional, Set
 import urllib.parse
 from pydantic import Field, SecretStr, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class DatabaseSettings(BaseSettings):
@@ -123,7 +123,7 @@ class Settings(DatabaseSettings):
     # --------------------------------------------------------------------------
     # API & CORS Settings
     # --------------------------------------------------------------------------
-    CORS_ALLOWED_ORIGINS: List[str] = Field(
+    CORS_ALLOWED_ORIGINS: Annotated[List[str], NoDecode] = Field(
         default_factory=list,
         description="Allowed origins for Cross-Origin Resource Sharing (CORS). Empty disables CORS headers.",
     )
