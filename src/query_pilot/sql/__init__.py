@@ -1,6 +1,15 @@
 """SQL validation, generation contract, and policy module for QueryPilot."""
 
-from query_pilot.sql.gemini_generator import GeminiSQLGenerator
+from query_pilot.sql.gemini_generator import (
+    GEMINI_RETRY_ATTEMPTS,
+    GEMINI_RETRY_EXP_BASE,
+    GEMINI_RETRY_HTTP_STATUS_CODES,
+    GEMINI_RETRY_INITIAL_DELAY,
+    GEMINI_RETRY_JITTER,
+    GEMINI_RETRY_MAX_DELAY,
+    GeminiSQLGenerator,
+    get_gemini_http_options,
+)
 from query_pilot.sql.generation import (
     ConfigurationError,
     EmptySQLError,
@@ -38,4 +47,11 @@ __all__ = [
     "SYSTEM_INSTRUCTION",
     "build_sql_generation_prompt",
     "GeminiSQLGenerator",
+    "get_gemini_http_options",
+    "GEMINI_RETRY_ATTEMPTS",
+    "GEMINI_RETRY_INITIAL_DELAY",
+    "GEMINI_RETRY_MAX_DELAY",
+    "GEMINI_RETRY_EXP_BASE",
+    "GEMINI_RETRY_JITTER",
+    "GEMINI_RETRY_HTTP_STATUS_CODES",
 ]

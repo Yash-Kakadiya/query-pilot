@@ -162,6 +162,7 @@ class AnswerSynthesisService:
         model_name: str = "gemini-3.8-flash",
         enabled: bool = True,
         max_sample_rows: int = 15,
+        http_options: Optional[Any] = None,
     ):
         """Initialize synthesis service.
 
@@ -171,11 +172,13 @@ class AnswerSynthesisService:
             model_name: Configured model identifier.
             enabled: If False or client is None, multi-row synthesis falls back cleanly.
             max_sample_rows: Maximum sample rows supplied in synthesis prompt (bounds payload).
+            http_options: Optional custom types.HttpOptions (defaults to bounded retry settings).
         """
         self.client = gemini_client if gemini_client is not None else client
         self.model_name = model_name
         self.enabled = enabled
         self.max_sample_rows = max_sample_rows
+        self.http_options = http_options
 
     def _init_gemini_client(self) -> Optional[Any]:
         """Lazily initialize Google GenAI client if not provided."""
@@ -183,8 +186,10 @@ class AnswerSynthesisService:
             return self.client
         try:
             from google import genai
+            from query_pilot.sql.gemini_generator import get_gemini_http_options
 
-            return genai.Client()
+            opts = self.http_options if self.http_options is not None else get_gemini_http_options()
+            return genai.Client(http_options=opts)
         except Exception:
             return None
 

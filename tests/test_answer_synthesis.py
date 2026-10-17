@@ -1157,3 +1157,69 @@ def test_finding_4_sanitize_synthesis_failure_notes() -> None:
         assert substr not in graph_state["grounded_answer"].text
         for note in graph_state["grounded_answer"].verification_notes:
             assert substr not in note
+
+
+# ==============================================================================
+# 28. Transient Error Retry Tests (Task 1.34-B1-F20-B)
+# ==============================================================================
+
+def test_answer_synthesizer_shared_retry_configuration(monkeypatch):
+    """Verify synthesizer lazily configures 3 attempts and transient HTTP retry codes."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-for-synth")
+    synth = AnswerSynthesisService()
+    client = synth._init_gemini_client()
+    assert client is not None
+    opts = client._api_client._http_options.retry_options
+    assert opts is not None
+    assert opts.attempts == 3
+    assert opts.initial_delay == 1.0
+    assert opts.max_delay == 8.0
+    assert opts.exp_base == 2.0
+    assert opts.jitter == 1.0
+    assert opts.http_status_codes == [408, 429, 500, 502, 503, 504]
+
+
+def test_answer_synthesizer_recovers_from_transient_503(monkeypatch):
+    """Verify transient 503 followed by success recovers and produces UNVERIFIED_NARRATIVE answer."""
+    import json
+    import httpx
+    from google.genai import errors
+    from query_pilot.sql.gemini_generator import get_gemini_http_options
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-for-synth")
+    fast_opts = get_gemini_http_options(initial_delay=0.001, max_delay=0.01)
+    synth = AnswerSynthesisService(http_options=fast_opts)
+
+    call_count = 0
+    fake_httpx_resp = httpx.Response(status_code=503, request=httpx.Request("POST", "https://example.com"))
+
+    class FakeSdkHttpResponse:
+        headers = {}
+        response_stream = [
+            json.dumps({"candidates": [{"content": {"parts": [{"text": "Alice and Bob are active students."}]}}]})
+        ]
+
+    client = synth._init_gemini_client()
+    assert client is not None
+
+    def mock_request_once(request, stream=False):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise errors.ServerError(503, {"error": {"message": "Service Unavailable"}}, fake_httpx_resp)
+        return FakeSdkHttpResponse()
+
+    client._api_client._request_once = mock_request_once
+    synth.client = client
+
+    multi_res = QueryResult(
+        columns=["StudentID", "Name"],
+        rows=[{"StudentID": 1, "Name": "Alice"}, {"StudentID": 2, "Name": "Bob"}],
+        row_count=2,
+        truncated=False,
+    )
+
+    ans = synth.synthesize("Show students", multi_res)
+    assert ans.status == GroundedAnswerStatus.UNVERIFIED_NARRATIVE
+    assert ans.text == "Alice and Bob are active students."
+    assert call_count == 2

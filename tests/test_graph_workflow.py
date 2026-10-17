@@ -1394,3 +1394,108 @@ def test_graph_clarification_with_prior_recovery_feedback_still_bypasses_retry(t
     route = workflow.route_after_generation(state)
     assert route == "present_result"
 
+
+def test_workflow_isolation_gemini_retry_does_not_repeat_schema_or_execution(test_schema: DatabaseSchema) -> None:
+    """Verify transient SDK retry during SQL generation does not repeat schema acquisition or DB execution."""
+    import json
+    import httpx
+    from google.genai import errors
+    from query_pilot.sql import GeminiSQLGenerator, get_gemini_http_options
+
+    class _WorkflowFakeSdkHttpResponse:
+        def __init__(self, json_payload: str):
+            self.headers = {}
+            self.response_stream = [
+                json.dumps({"candidates": [{"content": {"parts": [{"text": json_payload}]}}]})
+            ]
+
+    fast_opts = get_gemini_http_options(initial_delay=0.001, max_delay=0.01)
+    generator = GeminiSQLGenerator(api_key="test-key", http_options=fast_opts)
+
+    sdk_call_count = 0
+    fake_httpx_resp = httpx.Response(status_code=503, request=httpx.Request("POST", "https://example.com"))
+    valid_payload = json.dumps({
+        "status": "answerable",
+        "sql": "SELECT Id FROM Students;",
+        "explanation": "Selects student IDs",
+        "assumptions": [],
+    })
+
+    def mock_request_once(request, stream=False):
+        nonlocal sdk_call_count
+        sdk_call_count += 1
+        if sdk_call_count == 1:
+            raise errors.ServerError(503, {"error": {"message": "Service Unavailable"}}, fake_httpx_resp)
+        return _WorkflowFakeSdkHttpResponse(valid_payload)
+
+    generator.client._api_client._request_once = mock_request_once
+
+    mock_introspector = MagicMock()
+    mock_introspector.introspect_model_facing.return_value = test_schema
+    mock_engine = MagicMock()
+
+    workflow = QueryPilotWorkflow(
+        generator=generator,
+        schema=None,
+        engine=mock_engine,
+        introspector=mock_introspector,
+    )
+
+    with patch("query_pilot.graph.workflow.execute_read_only", return_value=QueryResult(columns=["Id"], rows=[{"Id": 1}], row_count=1, truncated=False)) as mock_exec:
+        result = workflow.run("Show students")
+
+        # Generator recovered via internal SDK retry (2 SDK transport calls)
+        assert sdk_call_count == 2
+        # Schema acquisition was performed exactly once
+        mock_introspector.introspect_model_facing.assert_called_once()
+        # Database execution was performed exactly once
+        mock_exec.assert_called_once()
+        # Workflow succeeded without workflow-level recovery loop
+        assert result["status"] == PipelineStatus.SUCCESS
+        assert result["generation_response"] is not None
+        assert result["generation_response"].sql == "SELECT Id FROM Students;"
+        assert result["execution_result"] is not None
+        assert result["execution_result"].row_count == 1
+
+
+def test_workflow_isolation_gemini_retry_exhaustion_does_not_execute_db(test_schema: DatabaseSchema) -> None:
+    """Verify exhausted Gemini retries fail at generation without executing queries on the database."""
+    import httpx
+    from google.genai import errors
+    from query_pilot.sql import GeminiSQLGenerator, get_gemini_http_options
+
+    fast_opts = get_gemini_http_options(initial_delay=0.001, max_delay=0.01)
+    generator = GeminiSQLGenerator(api_key="test-key", http_options=fast_opts)
+
+    sdk_call_count = 0
+    fake_httpx_resp = httpx.Response(status_code=503, request=httpx.Request("POST", "https://example.com"))
+
+    def mock_request_once(request, stream=False):
+        nonlocal sdk_call_count
+        sdk_call_count += 1
+        raise errors.ServerError(503, {"error": {"message": "Service Unavailable"}}, fake_httpx_resp)
+
+    generator.client._api_client._request_once = mock_request_once
+
+    mock_introspector = MagicMock()
+    mock_introspector.introspect_model_facing.return_value = test_schema
+    mock_engine = MagicMock()
+
+    workflow = QueryPilotWorkflow(
+        generator=generator,
+        schema=None,
+        engine=mock_engine,
+        introspector=mock_introspector,
+    )
+
+    with patch("query_pilot.graph.workflow.execute_read_only") as mock_exec:
+        result = workflow.run("Show students")
+
+        # Generator exhausted retries (3 attempts total)
+        assert sdk_call_count == 3
+        # Schema acquisition ran once before generation
+        mock_introspector.introspect_model_facing.assert_called_once()
+        # Database execution was NEVER called
+        mock_exec.assert_not_called()
+        # Status correctly maps to GENERATION_FAILED
+        assert result["status"] == PipelineStatus.GENERATION_FAILED

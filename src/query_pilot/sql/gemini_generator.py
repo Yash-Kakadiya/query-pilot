@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 import re
 import time
-from typing import List, Optional, Union
+from typing import Any, List, Optional, Union
 
 from google import genai
 from google.genai import types
@@ -102,6 +102,43 @@ def should_include_sampling_parameters(model_name: Optional[str]) -> bool:
     return False
 
 
+# ==============================================================================
+# Transient Error Retry Configuration (Task 1.34-B1-F20-B)
+# ==============================================================================
+
+GEMINI_RETRY_ATTEMPTS: int = 3
+GEMINI_RETRY_INITIAL_DELAY: float = 1.0
+GEMINI_RETRY_MAX_DELAY: float = 8.0
+GEMINI_RETRY_EXP_BASE: float = 2.0
+GEMINI_RETRY_JITTER: float = 1.0
+GEMINI_RETRY_HTTP_STATUS_CODES: list[int] = [408, 429, 500, 502, 503, 504]
+
+
+def get_gemini_http_options(
+    *,
+    attempts: int = GEMINI_RETRY_ATTEMPTS,
+    initial_delay: float = GEMINI_RETRY_INITIAL_DELAY,
+    max_delay: float = GEMINI_RETRY_MAX_DELAY,
+    exp_base: float = GEMINI_RETRY_EXP_BASE,
+    jitter: float = GEMINI_RETRY_JITTER,
+    http_status_codes: Optional[list[int]] = None,
+) -> types.HttpOptions:
+    """Construct shared types.HttpOptions with bounded retry settings for Google GenAI SDK.
+
+    Configures bounded exponential backoff with full jitter for transient provider failures
+    (408, 429, 500, 502, 503, 504) and transport errors (timeouts, connection drops).
+    """
+    retry_options = types.HttpRetryOptions(
+        attempts=attempts,
+        initial_delay=initial_delay,
+        max_delay=max_delay,
+        exp_base=exp_base,
+        jitter=jitter,
+        http_status_codes=http_status_codes or list(GEMINI_RETRY_HTTP_STATUS_CODES),
+    )
+    return types.HttpOptions(retry_options=retry_options)
+
+
 class GeminiSQLGenerator(SQLGenerator):
     """Generates candidate read-only SQL queries using Google Gemini."""
 
@@ -113,6 +150,8 @@ class GeminiSQLGenerator(SQLGenerator):
         retriever: Optional[DomainContextRetriever] = None,
         catalog_path: Optional[Union[str, Path]] = None,
         enable_retrieval: bool = True,
+        http_options: Optional[types.HttpOptions] = None,
+        client: Optional[Any] = None,
     ):
         """Initialize Gemini SQL Generator.
 
@@ -124,6 +163,8 @@ class GeminiSQLGenerator(SQLGenerator):
                 enable_retrieval is True, loads the validated catalog at data/knowledge/catalog.json.
             catalog_path: Optional explicit path to catalog.json.
             enable_retrieval: Whether domain context retrieval is enabled (default: True).
+            http_options: Optional custom types.HttpOptions (defaults to bounded retry settings).
+            client: Optional pre-configured genai.Client instance (useful for unit testing).
 
         Raises:
             ConfigurationError: If no valid API key can be resolved.
@@ -165,14 +206,18 @@ class GeminiSQLGenerator(SQLGenerator):
             # Instantiate retriever using validated catalog
             self.retriever = DomainContextRetriever(catalog_path=catalog_path)
 
-        try:
-            # Note: Do NOT log the API key
-            logger.debug(f"Initializing Gemini Client with model={self.model_name}")
-            self.client = genai.Client(api_key=resolved_key)
-        except Exception as exc:
-            raise ConfigurationError(
-                f"Failed to initialize google-genai Client: {exc}"
-            ) from exc
+        if client is not None:
+            self.client = client
+        else:
+            try:
+                # Note: Do NOT log the API key
+                logger.debug(f"Initializing Gemini Client with model={self.model_name}")
+                opts = http_options if http_options is not None else get_gemini_http_options()
+                self.client = genai.Client(api_key=resolved_key, http_options=opts)
+            except Exception as exc:
+                raise ConfigurationError(
+                    f"Failed to initialize google-genai Client: {exc}"
+                ) from exc
 
     @trace_gemini_call(name="gemini_generate_sql", run_type="llm")
     def generate(self, request: SQLGenerationRequest) -> SQLGenerationResponse:

@@ -14,6 +14,7 @@ from query_pilot.rag.retriever import DomainContextRetriever, RetrievalResult
 from query_pilot.sql.gemini_generator import (
     GeminiSQLGenerator,
     _GeminiSQLPayloadSchema,
+    get_gemini_http_options,
     should_include_sampling_parameters,
 )
 from query_pilot.sql.generation import (
@@ -1390,3 +1391,142 @@ def test_gemini_generator_parses_clarification_response_into_domain_model(mock_m
     assert opt2.option_id == "opt_fall25"
     assert opt2.description == "Fall 2025 previous semester"
     assert opt2.suggested_question is None
+
+
+# ==============================================================================
+# Transient Error Retry Tests (Task 1.34-B1-F20-B)
+# ==============================================================================
+
+class _FakeSdkHttpResponse:
+    def __init__(self, json_payload: str):
+        self.headers = {}
+        self.response_stream = [
+            json.dumps({"candidates": [{"content": {"parts": [{"text": json_payload}]}}]})
+        ]
+
+
+def test_gemini_retry_shared_configuration():
+    """Verify shared retry options configure 3 attempts, 8s max delay, and transient status codes."""
+    opts = get_gemini_http_options()
+    assert opts.retry_options is not None
+    assert opts.retry_options.attempts == 3
+    assert opts.retry_options.initial_delay == 1.0
+    assert opts.retry_options.max_delay == 8.0
+    assert opts.retry_options.exp_base == 2.0
+    assert opts.retry_options.jitter == 1.0
+    assert opts.retry_options.http_status_codes == [408, 429, 500, 502, 503, 504]
+
+    # Verify GeminiSQLGenerator client receives this configuration by default
+    gen = GeminiSQLGenerator(api_key="test-api-key")
+    configured_opts = gen.client._api_client._http_options.retry_options
+    assert configured_opts is not None
+    assert configured_opts.attempts == 3
+    assert configured_opts.http_status_codes == [408, 429, 500, 502, 503, 504]
+
+
+def test_gemini_generator_recovers_from_transient_503(mock_model_facing_schema):
+    """Verify transient 503 followed by success results in successful SQL generation response."""
+    import httpx
+    from google.genai import errors
+
+    fast_opts = get_gemini_http_options(initial_delay=0.001, max_delay=0.01)
+    gen = GeminiSQLGenerator(api_key="test-key", http_options=fast_opts)
+
+    call_count = 0
+    fake_httpx_resp = httpx.Response(status_code=503, request=httpx.Request("POST", "https://example.com"))
+    valid_payload = json.dumps({"status": "answerable", "sql": "SELECT Id FROM dbo.Users"})
+
+    def mock_request_once(request, stream=False):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise errors.ServerError(503, {"error": {"message": "Service Unavailable"}}, fake_httpx_resp)
+        return _FakeSdkHttpResponse(valid_payload)
+
+    gen.client._api_client._request_once = mock_request_once
+    req = SQLGenerationRequest(question="Show users", schema_context=mock_model_facing_schema)
+    res = gen.generate(req)
+
+    assert res.status == SQLGenerationStatus.ANSWERABLE
+    assert res.sql == "SELECT Id FROM dbo.Users"
+    assert call_count == 2
+
+
+def test_gemini_generator_recovers_from_transient_429(mock_model_facing_schema):
+    """Verify transient 429 rate limit followed by success results in successful SQL generation."""
+    import httpx
+    from google.genai import errors
+
+    fast_opts = get_gemini_http_options(initial_delay=0.001, max_delay=0.01)
+    gen = GeminiSQLGenerator(api_key="test-key", http_options=fast_opts)
+
+    call_count = 0
+    fake_httpx_resp = httpx.Response(status_code=429, request=httpx.Request("POST", "https://example.com"))
+    valid_payload = json.dumps({"status": "answerable", "sql": "SELECT Id FROM dbo.Users"})
+
+    def mock_request_once(request, stream=False):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise errors.ClientError(429, {"error": {"message": "Quota exceeded"}}, fake_httpx_resp)
+        return _FakeSdkHttpResponse(valid_payload)
+
+    gen.client._api_client._request_once = mock_request_once
+    req = SQLGenerationRequest(question="Show users", schema_context=mock_model_facing_schema)
+    res = gen.generate(req)
+
+    assert res.status == SQLGenerationStatus.ANSWERABLE
+    assert res.sql == "SELECT Id FROM dbo.Users"
+    assert call_count == 2
+
+
+def test_gemini_generator_retry_exhaustion_raises_provider_error(mock_model_facing_schema):
+    """Verify three failed transient attempts result in ProviderAPIError with no fourth attempt."""
+    import httpx
+    from google.genai import errors
+
+    fast_opts = get_gemini_http_options(initial_delay=0.001, max_delay=0.01)
+    gen = GeminiSQLGenerator(api_key="test-key", http_options=fast_opts)
+
+    call_count = 0
+    fake_httpx_resp = httpx.Response(status_code=503, request=httpx.Request("POST", "https://example.com"))
+
+    def mock_request_once(request, stream=False):
+        nonlocal call_count
+        call_count += 1
+        raise errors.ServerError(503, {"error": {"message": "Service Unavailable"}}, fake_httpx_resp)
+
+    gen.client._api_client._request_once = mock_request_once
+    req = SQLGenerationRequest(question="Show users", schema_context=mock_model_facing_schema)
+
+    with pytest.raises(ProviderAPIError) as exc_info:
+        gen.generate(req)
+
+    assert call_count == 3
+    assert "Gemini API request failed" in str(exc_info.value)
+
+
+@pytest.mark.parametrize("status_code", [400, 401])
+def test_gemini_generator_non_retryable_errors_fail_fast(mock_model_facing_schema, status_code):
+    """Verify non-retryable 400 and 401 errors fail immediately without retry."""
+    import httpx
+    from google.genai import errors
+
+    fast_opts = get_gemini_http_options(initial_delay=0.001, max_delay=0.01)
+    gen = GeminiSQLGenerator(api_key="test-key", http_options=fast_opts)
+
+    call_count = 0
+    fake_httpx_resp = httpx.Response(status_code=status_code, request=httpx.Request("POST", "https://example.com"))
+
+    def mock_request_once(request, stream=False):
+        nonlocal call_count
+        call_count += 1
+        raise errors.ClientError(status_code, {"error": {"message": f"Client Error {status_code}"}}, fake_httpx_resp)
+
+    gen.client._api_client._request_once = mock_request_once
+    req = SQLGenerationRequest(question="Show users", schema_context=mock_model_facing_schema)
+
+    with pytest.raises(ProviderAPIError):
+        gen.generate(req)
+
+    assert call_count == 1
