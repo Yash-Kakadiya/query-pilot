@@ -321,6 +321,7 @@ def test_validate_sql_determinism(mock_schema):
 # Integration with Real Model-Facing Schema (GradeSense_Local) & Executor
 # ==============================================================================
 
+@pytest.mark.integration
 def test_live_schema_validation_and_execution(live_model_facing_schema):
     """Verify end-to-end pipeline: validate against live schema -> execute on GradeSense_Local."""
     # 1. Valid Query against real GradeSense_Local schema

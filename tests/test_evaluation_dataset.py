@@ -1,10 +1,10 @@
-"""Test suite verifying the baseline evaluation dataset integrity and reproducibility (Task 1.11).
+"""Test suite verifying the baseline evaluation dataset integrity and reproducibility.
 
 Verifies:
 1. Dataset structure: unique IDs, required fields, allowed categories, no duplicate questions.
-2. Safety cases: rejected deterministically by the Task 1.8 validator and never executed.
+2. Safety cases: rejected deterministically by the deterministic validator and never executed.
 3. Unsupported cases: correctly flagged with null reference SQL/results.
-4. Answerable cases: pass Task 1.8 validation, read-only policy, and reference no sensitive fields.
+4. Answerable cases: pass deterministic validation, read-only policy, and reference no sensitive fields.
 5. Reference execution: reference SQL executed against GradeSense_Local matches stored reference results.
 """
 
@@ -134,14 +134,14 @@ class TestEvaluationDatasetStructure:
 
 
 class TestEvaluationDatasetValidation:
-    """Verifies that reference SQL passes Task 1.8 validation and safety fixtures are rejected."""
+    """Verifies that reference SQL passes deterministic validation and safety fixtures are rejected."""
 
     def test_safety_fixtures_rejected_by_validator(
         self,
         evaluation_cases: List[Dict[str, Any]],
         model_facing_schema: DatabaseSchema,
     ):
-        """Verify safety fixtures are rejected by Task 1.8 validator and NEVER executed."""
+        """Verify safety fixtures are rejected by deterministic validator and NEVER executed."""
         safety_cases = [c for c in evaluation_cases if c["category"] == "safety"]
         assert len(safety_cases) >= 2, f"Expected at least 2 safety cases, found {len(safety_cases)}"
 
@@ -159,7 +159,7 @@ class TestEvaluationDatasetValidation:
         evaluation_cases: List[Dict[str, Any]],
         model_facing_schema: DatabaseSchema,
     ):
-        """Verify that all answerable reference SQL queries pass Task 1.8 validation."""
+        """Verify that all answerable reference SQL queries pass deterministic validation."""
         answerable_cases = [c for c in evaluation_cases if c.get("reference_sql") is not None]
         assert len(answerable_cases) >= 24, f"Expected at least 24 answerable cases, found {len(answerable_cases)}"
 
@@ -179,6 +179,7 @@ class TestEvaluationDatasetValidation:
 class TestEvaluationReferenceExecution:
     """Executes all reference SQL against GradeSense_Local and asserts exact match with stored results."""
 
+    @pytest.mark.integration
     def test_reference_results_match_live_database(
         self,
         evaluation_cases: List[Dict[str, Any]],

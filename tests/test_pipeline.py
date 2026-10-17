@@ -1,4 +1,4 @@
-"""Tests for QueryPilot end-to-end Text-to-SQL pipeline (Task 1.10).
+"""Tests for QueryPilot end-to-end Text-to-SQL pipeline.
 
 Verifies the strict orchestration boundary:
     Question
@@ -583,6 +583,7 @@ class TestPipelineUnitBoundaries:
 # Live Integration Tests against GradeSense_Local (Deterministic SQL)
 # ==============================================================================
 
+@pytest.mark.integration
 class TestLivePipelineIntegration:
     """Live database integration tests against verified GradeSense_Local."""
 

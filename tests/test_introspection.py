@@ -117,12 +117,14 @@ def model_facing_schema(introspector, raw_schema):
     return introspector.filter_model_facing(raw_schema)
 
 
+@pytest.mark.integration
 def test_live_introspection_tables_count(raw_schema):
     """Verify exactly 17 tables are discovered in GradeSense_Local."""
     assert raw_schema.database_name == "GradeSense_Local"
     assert len(raw_schema.tables) == 17
 
 
+@pytest.mark.integration
 def test_live_introspection_expected_tables(raw_schema):
     """Verify all expected core tables exist in the introspected schema."""
     table_names = raw_schema.table_names
@@ -150,6 +152,7 @@ def test_live_introspection_expected_tables(raw_schema):
         assert tbl in table_names, f"Expected table '{tbl}' not found in schema"
 
 
+@pytest.mark.integration
 def test_live_introspection_raw_vs_model_facing_sensitive_columns(raw_schema, model_facing_schema):
     """Verify Users.PasswordHash is present in raw metadata and absent in model-facing metadata."""
     users_raw = raw_schema.get_table("Users")
@@ -171,6 +174,7 @@ def test_live_introspection_raw_vs_model_facing_sensitive_columns(raw_schema, mo
         assert col in users_mf.column_names
 
 
+@pytest.mark.integration
 def test_live_introspection_foreign_keys(raw_schema):
     """Verify all 32 foreign-key relationships are discovered."""
     assert raw_schema.total_foreign_keys_count == 32
@@ -190,6 +194,7 @@ def test_live_introspection_foreign_keys(raw_schema):
     assert ("CourseEnrollmentId", "CourseEnrollments", "Id") in pred_fks
 
 
+@pytest.mark.integration
 def test_live_introspection_filtered_index(raw_schema):
     """Verify Predictions filtered unique index is captured in index metadata."""
     pred_table = raw_schema.get_table("Predictions")
@@ -205,6 +210,7 @@ def test_live_introspection_filtered_index(raw_schema):
     assert active_unique_idx.filter_definition == "([IsActive]=(1))"
 
 
+@pytest.mark.integration
 def test_live_introspection_determinism(introspector):
     """Verify that multiple introspection runs produce identical schema representations."""
     schema1 = introspector.introspect_model_facing()

@@ -127,6 +127,7 @@ def executor():
     return ReadOnlyQueryExecutor()
 
 
+@pytest.mark.integration
 def test_live_simple_select(executor):
     """1. Verify simple SELECT succeeds and returns expected schema and data."""
     res = executor.execute("SELECT TOP 5 Id, EnrollmentNumber, DepartmentId FROM Students;")
@@ -136,6 +137,7 @@ def test_live_simple_select(executor):
     assert res.rows[0]["EnrollmentNumber"] == "21CE001"
 
 
+@pytest.mark.integration
 def test_live_select_with_where(executor):
     """2. Verify SELECT with WHERE clause filters correctly."""
     res = executor.execute("SELECT Id, EnrollmentNumber FROM Students WHERE Id = 22;")
@@ -144,6 +146,7 @@ def test_live_select_with_where(executor):
     assert res.rows[0]["EnrollmentNumber"] == "21CE001"
 
 
+@pytest.mark.integration
 def test_live_join(executor):
     """3. Verify JOIN across tables succeeds."""
     sql = """
@@ -159,6 +162,7 @@ def test_live_join(executor):
     assert res.rows[0]["Email"] == "priya.kothari.22@gradesense.edu"
 
 
+@pytest.mark.integration
 def test_live_aggregate_and_group_by(executor):
     """4. Verify aggregate and GROUP BY queries succeed."""
     sql = "SELECT DepartmentId, COUNT(*) as TotalStudents FROM Students GROUP BY DepartmentId ORDER BY DepartmentId;"
@@ -170,6 +174,7 @@ def test_live_aggregate_and_group_by(executor):
     assert res.rows[1]["TotalStudents"] == 20
 
 
+@pytest.mark.integration
 def test_live_empty_result(executor):
     """5. Verify empty result returns correct columns, zero rows, and truncated=False."""
     res = executor.execute("SELECT * FROM Students WHERE 1 = 0;")
@@ -180,6 +185,7 @@ def test_live_empty_result(executor):
     assert res.truncated is False
 
 
+@pytest.mark.integration
 def test_live_column_order_preservation(executor):
     """6. Verify returned result columns preserve exact SELECT order."""
     sql = "SELECT TOP 1 DepartmentId, Id, Status, EnrollmentNumber FROM Students;"
@@ -188,6 +194,7 @@ def test_live_column_order_preservation(executor):
     assert list(res.rows[0].keys()) == ["DepartmentId", "Id", "Status", "EnrollmentNumber"]
 
 
+@pytest.mark.integration
 def test_live_json_friendly_types(executor):
     """7. Verify returned values serialize to JSON cleanly without error."""
     sql = "SELECT TOP 2 Id, Email, Role, IsActive, CreatedAt FROM Users;"
@@ -199,6 +206,7 @@ def test_live_json_friendly_types(executor):
     assert isinstance(res.rows[0]["IsActive"], bool)
 
 
+@pytest.mark.integration
 def test_live_row_limit_enforced(executor):
     """8. Verify row limit is enforced without fetching unbounded rows into Python."""
     # AttendanceRecords has 6000 rows
@@ -208,18 +216,21 @@ def test_live_row_limit_enforced(executor):
     assert res.truncated is True
 
 
+@pytest.mark.integration
 def test_live_mutating_query_rejected_before_db(executor):
     """9. Verify mutating query is rejected before hitting the database."""
     with pytest.raises(UnsafeQueryError):
         executor.execute("DELETE FROM Students WHERE Id = 9999;")
 
 
+@pytest.mark.integration
 def test_live_multi_statement_rejected(executor):
     """10. Verify multi-statement execution is rejected before execution."""
     with pytest.raises(UnsafeQueryError):
         executor.execute("SELECT 1; SELECT 2;")
 
 
+@pytest.mark.integration
 def test_live_database_row_count_integrity(executor):
     """11. Verify total database row count remains exactly 7,077 after all executions."""
     res = executor.execute("""

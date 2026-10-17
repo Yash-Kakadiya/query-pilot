@@ -20,9 +20,12 @@ classifiers = [
 
 [tool.pytest.ini_options]
 minversion = "8.0"
-addopts = "-ra -q --import-mode=importlib"
+addopts = "-ra -q --import-mode=importlib -m 'not integration'"
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "integration: Integration tests requiring the local SQL Server integration environment (GradeSense_Local)",
+]
 filterwarnings = [
     "ignore::DeprecationWarning",
 ]
