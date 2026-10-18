@@ -1,4 +1,4 @@
-"""Tests for Validated SQL-Only Mode and SQL Disclosure Policy (Task 1.34-B1-C1).
+"""Tests for Validated SQL-Only Mode and SQL Disclosure Policy.
 
 Covers:
 1. Request defaults and invalid execution_mode values.

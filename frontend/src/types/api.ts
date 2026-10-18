@@ -3,7 +3,7 @@
  */
 
 // =============================================================================
-// Health Contract (Task 1.33-B2)
+// Health Contract
 // =============================================================================
 
 export interface HealthResponse {
@@ -14,7 +14,7 @@ export interface HealthResponse {
 }
 
 // =============================================================================
-// Pipeline Statuses (Task 1.33-B3)
+// Pipeline Statuses
 // =============================================================================
 
 export type KnownPipelineStatus =
@@ -33,7 +33,7 @@ export type KnownPipelineStatus =
 export type PipelineStatus = KnownPipelineStatus | (string & {})
 
 // =============================================================================
-// Query Request & Sub-Models (Task 1.33-B3)
+// Query Request & Sub-Models
 // =============================================================================
 
 export interface ConversationTurnContext {
@@ -61,7 +61,7 @@ export interface QueryRequest {
 }
 
 // =============================================================================
-// Query Response & Sub-Models (Task 1.33-B3)
+// Query Response & Sub-Models
 // =============================================================================
 
 export interface ClarificationOption {
@@ -102,7 +102,7 @@ export interface QueryResponse {
 }
 
 // =============================================================================
-// Error Handling Contracts (Task 1.33-B3)
+// Error Handling Contracts
 // =============================================================================
 
 export type ApiErrorKind = 'validation' | 'server' | 'network' | 'parse' | 'unauthorized'

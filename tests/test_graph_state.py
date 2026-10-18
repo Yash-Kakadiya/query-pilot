@@ -1,4 +1,4 @@
-"""Focused tests for QueryPilot LangGraph shared state contract (Task 1.18-R).
+"""Focused tests for QueryPilot LangGraph shared state contract.
 
 Tests deterministic state representations, typing constraints, intermediate-field
 isolation, counter semantics, and LangGraph schema compatibility entirely offline.

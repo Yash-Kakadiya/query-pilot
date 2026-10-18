@@ -1,4 +1,4 @@
-"""Unit tests for deterministic evaluation reporting and regression metrics (Task 1.17).
+"""Unit tests for deterministic evaluation reporting and regression metrics.
 
 Verifies metric aggregations, category breakdowns, zero-denominator safety,
 exact match vs. semantic correctness separation, failure analysis,

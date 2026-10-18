@@ -16,12 +16,12 @@ interface HealthState {
 }
 
 function App() {
-  // 1. Health probe state (Task 1.33-B2)
+  // 1. Health probe state
   const [health, setHealth] = useState<HealthState>({
     status: 'checking',
   })
 
-  // 2. Query execution state (Task 1.33-B4)
+  // 2. Query execution state
   const [isLoading, setIsLoading] = useState(false)
   const [queryResponse, setQueryResponse] = useState<QueryResponse | null>(null)
   const [queryError, setQueryError] = useState<Error | null>(null)
@@ -197,7 +197,7 @@ function App() {
 
       <main className="app-main">
         <div className="workspace-container">
-          {/* Prototype Access Key Authorization (Task 1.34-B1-F14) */}
+          {/* Prototype Access Key Authorization */}
           <section className="access-key-section" aria-label="Access Key Configuration">
             <AccessKeyBar
               authRequired={queryError !== null && 'kind' in queryError && queryError.kind === 'unauthorized'}

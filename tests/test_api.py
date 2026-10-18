@@ -1,4 +1,4 @@
-"""Focused offline tests for QueryPilot FastAPI application and routes (Task 1.32-C).
+"""Focused offline tests for QueryPilot FastAPI application and routes.
 
 Verifies:
 1. GET /health response shape, status code 200, non-sensitive configuration grounding.

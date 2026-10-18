@@ -1,4 +1,4 @@
-"""Unit and integration tests for DomainContextRetriever (Task 1.31-C).
+"""Unit and integration tests for DomainContextRetriever.
 
 Validates:
 - Catalog loading and structured result fields.
@@ -371,7 +371,7 @@ def test_render_context_empty_results(default_retriever: DomainContextRetriever)
 
 
 # ==============================================================================
-# Edge-Case Hardening Tests (Task 1.31-C-R3)
+# Edge-Case Hardening Tests
 # ==============================================================================
 
 def test_hard_top_k_maximum_enforced(default_retriever: DomainContextRetriever) -> None:

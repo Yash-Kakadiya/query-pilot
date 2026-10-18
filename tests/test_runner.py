@@ -1,4 +1,4 @@
-"""Focused tests for QueryPilot unified execution interface (Task 1.20).
+"""Focused tests for QueryPilot unified execution interface.
 
 Verifies the unified QueryRunner and run_query facade:
 - Default execution path is sequential QueryPipeline.

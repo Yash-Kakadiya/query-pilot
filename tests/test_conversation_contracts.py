@@ -1,4 +1,4 @@
-"""Focused unit tests for conversational context and clarification contracts (Task 1.29-B1).
+"""Focused unit tests for conversational context and clarification contracts.
 
 Verifies:
 1. ClarificationOption validation, bounding, and forbidden extra fields.

@@ -1,4 +1,4 @@
-"""Focused unit tests for structured pipeline observability (Task 1.16).
+"""Focused unit tests for structured pipeline observability.
 
 Verifies lifecycle event sequencing, error category sanitization, monotonic timing,
 security redaction (no SQL, question text, row contents, or credentials in logs),

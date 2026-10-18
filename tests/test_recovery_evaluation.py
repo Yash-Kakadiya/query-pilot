@@ -1,4 +1,4 @@
-"""Focused automated tests for QueryPilot deterministic recovery evaluation harness (Task 1.24).
+"""Focused automated tests for QueryPilot deterministic recovery evaluation harness.
 
 Verifies:
 - All 15 canonical scenario definitions execute offline with exact expected call counts and statuses.

@@ -1,4 +1,4 @@
-"""Focused automated tests for QueryPilot LangGraph workflow (Task 1.19).
+"""Focused automated tests for QueryPilot LangGraph workflow.
 
 Tests end-to-end graph orchestration, explicit node execution, conditional routing,
 safeguard enforcement, and call-count assertions entirely offline without live
@@ -701,7 +701,7 @@ def test_sanitized_error_messages_in_state(test_schema: DatabaseSchema) -> None:
 
 
 # ==============================================================================
-# 13. Task 1.23-B Bounded LangGraph Recovery Tests (20 Required Scenarios)
+# 13. Bounded LangGraph Recovery Tests
 # ==============================================================================
 
 def test_first_attempt_success_invokes_once(test_schema: DatabaseSchema) -> None:
@@ -1213,7 +1213,7 @@ def test_sequential_pipeline_remains_single_pass_and_unchanged(test_schema: Data
 
 
 # ==============================================================================
-# Clarification Routing Tests (Task 1.29-B3)
+# Clarification Routing Tests
 # ==============================================================================
 
 def test_graph_workflow_clarification_routes_directly_to_presentation(test_schema: DatabaseSchema) -> None:

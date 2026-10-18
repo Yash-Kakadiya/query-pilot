@@ -1,4 +1,4 @@
-"""Tests for QueryPilot prototype security safeguards (Task 1.34-B1-F14).
+"""Tests for QueryPilot prototype security safeguards.
 
 Verifies:
 1. Missing and incorrect prototype access keys are rejected with HTTP 401.

@@ -1,4 +1,4 @@
-"""Offline tests for privacy-safe opt-in LangSmith tracing (Task 1.31-I-R3).
+"""Offline tests for privacy-safe opt-in LangSmith tracing.
 
 Verifies:
 1. Tracing is disabled by default.
@@ -540,7 +540,7 @@ class TestExplicitPerRequestConfiguration:
 
 
 # ==============================================================================
-# Test Suite 6: Gemini Span Isolation & Explicit Ownership (Task 1.31-I-R6)
+# Test Suite 6: Gemini Span Isolation & Explicit Ownership
 # ==============================================================================
 
 class TestDirectGeminiTracingIsolation:
@@ -729,7 +729,7 @@ class TestDirectGeminiTracingIsolation:
 
 
 # ==============================================================================
-# Test Suite 7: Anonymizer Fail-Closed Contract & Error Scrubbing (Task 1.31-I-R6)
+# Test Suite 7: Anonymizer Fail-Closed Contract & Error Scrubbing
 # ==============================================================================
 
 class TestAnonymizerFailClosedContract:

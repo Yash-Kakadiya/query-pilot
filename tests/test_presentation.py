@@ -1,4 +1,4 @@
-"""Tests for the deterministic presentation layer (Task 1.15).
+"""Tests for the deterministic presentation layer.
 
 Verifies that QueryResult and PipelineResult are converted into typed, clean,
 user-facing representations without LLM calls, business inferences, or secret leaks.
@@ -414,7 +414,7 @@ def test_pipeline_result_present_convenience_method():
 
 
 # ==============================================================================
-# 12. Clarification Presentation (Task 1.29-B3)
+# 12. Clarification Presentation
 # ==============================================================================
 
 def test_presentation_clarification_with_prompt_and_options():

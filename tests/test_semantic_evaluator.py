@@ -1,4 +1,4 @@
-"""Comprehensive unit and integration tests for Conservative Dynamic Semantic Evaluator (Task 1.25-B).
+"""Comprehensive unit and integration tests for Conservative Dynamic Semantic Evaluator.
 
 Verifies:
 - Exact equality (identical rows, casing, fast-path).
@@ -469,7 +469,7 @@ def test_historical_metadata_cannot_turn_dynamic_mismatch_into_pass(monkeypatch)
     with patch("query_pilot.eval.evaluator.execute_read_only", return_value=mock_exec):
         result = evaluate_case(case=case, generator=gen, schema=schema, engine=None)
 
-        # Under Task 1.25-B dynamic evaluation, this MUST be rejected as False!
+        # Under dynamic evaluation, this MUST be rejected as False!
         assert result.semantic_correct is False
         assert result.semantic_status == SemanticStatus.INCORRECT
         assert result.mismatch_classification == MismatchClassification.SEMANTIC_INCORRECT.value

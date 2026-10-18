@@ -1,4 +1,4 @@
-"""Tests for QueryPilot Sequential vs. LangGraph Comparative Evaluation (Task 1.21).
+"""Tests for QueryPilot Sequential vs. LangGraph Comparative Evaluation.
 
 Verifies the comparative evaluation framework:
 - Both modes receive the same question and case ID.

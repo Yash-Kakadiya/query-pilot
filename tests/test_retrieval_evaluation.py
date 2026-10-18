@@ -1,4 +1,4 @@
-"""Offline evaluation harness and baseline benchmark for DomainContextRetriever (Task 1.31-G).
+"""Offline evaluation harness and baseline benchmark for DomainContextRetriever.
 
 Validates:
 1. Retrieval evaluation dataset integrity, unique IDs, and catalog grounding.

@@ -10,7 +10,7 @@ interface AccessKeyBarProps {
 }
 
 /**
- * Access Key management bar for private evaluation prototypes (Task 1.34-B1-F14).
+ * Access Key management bar for private evaluation prototypes.
  *
  * Allows evaluators to enter and persist a shared prototype access key in browser
  * sessionStorage without baking secrets into client bundles.

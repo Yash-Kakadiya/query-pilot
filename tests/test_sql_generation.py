@@ -462,7 +462,7 @@ def test_gemini_generator_legacy_model_includes_temperature(mock_model_facing_sc
 
 
 # ==============================================================================
-# Conversation Context Prompt Assembly Tests (Task 1.29-B2)
+# Conversation Context Prompt Assembly Tests
 # ==============================================================================
 
 def test_prompt_empty_context_preserves_standalone_behavior(mock_model_facing_schema):
@@ -597,7 +597,7 @@ def test_prompt_instructions_distinguish_three_statuses():
 
 
 # ==============================================================================
-# Gemini Generator Response Parsing and Invariant Tests (Task 1.29-B2)
+# Gemini Generator Response Parsing and Invariant Tests
 # ==============================================================================
 
 def _mock_gemini_generator(response_text: str, usage_mock=None) -> GeminiSQLGenerator:
@@ -964,7 +964,7 @@ def test_gemini_generator_answerable_with_clarification_options_rejected(mock_mo
 
 
 # ==============================================================================
-# Domain Knowledge Integration Tests (Task 1.31-D)
+# Domain Knowledge Integration Tests
 # ==============================================================================
 
 def test_gemini_generator_includes_relevant_domain_guidance_in_prompt(mock_model_facing_schema):
@@ -1225,7 +1225,7 @@ def test_generation_obtains_domain_guidance_strictly_via_retriever(mock_model_fa
 
 
 # ==============================================================================
-# Gemini Response Schema Compatibility Tests (Task 1.33-B9)
+# Gemini Response Schema Compatibility Tests
 # ==============================================================================
 
 def test_gemini_response_schema_contains_no_additional_properties():
@@ -1247,7 +1247,7 @@ def test_gemini_response_schema_contains_no_additional_properties():
 
     assert_no_additional_properties(schema)
 
-    # Verify clarification_options specifically (the offending property from Task 1.33-B8)
+    # Verify clarification_options specifically avoids additional_properties schema violations
     clarification_items = schema.properties["clarification_options"].items
     assert clarification_items is not None
     assert getattr(clarification_items, "additional_properties", None) is None
@@ -1394,7 +1394,7 @@ def test_gemini_generator_parses_clarification_response_into_domain_model(mock_m
 
 
 # ==============================================================================
-# Transient Error Retry Tests (Task 1.34-B1-F20-B)
+# Transient Error Retry Tests
 # ==============================================================================
 
 class _FakeSdkHttpResponse:
