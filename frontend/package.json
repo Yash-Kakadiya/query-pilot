@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "node --experimental-strip-types --test tests/apiClient.test.ts tests/executionMode.test.ts"
+    "test": "node --experimental-strip-types --test tests/apiClient.test.ts tests/executionMode.test.ts tests/schemaProjection.test.ts tests/agentClient.test.ts tests/v1ApiClient.test.ts tests/agentSession.test.ts tests/profileWorkflow.test.ts tests/sqlGeneration.test.ts tests/queryExecution.test.ts tests/answerSynthesis.test.ts tests/userJourneyWorkflow.test.ts"
   },
   "dependencies": {
     "react": "^19.2.8",

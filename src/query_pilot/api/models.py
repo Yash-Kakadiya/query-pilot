@@ -10,12 +10,15 @@ Defines:
 - HealthResponse: operational readiness probe grounded in configuration without secret leaks.
 """
 
-from typing import Any, Dict, List, Optional, Union
-from pydantic import BaseModel, Field, field_validator
+from enum import Enum
+import json
+import re
+from typing import Any, Dict, List, Literal, Optional, Union
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from query_pilot.pipeline import PipelineResult, PipelineStatus
 from query_pilot.presentation.formatter import PresentationResult, sanitize_message
-from query_pilot.presentation.synthesizer import GroundedAnswer
+from query_pilot.presentation.synthesizer import AnswerGroundingStatus, GroundedAnswer
 from query_pilot.sql.generation import (
     MAX_CONVERSATION_TURNS,
     ClarificationOption,
@@ -499,3 +502,447 @@ class HealthResponse(BaseModel):
             dialect="T-SQL",
             tracing_enabled=tracing,
         )
+
+
+# ==============================================================================
+# 5. Hosted API V1 Models (Decoupled SQL Generation & Metadata Synthesis)
+# ==============================================================================
+
+IDENTIFIER_REGEX = re.compile(r"^[a-zA-Z0-9_#$]+$")
+DATA_TYPE_REGEX = re.compile(r"^[a-zA-Z0-9_#$(), ]+$")
+MAX_TABLES: int = 50
+MAX_COLUMNS_PER_TABLE: int = 100
+MAX_IDENTIFIER_LENGTH: int = 128
+MAX_DESCRIPTION_LENGTH: int = 250
+MAX_SCHEMA_PAYLOAD_BYTES: int = 48 * 1024  # 49,152 bytes (48 KB)
+
+
+class GenerationStatus(str, Enum):
+    """High-level status for hosted SQL generation."""
+
+    GENERATED = "generated"
+    CLARIFICATION_NEEDED = "clarification_needed"
+    UNSUPPORTED = "unsupported"
+    GENERATION_FAILED = "generation_failed"
+
+
+class ForeignKeySchemaContext(BaseModel):
+    """Untrusted client foreign-key metadata under bounded validation."""
+
+    model_config = {"extra": "forbid"}
+
+    source_table: str = Field(..., min_length=1, max_length=MAX_IDENTIFIER_LENGTH)
+    source_column: str = Field(..., min_length=1, max_length=MAX_IDENTIFIER_LENGTH)
+    target_table: str = Field(..., min_length=1, max_length=MAX_IDENTIFIER_LENGTH)
+    target_column: str = Field(..., min_length=1, max_length=MAX_IDENTIFIER_LENGTH)
+    name: Optional[str] = Field(default=None, max_length=MAX_IDENTIFIER_LENGTH)
+
+    @field_validator("source_table", "source_column", "target_table", "target_column")
+    @classmethod
+    def validate_identifier(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned or not IDENTIFIER_REGEX.match(cleaned):
+            raise ValueError(f"Invalid identifier {v!r}. Must match regex {IDENTIFIER_REGEX.pattern}")
+        return cleaned
+
+    @field_validator("name")
+    @classmethod
+    def validate_optional_identifier(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        cleaned = v.strip()
+        if not cleaned:
+            return None
+        if not IDENTIFIER_REGEX.match(cleaned):
+            raise ValueError(f"Invalid identifier {v!r}. Must match regex {IDENTIFIER_REGEX.pattern}")
+        return cleaned
+
+
+class ColumnSchemaContext(BaseModel):
+    """Untrusted client column metadata under bounded validation."""
+
+    model_config = {"extra": "forbid"}
+
+    name: str = Field(..., min_length=1, max_length=MAX_IDENTIFIER_LENGTH)
+    data_type: str = Field(..., min_length=1, max_length=MAX_IDENTIFIER_LENGTH)
+    nullable: bool = True
+    primary_key: bool = False
+    comment: Optional[str] = Field(default=None, max_length=MAX_DESCRIPTION_LENGTH)
+
+    @field_validator("name")
+    @classmethod
+    def validate_column_name(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned or not IDENTIFIER_REGEX.match(cleaned):
+            raise ValueError(f"Invalid column name {v!r}. Must match regex {IDENTIFIER_REGEX.pattern}")
+        return cleaned
+
+    @field_validator("data_type")
+    @classmethod
+    def validate_data_type(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned or not DATA_TYPE_REGEX.match(cleaned):
+            raise ValueError(f"Invalid data type {v!r}. Must match regex {DATA_TYPE_REGEX.pattern}")
+        return cleaned
+
+    @field_validator("comment")
+    @classmethod
+    def validate_comment(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        cleaned = re.sub(r"[\r\n]+", " ", v).strip()
+        if not cleaned:
+            return None
+        if len(cleaned) > MAX_DESCRIPTION_LENGTH:
+            raise ValueError(f"Comment exceeds maximum length of {MAX_DESCRIPTION_LENGTH} characters.")
+        return cleaned
+
+
+class TableSchemaContext(BaseModel):
+    """Untrusted client table metadata under bounded validation."""
+
+    model_config = {"extra": "forbid"}
+
+    table_name: str = Field(..., min_length=1, max_length=MAX_IDENTIFIER_LENGTH)
+    schema_name: str = Field(default="dbo", min_length=1, max_length=MAX_IDENTIFIER_LENGTH)
+    columns: List[ColumnSchemaContext] = Field(..., min_length=1, max_length=MAX_COLUMNS_PER_TABLE)
+    primary_keys: List[str] = Field(default_factory=list)
+    foreign_keys: List[ForeignKeySchemaContext] = Field(default_factory=list)
+    description: Optional[str] = Field(default=None, max_length=MAX_DESCRIPTION_LENGTH)
+
+    @field_validator("table_name", "schema_name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned or not IDENTIFIER_REGEX.match(cleaned):
+            raise ValueError(f"Invalid identifier {v!r}. Must match regex {IDENTIFIER_REGEX.pattern}")
+        return cleaned
+
+    @field_validator("primary_keys")
+    @classmethod
+    def validate_primary_keys(cls, pks: List[str]) -> List[str]:
+        cleaned_pks = []
+        for pk in pks:
+            cleaned = pk.strip()
+            if not cleaned or not IDENTIFIER_REGEX.match(cleaned):
+                raise ValueError(f"Invalid primary key identifier {pk!r}. Must match regex {IDENTIFIER_REGEX.pattern}")
+            if len(cleaned) > MAX_IDENTIFIER_LENGTH:
+                raise ValueError(f"Primary key {pk!r} exceeds maximum length of {MAX_IDENTIFIER_LENGTH} characters.")
+            cleaned_pks.append(cleaned)
+        return cleaned_pks
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        cleaned = re.sub(r"[\r\n]+", " ", v).strip()
+        if not cleaned:
+            return None
+        if len(cleaned) > MAX_DESCRIPTION_LENGTH:
+            raise ValueError(f"Description exceeds maximum length of {MAX_DESCRIPTION_LENGTH} characters.")
+        return cleaned
+
+    @model_validator(mode="after")
+    def validate_table_integrity(self) -> "TableSchemaContext":
+        if not self.columns:
+            raise ValueError(f"Table {self.table_name!r} must contain at least 1 column.")
+        if len(self.columns) > MAX_COLUMNS_PER_TABLE:
+            raise ValueError(f"Table {self.table_name!r} cannot exceed {MAX_COLUMNS_PER_TABLE} columns.")
+
+        col_names = set()
+        for col in self.columns:
+            lower = col.name.lower()
+            if lower in col_names:
+                raise ValueError(f"Duplicate column name {col.name!r} in table {self.table_name!r}.")
+            col_names.add(lower)
+
+        for pk in self.primary_keys:
+            if pk.lower() not in col_names:
+                raise ValueError(f"Primary key {pk!r} does not match any column in table {self.table_name!r}.")
+
+        return self
+
+
+class ModelFacingSchemaContext(BaseModel):
+    """Untrusted client-provided schema context with strict bounds and validation."""
+
+    model_config = {"extra": "forbid"}
+
+    database_name: str = Field(..., min_length=1, max_length=MAX_IDENTIFIER_LENGTH)
+    tables: List[TableSchemaContext] = Field(..., min_length=1, max_length=MAX_TABLES)
+
+    @field_validator("database_name")
+    @classmethod
+    def validate_database_name(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned or not IDENTIFIER_REGEX.match(cleaned):
+            raise ValueError(f"Invalid database name {v!r}. Must match regex {IDENTIFIER_REGEX.pattern}")
+        return cleaned
+
+    @model_validator(mode="after")
+    def validate_schema_bounds(self) -> "ModelFacingSchemaContext":
+        if not self.tables:
+            raise ValueError("schema_context must contain at least 1 table.")
+        if len(self.tables) > MAX_TABLES:
+            raise ValueError(f"schema_context cannot exceed {MAX_TABLES} tables, received {len(self.tables)}.")
+
+        seen_tables = set()
+        for tbl in self.tables:
+            lower = tbl.table_name.lower()
+            if lower in seen_tables:
+                raise ValueError(f"Duplicate table name {tbl.table_name!r} in schema_context.")
+            seen_tables.add(lower)
+
+        raw_bytes = len(json.dumps(self.model_dump(), separators=(",", ":")).encode("utf-8"))
+        if raw_bytes > MAX_SCHEMA_PAYLOAD_BYTES:
+            raise ValueError(
+                f"schema_context payload exceeds maximum allowed size of {MAX_SCHEMA_PAYLOAD_BYTES} bytes (48 KB), "
+                f"received {raw_bytes} bytes."
+            )
+        return self
+
+    def to_database_schema(self) -> Any:
+        """Convert validated client schema context to internal model-facing DatabaseSchema."""
+        from query_pilot.db.models import ColumnMetadata, DatabaseSchema, ForeignKeyMetadata, TableMetadata
+
+        table_meta_list = []
+        for tbl in self.tables:
+            col_meta_list = [
+                ColumnMetadata(
+                    name=col.name,
+                    data_type=col.data_type,
+                    nullable=col.nullable,
+                    primary_key=col.primary_key or (col.name.lower() in [pk.lower() for pk in tbl.primary_keys]),
+                    comment=col.comment,
+                )
+                for col in tbl.columns
+            ]
+            fk_meta_list = [
+                ForeignKeyMetadata(
+                    source_table=fk.source_table,
+                    source_column=fk.source_column,
+                    target_table=fk.target_table,
+                    target_column=fk.target_column,
+                    name=fk.name,
+                )
+                for fk in tbl.foreign_keys
+            ]
+            table_meta_list.append(
+                TableMetadata(
+                    schema_name=tbl.schema_name or "dbo",
+                    table_name=tbl.table_name,
+                    columns=col_meta_list,
+                    primary_keys=list(tbl.primary_keys),
+                    foreign_keys=fk_meta_list,
+                )
+            )
+        return DatabaseSchema(
+            database_name=self.database_name,
+            tables=table_meta_list,
+            is_model_facing=True,
+        )
+
+
+class GenerateSQLRequest(BaseModel):
+    """Untrusted client request to generate candidate SQL from schema context."""
+
+    model_config = {"extra": "forbid"}
+
+    question: str = Field(..., description="Natural-language question asked by user.")
+    schema_context: ModelFacingSchemaContext = Field(..., description="Model-facing table/column metadata.")
+    conversation_context: Optional[List[ConversationTurnContext]] = Field(
+        default=None,
+        description="Optional bounded prior user turns (at most 3 turns).",
+    )
+    request_id: Optional[str] = Field(
+        default=None,
+        max_length=128,
+        description="Non-secret client correlation tracking ID.",
+    )
+
+    @field_validator("question")
+    @classmethod
+    def validate_question(cls, v: str) -> str:
+        if not isinstance(v, str):
+            raise TypeError("Question must be a string.")
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("Question cannot be empty or whitespace.")
+        if len(cleaned) > 1000:
+            raise ValueError(f"Question exceeds maximum length of 1000 characters ({len(cleaned)} chars).")
+        return cleaned
+
+    @field_validator("conversation_context")
+    @classmethod
+    def validate_conversation_context(
+        cls, v: Optional[List[ConversationTurnContext]]
+    ) -> Optional[List[ConversationTurnContext]]:
+        if v is None:
+            return None
+        if len(v) > MAX_CONVERSATION_TURNS:
+            raise ValueError(f"conversation_context cannot exceed {MAX_CONVERSATION_TURNS} turns, received {len(v)}.")
+        return v
+
+
+class GenerateSQLResponse(BaseModel):
+    """Safe response model for candidate SQL generation."""
+
+    model_config = {"extra": "forbid"}
+
+    candidate_sql: Optional[str] = Field(
+        default=None,
+        max_length=10000,
+        description="Generated read-only T-SQL candidate (max 10,000 chars). Present ONLY when status == 'generated'.",
+    )
+    status: GenerationStatus = Field(
+        ...,
+        description="High-level SQL generation outcome status.",
+    )
+    clarification_prompt: Optional[str] = Field(
+        default=None,
+        description="Clarification prompt. Present ONLY when status == 'clarification_needed'.",
+    )
+    unsupported_reason: Optional[str] = Field(
+        default=None,
+        description="Safe explanation of refusal. Present ONLY when status == 'unsupported'.",
+    )
+    execution_disclaimer: str = Field(
+        default="Candidate SQL is unexecuted.",
+        description="Fixed disclaimer confirming the candidate SQL has not been executed.",
+    )
+    is_executed: Literal[False] = Field(
+        default=False,
+        description="Fixed flag confirming the candidate SQL has not been executed.",
+    )
+    request_id: str = Field(..., description="Correlated request ID.")
+
+    @model_validator(mode="after")
+    def validate_generation_invariants(self) -> "GenerateSQLResponse":
+        if self.status == GenerationStatus.GENERATED:
+            if not self.candidate_sql or not self.candidate_sql.strip():
+                raise ValueError("Generated status requires a non-empty candidate_sql.")
+            if self.clarification_prompt is not None:
+                raise ValueError("Generated status must not contain clarification_prompt.")
+            if self.unsupported_reason is not None:
+                raise ValueError("Generated status must not contain unsupported_reason.")
+        elif self.status == GenerationStatus.CLARIFICATION_NEEDED:
+            if self.candidate_sql is not None:
+                raise ValueError("Clarification status must not contain candidate_sql.")
+            if not self.clarification_prompt or not self.clarification_prompt.strip():
+                raise ValueError("Clarification status requires a non-empty clarification_prompt.")
+            if self.unsupported_reason is not None:
+                raise ValueError("Clarification status must not contain unsupported_reason.")
+        elif self.status == GenerationStatus.UNSUPPORTED:
+            if self.candidate_sql is not None:
+                raise ValueError("Unsupported status must not contain candidate_sql.")
+            if not self.unsupported_reason or not self.unsupported_reason.strip():
+                raise ValueError("Unsupported status requires a non-empty unsupported_reason.")
+            if self.clarification_prompt is not None:
+                raise ValueError("Unsupported status must not contain clarification_prompt.")
+        elif self.status == GenerationStatus.GENERATION_FAILED:
+            if self.candidate_sql is not None:
+                raise ValueError("Generation failed status must not contain candidate_sql.")
+        return self
+
+
+class SynthesizeAnswerRequest(BaseModel):
+    """Untrusted client request for metadata-only answer synthesis."""
+
+    model_config = {"extra": "forbid"}
+
+    question: str = Field(..., description="Original user natural language question.")
+    candidate_sql: str = Field(..., description="The validated SQL query executed locally.")
+    columns: List[str] = Field(
+        ...,
+        description="List of column names returned by query (names only, never cell values).",
+    )
+    row_count: int = Field(..., ge=0, le=10000, description="Total count of rows returned.")
+    truncated: bool = Field(default=False, description="True if result set was truncated by row limit.")
+    execution_status: str = Field(..., description="Local execution status; must be 'succeeded'.")
+    execution_time_ms: float = Field(..., ge=0.0, le=60000.0, description="Local execution latency in milliseconds.")
+    request_id: str = Field(..., min_length=1, max_length=128, description="Correlated request tracking ID.")
+
+    @field_validator("question")
+    @classmethod
+    def validate_question(cls, v: str) -> str:
+        if not isinstance(v, str):
+            raise TypeError("Question must be a string.")
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("Question cannot be empty or whitespace.")
+        if len(cleaned) > 1000:
+            raise ValueError(f"Question exceeds maximum length of 1000 characters ({len(cleaned)} chars).")
+        return cleaned
+
+    @field_validator("candidate_sql")
+    @classmethod
+    def validate_sql(cls, v: str) -> str:
+        if not isinstance(v, str):
+            raise TypeError("candidate_sql must be a string.")
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("candidate_sql cannot be empty or whitespace.")
+        if len(cleaned) > 10000:
+            raise ValueError(f"candidate_sql exceeds maximum length of 10000 characters ({len(cleaned)} chars).")
+        return cleaned
+
+    @field_validator("columns")
+    @classmethod
+    def validate_columns(cls, cols: List[str]) -> List[str]:
+        if not cols:
+            raise ValueError("columns list cannot be empty.")
+        if len(cols) > 100:
+            raise ValueError(f"columns list cannot exceed 100 items, received {len(cols)}.")
+
+        cleaned = []
+        column_identifier_pattern = re.compile(r"^(?:[a-zA-Z0-9_#$]+|\[[a-zA-Z0-9_#$ ]+\])$")
+        for col in cols:
+            if not isinstance(col, str):
+                raise ValueError(f"Column name must be a string, got {type(col).__name__}.")
+            c = col.strip()
+            if not c:
+                raise ValueError("Column name cannot be empty or whitespace.")
+            if len(c) > 128:
+                raise ValueError(f"Column name exceeds maximum length of 128 characters ({len(c)} chars).")
+            # Strict enforcement of column identifier syntax (rejects prose, JSON, tuples, control chars)
+            if not column_identifier_pattern.match(c):
+                raise ValueError(
+                    f"Invalid column name {col!r}: must be a valid column identifier matching "
+                    "^[a-zA-Z0-9_#$]+$ or bracket-delimited [identifier]. Serialized objects, prose, "
+                    "and control characters are forbidden."
+                )
+            cleaned.append(c)
+        return cleaned
+
+    @field_validator("execution_status")
+    @classmethod
+    def validate_execution_status(cls, v: str) -> str:
+        if not isinstance(v, str):
+            raise TypeError("execution_status must be a string.")
+        cleaned = v.strip().lower()
+        if cleaned != "succeeded":
+            raise ValueError(
+                f"Invalid execution_status {v!r}. Answer synthesis requires execution_status to be 'succeeded'."
+            )
+        return cleaned
+
+
+class SynthesizeAnswerResponse(BaseModel):
+    """Response model for metadata-only answer synthesis."""
+
+    model_config = {"extra": "forbid"}
+
+    summary: str = Field(
+        ...,
+        description="Grounded prose narrative explaining dimensional findings or explaining why row disclosure is required.",
+    )
+    status: AnswerGroundingStatus = Field(
+        ...,
+        description="Answer grounding status.",
+    )
+    grounding_notes: Optional[str] = Field(
+        default=None,
+        description="Disclaimers or transparency notes on grounding.",
+    )
+    request_id: str = Field(..., description="Correlated request tracking ID.")

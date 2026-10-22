@@ -25,12 +25,14 @@ logger = logging.getLogger(__name__)
 # Canonical denylist of column names that must NEVER be exposed to the LLM
 DEFAULT_SENSITIVE_COLUMNS: frozenset[str] = frozenset({
     "passwordhash",
+    "password_hash",
     "password",
     "secret",
     "token",
     "private_key",
     "credit_card",
     "ssn",
+    "api_key",
 })
 
 

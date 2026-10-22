@@ -1,6 +1,20 @@
 # QueryPilot API Guide
 
-This guide documents the QueryPilot FastAPI service, including local setup, endpoint contracts, error handling, request ID correlation, security guardrails, and usage examples.
+> [!WARNING]
+> **Historical Documentation Notice (Legacy Prototype)**
+> This document describes the legacy Phase 1–6 prototype architecture where the API service connected directly to SQL Server and executed queries server-side.
+>
+> In the current architecture, QueryPilot is decoupled into a local loopback agent daemon (`querypilot-agent`) that executes queries locally and a generation API (`querypilot-api`) that handles SQL generation:
+> - **Controlled Preview Status**: QueryPilot is currently authorized strictly as a Controlled Preview for local and invited evaluation environments. Public distribution is **BLOCKED**.
+> - **Execution Ceilings**: Local database execution is hard-clamped to a **15-second statement timeout** (`GLOBAL_MAX_TIMEOUT_SECONDS = 15`) and a **100-row result limit** (`GLOBAL_MAX_ROW_LIMIT = 100`).
+> - **Timeout Distinction**: Upstream HTTP proxy and client timeouts (default **30.0 seconds**) are network transport timeouts, completely distinct from database statement execution timeouts (hard-clamped to 15s).
+> - **Payload Bounds**: Request payloads are bounded (64 KB default on agent, 1 MiB ceiling; 1 MiB streaming ceiling on hosted API).
+> - **Model Verification Status**: B11 and B12 integration testing used **mocked model generation**; live Gemini generation is **UNVERIFIED end-to-end**.
+>
+> For the current supported architecture, configuration, and first-run instructions, refer to:
+> - [Root README](../README.md)
+> - [Configuration Guide](configuration.md)
+> - [Architecture Specification](architecture.md)
 
 ---
 
@@ -201,7 +215,8 @@ The API provides end-to-end request tracing and log correlation via `X-Request-I
 3. **Data Sanitization:** All user-facing text fields (`message`, `explanation`, `clarification_prompt`) pass through `sanitize_message()`, which redacts connection strings (`PWD=...`, `UID=...`), Bearer tokens, and tracebacks.
 4. **Stateless API:** QueryPilot does not persist conversation state or user sessions on the server. Clients maintain dialogue history and forward at most 3 relevant prior turns via `conversation_context`.
 5. **Optional LangSmith Tracing:** Tracing is off by default and controlled exclusively through server environment variables (`LANGCHAIN_TRACING_V2=true`, `LANGCHAIN_API_KEY=...`, `LANGCHAIN_PROJECT=query-pilot`). Client requests cannot enable, disable, or alter tracing settings.
-6. **Read-Only Database Access:** SQL execution is strictly read-only and governed by `DB_QUERY_TIMEOUT_SECONDS` (default 15s) and `DB_MAX_ROW_LIMIT` (default 100 rows).
+6. **Read-Only Database Access & Hard Resource Ceilings:** When executed via the Local Agent (`querypilot-agent`), SQL queries are strictly read-only and hard-clamped to a 15-second statement timeout (`GLOBAL_MAX_TIMEOUT_SECONDS = 15`) and a 100-row result limit (`GLOBAL_MAX_ROW_LIMIT = 100`). In the standalone prototype backend fallback, settings are governed by `DB_QUERY_TIMEOUT_SECONDS` (default 15s) and `DB_MAX_ROW_LIMIT` (default 100 rows).
+7. **Request Payload Size Limits:** The local agent limits request bodies to 65,536 bytes (64 KB) by default with a 1 MiB configurable ceiling. The hosted API enforces a 1 MiB streaming payload ceiling via `StreamingPayloadSizeMiddleware`.
 
 ---
 
@@ -337,7 +352,7 @@ curl -X POST "http://127.0.0.1:8000/query" \
 ```python
 import httpx
 
-client = httpx.Client(base_url="http://127.0.0.1:8000", timeout=30.0)
+client = httpx.Client(base_url="http://127.0.0.1:8000", timeout=30.0)  # HTTP transport timeout, distinct from the 15s database execution ceiling
 
 # 1. Health check
 health_resp = client.get("/health")

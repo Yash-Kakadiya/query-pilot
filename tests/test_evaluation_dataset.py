@@ -133,6 +133,7 @@ class TestEvaluationDatasetStructure:
                     assert "sql" not in turn and "generated_sql" not in turn
 
 
+@pytest.mark.integration
 class TestEvaluationDatasetValidation:
     """Verifies that reference SQL passes deterministic validation and safety fixtures are rejected."""
 

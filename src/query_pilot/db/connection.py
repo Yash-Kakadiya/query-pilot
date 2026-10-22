@@ -7,12 +7,15 @@ Guarantees that QueryPilot only interacts with the approved isolated database.
 
 from contextlib import contextmanager
 import logging
-from typing import Iterator, Optional
+from typing import TYPE_CHECKING, Iterator, Optional
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from query_pilot.config import DatabaseSettings, get_db_settings
+
+if TYPE_CHECKING:
+    from query_pilot.db.profile import ConnectionProfile
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +101,43 @@ def create_db_engine(
     except Exception as exc:
         raise DatabaseConnectionError(
             f"Failed to create SQLAlchemy database engine: {exc}"
+        ) from exc
+
+
+def create_profile_db_engine(
+    profile: "ConnectionProfile",
+    **kwargs,
+) -> Engine:
+    """Create a SQLAlchemy engine configured from a ConnectionProfile.
+
+    Derives connection URL and driver timeout strictly from the profile.
+    Timeout is clamped to the global 15-second ceiling.
+
+    Args:
+        profile: Validated ConnectionProfile instance.
+        **kwargs: Additional parameters passed to sqlalchemy.create_engine.
+
+    Returns:
+        SQLAlchemy Engine.
+    """
+    url = profile.get_sqlalchemy_url()
+    timeout = profile.clamp_timeout()
+
+    engine_kwargs = {
+        "pool_pre_ping": True,
+        "connect_args": {"timeout": timeout},
+    }
+    engine_kwargs.update(kwargs)
+
+    try:
+        logger.debug(
+            f"Creating database engine for profile={profile.profile_id}, "
+            f"server={profile.server}, db={profile.database_name}"
+        )
+        return create_engine(url, **engine_kwargs)
+    except Exception as exc:
+        raise DatabaseConnectionError(
+            f"Failed to create SQLAlchemy database engine for profile '{profile.profile_id}': {exc}"
         ) from exc
 
 

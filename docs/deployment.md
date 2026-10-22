@@ -1,5 +1,19 @@
 # Deploying QueryPilot (Render SQL-Only Prototype)
 
+> [!WARNING]
+> **Historical Documentation Notice (Legacy Prototype Deployment)**
+> This document describes the legacy deployment model for the Phase 1–6 prototype and does not describe a currently supported packaged deployment of the decoupled local agent daemon (`querypilot-agent`).
+>
+> In the current architecture, QueryPilot executes database operations locally through the loopback agent daemon:
+> - **Controlled Preview Only**: QueryPilot is currently authorized strictly as a Controlled Preview for local and invited evaluators. Public deployment is **BLOCKED**.
+> - **Execution Ceilings**: Local database execution is hard-clamped to a **15-second statement timeout** (`GLOBAL_MAX_TIMEOUT_SECONDS = 15`) and a **100-row result limit** (`GLOBAL_MAX_ROW_LIMIT = 100`).
+> - **Model Verification Status**: Recent B11 and B12 integration tests used **mocked model generation**; live Gemini generation is **UNVERIFIED end-to-end** in the integrated application.
+>
+> For the current supported architecture, configuration, and first-run instructions, refer to:
+> - [Root README](../README.md)
+> - [Configuration Guide](configuration.md)
+> - [Architecture Specification](architecture.md)
+
 This guide details how to deploy a zero-cost, public **SQL-Only prototype** of QueryPilot on [Render](https://render.com) using a split-origin architecture:
 - **Frontend**: Render Static Site (React SPA served globally via CDN).
 - **Backend**: Render Web Service (Docker container running FastAPI and Uvicorn).

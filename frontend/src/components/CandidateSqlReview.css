@@ -1,0 +1,589 @@
+/* =============================================================================
+   QueryPilot Decoupled Candidate SQL Generation & Review Styles
+   ============================================================================= */
+
+.candidate-sql-card {
+  background: var(--card-bg, #ffffff);
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 12px;
+  padding: 1.5rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.candidate-sql-header {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.candidate-header-icon {
+  font-size: 1.4rem;
+  line-height: 1;
+}
+
+.candidate-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.candidate-sql-title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text-heading, #0f172a);
+}
+
+.candidate-sql-subtitle {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-muted, #64748b);
+}
+
+/* Question Input Form */
+.candidate-question-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.candidate-textarea-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.candidate-label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.candidate-input-label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-heading, #0f172a);
+}
+
+.candidate-char-counter {
+  font-size: 0.78rem;
+  font-family: var(--font-mono, monospace);
+  color: var(--text-muted, #64748b);
+}
+
+.candidate-char-counter-error {
+  color: #dc2626;
+  font-weight: 700;
+}
+
+.candidate-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.75rem 1rem;
+  font-family: inherit;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: var(--text-heading, #0f172a);
+  background: var(--bg-color, #ffffff);
+  border: 1px solid var(--border-color, #cbd5e1);
+  border-radius: 8px;
+  resize: vertical;
+  min-height: 75px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.candidate-textarea:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
+.candidate-textarea:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.candidate-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.candidate-submit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 1.25rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #ffffff;
+  background-color: #2563eb;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, opacity 0.15s ease;
+}
+
+.candidate-submit-btn:hover:not(:disabled) {
+  background-color: #1d4ed8;
+}
+
+.candidate-submit-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.candidate-cancel-btn {
+  padding: 0.55rem 0.9rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #dc2626;
+  background: transparent;
+  border: 1px solid rgba(220, 38, 38, 0.3);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.candidate-cancel-btn:hover {
+  background: rgba(220, 38, 38, 0.08);
+}
+
+.candidate-clear-btn {
+  padding: 0.55rem 0.9rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-heading, #0f172a);
+  background: var(--pill-bg, #f1f5f9);
+  border: 1px solid var(--border-color, #cbd5e1);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.candidate-clear-btn:hover {
+  background: var(--border-color, #e2e8f0);
+}
+
+/* Stale Invalidation Banner */
+.candidate-stale-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.85rem;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 6px;
+  color: #92400e;
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
+@media (prefers-color-scheme: dark) {
+  .candidate-stale-banner {
+    background: rgba(245, 158, 11, 0.15);
+    border-color: rgba(245, 158, 11, 0.3);
+    color: #fde68a;
+  }
+}
+
+/* Candidate Review Panel */
+.candidate-review-panel {
+  background: var(--pill-bg, #f8fafc);
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 10px;
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.candidate-review-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border-color, #e2e8f0);
+}
+
+.candidate-badge-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.candidate-status-badge {
+  padding: 0.25rem 0.65rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  border-radius: 9999px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.candidate-badge-generated {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.candidate-badge-clarification {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.candidate-badge-unsupported {
+  background: #e0f2fe;
+  color: #0369a1;
+}
+
+.candidate-badge-failed {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+@media (prefers-color-scheme: dark) {
+  .candidate-badge-generated { background: rgba(34, 197, 94, 0.2); color: #4ade80; }
+  .candidate-badge-clarification { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
+  .candidate-badge-unsupported { background: rgba(14, 165, 233, 0.2); color: #38bdf8; }
+  .candidate-badge-failed { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+}
+
+.candidate-request-id {
+  font-size: 0.78rem;
+  color: var(--text-muted, #64748b);
+}
+
+.candidate-request-id code {
+  font-family: var(--font-mono, monospace);
+  background: var(--card-bg, #ffffff);
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  border: 1px solid var(--border-color, #cbd5e1);
+}
+
+/* Prominent Execution Boundary Disclaimer */
+.candidate-disclaimer-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  padding: 0.75rem 1rem;
+  background: #fffbeb;
+  border-left: 4px solid #f59e0b;
+  border-radius: 0 8px 8px 0;
+  color: #92400e;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+@media (prefers-color-scheme: dark) {
+  .candidate-disclaimer-box {
+    background: rgba(245, 158, 11, 0.15);
+    border-left-color: #f59e0b;
+    color: #fde68a;
+  }
+}
+
+.candidate-disclaimer-icon {
+  font-size: 1.1rem;
+  line-height: 1;
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
+.candidate-disclaimer-text strong {
+  display: block;
+  font-weight: 700;
+  margin-bottom: 0.15rem;
+}
+
+/* Code Display Block */
+.candidate-code-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.candidate-code-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.candidate-code-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-muted, #64748b);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.candidate-copy-btn {
+  padding: 0.25rem 0.65rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  background: var(--card-bg, #ffffff);
+  border: 1px solid var(--border-color, #cbd5e1);
+  border-radius: 6px;
+  color: var(--text-heading, #0f172a);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.candidate-copy-btn:hover {
+  background: var(--border-color, #e2e8f0);
+}
+
+.candidate-code-block {
+  margin: 0;
+  background: var(--bg-color, #ffffff);
+  border: 1px solid var(--border-color, #cbd5e1);
+  border-radius: 6px;
+  padding: 0.85rem 1rem;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--text-heading, #0f172a);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* Outcome states */
+.candidate-outcome-card {
+  padding: 0.85rem 1rem;
+  border-radius: 8px;
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.candidate-outcome-clarification {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  color: #92400e;
+}
+
+.candidate-outcome-unsupported {
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  color: #0369a1;
+}
+
+.candidate-outcome-failed {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+}
+
+@media (prefers-color-scheme: dark) {
+  .candidate-outcome-clarification { background: rgba(245, 158, 11, 0.15); border-color: rgba(245, 158, 11, 0.3); color: #fde68a; }
+  .candidate-outcome-unsupported { background: rgba(14, 165, 233, 0.15); border-color: rgba(14, 165, 233, 0.3); color: #38bdf8; }
+  .candidate-outcome-failed { background: rgba(239, 68, 68, 0.15); border-color: rgba(239, 68, 68, 0.3); color: #fca5a5; }
+}
+
+.candidate-footer-disclaimer {
+  font-size: 0.78rem;
+  color: var(--text-muted, #64748b);
+  font-style: italic;
+  margin: 0;
+}
+
+/* Error Alert */
+.candidate-error-alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.75rem 1rem;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  color: #991b1b;
+  font-size: 0.88rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  .candidate-error-alert {
+    background: rgba(153, 27, 27, 0.2);
+    border-color: rgba(239, 68, 68, 0.3);
+    color: #fca5a5;
+  }
+}
+
+.candidate-error-text {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1;
+}
+
+.candidate-retry-btn {
+  padding: 0.35rem 0.75rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  background: #dc2626;
+  color: #ffffff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.candidate-retry-btn:hover {
+  background-color: #b91c1c;
+}
+
+/* User Edited SQL Badge */
+.candidate-badge-edited {
+  background: #f3e8ff;
+  color: #7e22ce;
+}
+
+@media (prefers-color-scheme: dark) {
+  .candidate-badge-edited {
+    background: rgba(168, 85, 247, 0.2);
+    color: #c084fc;
+  }
+}
+
+/* Code Actions Toolbar */
+.candidate-code-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.candidate-reset-sql-btn,
+.candidate-edit-toggle-btn {
+  padding: 0.25rem 0.65rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  background: var(--card-bg, #ffffff);
+  border: 1px solid var(--border-color, #cbd5e1);
+  border-radius: 6px;
+  color: var(--text-heading, #0f172a);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.candidate-reset-sql-btn:hover:not(:disabled),
+.candidate-edit-toggle-btn:hover:not(:disabled) {
+  background: var(--border-color, #e2e8f0);
+}
+
+.candidate-reset-sql-btn:disabled,
+.candidate-edit-toggle-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Edit Textarea */
+.candidate-edit-area-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.candidate-edit-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.75rem 1rem;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--text-heading, #0f172a);
+  background: var(--bg-color, #ffffff);
+  border: 1px solid #3b82f6;
+  border-radius: 6px;
+  resize: vertical;
+}
+
+.candidate-edit-textarea:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+}
+
+.candidate-edit-hint {
+  font-size: 0.75rem;
+  color: var(--text-muted, #64748b);
+  font-style: italic;
+}
+
+/* Execution Action Bar */
+.candidate-execution-bar {
+  margin-top: 0.5rem;
+  padding-top: 0.85rem;
+  border-top: 1px dashed var(--border-color, #cbd5e1);
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.candidate-execution-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.candidate-execute-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 1.4rem;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: #ffffff;
+  background-color: #059669;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  box-shadow: 0 2px 4px rgba(5, 150, 105, 0.2);
+}
+
+.candidate-execute-btn:hover:not(:disabled) {
+  background-color: #047857;
+  transform: translateY(-1px);
+}
+
+.candidate-execute-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.candidate-executing-state {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #059669;
+}
+
+@media (prefers-color-scheme: dark) {
+  .candidate-executing-state {
+    color: #34d399;
+  }
+}
+
+.candidate-execute-blocked-hint {
+  font-size: 0.82rem;
+  color: #d97706;
+  font-weight: 500;
+}
+
+.candidate-execute-security-note {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-muted, #64748b);
+  line-height: 1.4;
+}
+

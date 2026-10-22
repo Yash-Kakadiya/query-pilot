@@ -28,6 +28,14 @@ def test_sensitive_column_policy_default_denylist():
     assert policy.is_sensitive("PasswordHash") is True
     assert policy.is_sensitive("passwordhash") is True
     assert policy.is_sensitive("PASSWORDHASH") is True
+    assert policy.is_sensitive("password_hash") is True
+    assert policy.is_sensitive("Password_Hash") is True
+    assert policy.is_sensitive("PASSWORD_HASH") is True
+    assert policy.is_sensitive("api_key") is True
+    assert policy.is_sensitive("Api_Key") is True
+    assert policy.is_sensitive("API_KEY") is True
+    assert policy.is_sensitive("ssn") is True
+    assert policy.is_sensitive("SSN") is True
     assert policy.is_sensitive("password") is True
     assert policy.is_sensitive("secret") is True
     assert policy.is_sensitive("token") is True

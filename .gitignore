@@ -28,6 +28,8 @@ MANIFEST
 
 # Virtual environments
 .venv/
+.venv*/
+temp_test_dir/
 venv/
 ENV/
 env/

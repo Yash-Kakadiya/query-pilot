@@ -1,330 +1,300 @@
 # QueryPilot 🧭
 
-**QueryPilot** is an AI-powered autonomous data analyst that converts natural-language questions into SQL, safely validates queries, explores schemas, recovers from execution errors, and explains results using a stateful LangGraph workflow.
-
-The core differentiator of QueryPilot is its **self-correcting, measurable agent workflow** backed by deterministic safety envelopes and strict database guardrails.
+**QueryPilot** is an AI-powered autonomous data analyst that converts natural-language business questions into safe, validated SQL queries. It uses a stateful text-to-SQL reasoning engine and executes queries locally against enterprise relational databases under strict safety envelopes.
 
 ---
 
-## Architecture Overview
+## Architecture Overview & Service Responsibilities
 
-QueryPilot bridges non-technical business questions and structured enterprise relational databases through a decoupled, multi-layer architecture:
+QueryPilot employs a **decoupled architecture** separating text-to-SQL generation from database query execution. The application consists of two distinct services designed to run concurrently during interactive local usage:
 
-1. **User Interface (React + TypeScript):** An interactive query workspace supporting natural-language questions, interactive clarification prompts, tabular result rendering, execution metrics, and active request cancellation.
-2. **API & Serving (FastAPI):** A lightweight HTTP API providing request correlation (`X-Request-ID`), strict Pydantic input validation, and sanitized error responses.
-3. **Agent Workflow (LangGraph):** A 5-stage stateful directed graph coordinating schema acquisition, retrieval-augmented SQL generation, deterministic AST validation, guarded read-only execution, and grounded answer synthesis.
-4. **Deterministic Safety Envelopes:** Zero unvalidated query execution. All queries pass through `sqlglot` Abstract Syntax Tree (AST) validation before reaching the database, blocking mutations, sensitive credentials, unwhitelisted tables/columns, and multi-statement queries.
-5. **Bounded Self-Correction:** When syntax, schema, or recoverable validation errors occur, diagnostic feedback is fed back into the generator for up to 3 bounded attempts.
+1. **`querypilot-api` (Generation API Service — Port `8000`)**:
+   - Handles natural-language to SQL translation and query explanation using Google Gemini models.
+   - Provides optional metadata-only answer synthesis based on column headers and row counts.
+   - **Zero Database Access**: The API service has **no connection to customer databases** and stores no database credentials or connection strings.
+   - **Privacy Boundary**: By default, grounded answer synthesis receives only column metadata and row counts—**never raw database row values or cell records**.
 
-### System Architecture & Request Flow
+2. **`querypilot-agent` (Local Agent Daemon — Port `8001`)**:
+   - Runs strictly on loopback (`http://127.0.0.1:8001/app/`) on the user's local machine.
+   - Serves the production React/TypeScript web interface from pre-compiled static assets (`frontend/dist/`).
+   - Authenticates local browser sessions using single-use bootstrap tokens and `HttpOnly` session cookies.
+   - Manages approved database connection profiles in a local, permission-hardened profile store (`~/.query_pilot/profiles.json`).
+   - Introspects database schemas locally and executes approved, user-reviewed SQL queries locally via `pyodbc` using **Windows Integrated Authentication**.
 
 ```mermaid
 flowchart TD
-    subgraph Client ["Client Layer"]
-        User(["User / Analyst"])
-        UI["React 19 + TypeScript SPA\n(Vite Dev Server: 127.0.0.1:5173)"]
-        ClientService["apiClient.ts\n(Typed HTTP Client)"]
-        User -->|"Natural Language Query"| UI
-        UI --> ClientService
+    subgraph Browser ["User Browser (Loopback Client)"]
+        User(["Analyst / User"])
+        UI["React 19 SPA (/app/)\n(Static files served by Agent)"]
+        User -->|"1. Natural language question"| UI
+        UI -->|"4. Explicit execution approval"| UI
+        UI -->|"6. Render table & grounded answer"| User
     end
 
-    subgraph API ["API & Routing Layer (FastAPI :8000)"]
-        Proxy["Vite Dev Proxy\n(/api/* -> :8000/*)"]
-        FastAPIEndpoint["POST /query\n(Pydantic Input Validation)"]
-        HealthEndpoint["GET /health\n(Liveness Probe)"]
-        ClientService -->|"HTTP /api/query"| Proxy
-        Proxy --> FastAPIEndpoint
-        ClientService -.->|"HTTP /api/health"| Proxy
-        Proxy -.-> HealthEndpoint
+    subgraph AgentDaemon ["Local Agent Daemon (querypilot-agent :8001)"]
+        AuthGate["Bootstrap & Session Auth\n(Loopback HttpOnly Cookie)"]
+        ProfileStore[("Profile Store\n~/.query_pilot/profiles.json")]
+        Introspector["Local Schema Introspection\n(Column type & name extraction)"]
+        ExecBoundary["Local Execution Boundary\n(pyodbc, timeout & row limit)"]
+        ProxyRouter["Constrained API Proxy\n(/api/v1/generate-sql)"]
+
+        UI -->|"Auth & Requests"| AuthGate
+        AuthGate --> ProxyRouter
+        AuthGate --> ExecBoundary
+        ProfileStore -.->|"Approved target"| ExecBoundary
+        ProfileStore -.->|"Introspect schema"| Introspector
     end
 
-    subgraph Engine ["Query Engine (QueryRunner)"]
-        Graph["LangGraph Stateful Workflow\n(Compiled StateGraph)"]
-        Catalog[("Knowledge Catalog\n(catalog.json)")]
-        Retriever["DomainContextRetriever\n(In-Memory Scoring)"]
-        FastAPIEndpoint --> Graph
-        Catalog --> Retriever
-        Retriever -->|"Domain Guidance"| Graph
+    subgraph LocalDB ["Local Environment"]
+        MSSQL[("Microsoft SQL Server\n(e.g. localhost\\SQLEXPRESS)")]
+        ExecBoundary -->|"5. Execute validated SQL\n(Windows Integrated Auth)"| MSSQL
+        MSSQL -->|"Raw tabular result rows"| ExecBoundary
+        ExecBoundary -->|"Row results (local only)"| UI
     end
 
-    subgraph External ["External Services & Storage"]
-        Gemini["Google Gemini API\n(gemini-3.8-flash)"]
-        MSSQL[("Microsoft SQL Server\n(GradeSense_Local)")]
-        LangSmith["LangSmith Tracing\n(Opt-in / Redacted)"]
-        Graph <-->|"Generate SQL & Synthesis"| Gemini
-        Graph <-->|"Guarded Read-Only Queries"| MSSQL
-        Graph -.->|"Sanitized Traces"| LangSmith
-    end
+    subgraph HostedAPI ["Generation API Service (querypilot-api :8000)"]
+        APIRoute["POST /api/v1/generate-sql"]
+        SynthRoute["POST /api/v1/synthesize-answer"]
+        Gemini["Google Gemini Model\n(gemini-3.8-flash)"]
 
-    Graph -->|"QueryResponse (JSON)"| FastAPIEndpoint
-    FastAPIEndpoint -->|"HTTP 200 / 422 / 500"| UI
-    UI -->|"Grounded Answer & Data Table"| User
+        ProxyRouter -->|"2. Schema metadata + question"| APIRoute
+        APIRoute <-->|"Generate candidate SQL"| Gemini
+        APIRoute -->|"3. Unexecuted candidate SQL"| ProxyRouter
+        ProxyRouter -->|"Candidate SQL for review"| UI
+
+        UI -.->|"Metadata-only synthesis request\n(columns, row count, duration)"| SynthRoute
+        SynthRoute <-->|"Synthesize grounded summary"| Gemini
+    end
 ```
 
-### LangGraph Workflow & Bounded Recovery
+---
 
-The core execution engine compiles a 5-node LangGraph `StateGraph`. Recoverable validation failures or correctable SQL syntax errors loop back to query generation with sanitized diagnostic feedback, strictly bounded by `MAX_GENERATION_ATTEMPTS = 3`.
+## Safety Invariants & Engineering Guardrails
 
-```mermaid
-flowchart TD
-    Start([Start]) --> AcquireSchema["1. acquire_schema\n(Introspect & redact sensitive columns)"]
+1. **Loopback-Only Binding**: `querypilot-agent` binds strictly to `127.0.0.1` or `localhost`. Binding to public hostnames or non-loopback network interfaces fails closed immediately.
+2. **Explicit Human-in-the-Loop Review**: Generated SQL statements are strictly unexecuted candidates until the user explicitly reviews the query in the UI and clicks **Run Query**.
+3. **Approved Connection Profiles**: The frontend references registered profile IDs (e.g. `local_dev`). Clients cannot supply arbitrary connection strings or target arbitrary database servers. Profiles are managed strictly via the CLI (`querypilot-agent profile`); there is no browser-based profile creation wizard.
+4. **Windows Integrated Authentication**: All database connections use `Trusted_Connection=yes`. SQL Server username/password profile authentication is unsupported to prevent storing cleartext credentials.
+5. **Data Minimization**: Customer database rows remain strictly on the local machine and are never transmitted to the generation API. Schema structure and the user's question are sent to the model to generate candidate SQL.
+6. **Concurrent Process Requirement**: Both `querypilot-api` and `querypilot-agent` must be running concurrently for interactive natural-language querying.
+7. **Strict Database Execution Ceilings**: Local SQL execution is hard-clamped to a **15-second statement timeout** (`GLOBAL_MAX_TIMEOUT_SECONDS = 15`) and a **100-row result limit** (`GLOBAL_MAX_ROW_LIMIT = 100`). Profile configurations or queries requesting higher limits are strictly clamped down.
+8. **Bounded Request Payloads**: The local agent daemon enforces a default request body limit of **65,536 bytes (64 KB)** with a configurable ceiling of **1 MiB (1,048,576 bytes)** (`AgentConfig.max_request_bytes`). The hosted API enforces a hard streaming ceiling of **1 MiB**.
+9. **Distinct Proxy vs. SQL Timeouts**: The agent's `upstream_timeout_seconds` (default **30.0 seconds**) governs the HTTP reverse proxy to the generation API, completely distinct from the database query execution timeout (hard maximum 15 seconds).
 
-    AcquireSchema -->|"Schema OK"| GenerateSQL["2. generate_sql\n(Gemini 2.0 Flash + Domain Context)"]
-    AcquireSchema -->|"Schema Failure"| PresentResult["5. present_result\n(Format Presentation & Errors)"]
+---
 
-    GenerateSQL -->|"Answerable Candidate SQL"| ValidateSQL["3. validate_sql\n(AST Inspection via sqlglot)"]
-    GenerateSQL -->|"Clarification Needed"| PresentResult
-    GenerateSQL -->|"Unsupported Refusal"| PresentResult
-    GenerateSQL -->|"Terminal Generation Error"| PresentResult
+## Prerequisites
 
-    ValidateSQL -->|"Validation Allowed"| ExecuteSQL["4. execute_sql\n(Read-Only Session :15s Timeout)"]
-    ValidateSQL -->|"Recoverable Failure\n(Attempts < 3)"| Feedback1["Build Diagnostic Feedback"]
-    ValidateSQL -->|"Terminal Policy Violation\nOR Attempts >= 3"| PresentResult
+### Prerequisites for Running the Application
+* **Python**: `>=3.12` (as declared in `pyproject.toml`).
+* **ODBC Driver**: Microsoft ODBC Driver 17 or 18 for SQL Server installed on Windows.
+  *(Verify in PowerShell: `Get-OdbcDriver -Name "*SQL Server*"`).*
+* **Database Instance**: Accessible Microsoft SQL Server instance (e.g., local `localhost\SQLEXPRESS` or network instance).
+* **Database Permissions**: The active Windows user account must have login access and `CONNECT` / `SELECT` permissions on the target database.
+* **API Key**: Google Gemini API key (`GEMINI_API_KEY`) for text-to-SQL generation.
 
-    Feedback1 --> GenerateSQL
+### Prerequisites for Building Frontend Assets / Development
+* **Node.js**: LTS `^20.19.0 || >=22.12.0`.
+* **npm**: `>=10.0.0`.
+* *(Note: Building the frontend is required when running from a git checkout because static assets are not committed to source control).*
 
-    ExecuteSQL -->|"Execution Success"| PresentResult
-    ExecuteSQL -->|"Recoverable Syntax/Schema Error\n(Attempts < 3)"| Feedback2["Build Execution Feedback"]
-    ExecuteSQL -->|"Timeout / Connection / Terminal Error\nOR Attempts >= 3"| PresentResult
+---
 
-    Feedback2 --> GenerateSQL
+## Quickstart (Local Windows PowerShell)
 
-    PresentResult --> EndNode([END: Public QueryResponse])
+Follow these verified steps to configure, build, and launch QueryPilot from a repository checkout.
 
-    classDef normal fill:#f9f9f9,stroke:#333,stroke-width:1px;
-    classDef recovery fill:#fff3cd,stroke:#856404,stroke-width:1px;
-    classDef terminal fill:#f8d7da,stroke:#721c24,stroke-width:1px;
-    class AcquireSchema,GenerateSQL,ValidateSQL,ExecuteSQL normal;
-    class Feedback1,Feedback2 recovery;
-    class PresentResult terminal;
+### Step 1: Create and Activate Virtual Environment
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+### Step 2: Install Python Project in Editable Mode
+```powershell
+pip install -e .
+```
+> [!NOTE]
+> `pip install -e .` registers the `querypilot-agent` and `querypilot-api` console entry points. However, it does **not** compile the frontend static assets.
+
+### Step 3: Install Frontend Dependencies and Build Assets
+Compile the React/TypeScript frontend into `frontend/dist/`:
+```powershell
+cd frontend
+npm install
+npm run build
+cd ..
+```
+
+### Step 4: Set the Gemini API Key
+Configure your Gemini API key in your current PowerShell session (replace with your personal API key):
+```powershell
+$env:GEMINI_API_KEY = "your_actual_gemini_api_key_here"
+```
+
+### Step 5: Register an Approved Database Connection Profile
+Register your local SQL Server database using Windows Integrated Authentication (replace `localhost\SQLEXPRESS` and `MyDatabase` with your target instance and database):
+```powershell
+querypilot-agent profile add `
+  --id "local_dev" `
+  --name "Local Development Database" `
+  --server "localhost\SQLEXPRESS" `
+  --database "MyDatabase" `
+  --driver "ODBC Driver 17 for SQL Server" `
+  --yes
+```
+Verify the registration:
+```powershell
+querypilot-agent profile list
+```
+
+### Step 6: Start the Generation API Service (Terminal 1)
+In your first terminal (with `.venv` activated and `GEMINI_API_KEY` set):
+```powershell
+querypilot-api
+```
+The API service will start on `http://127.0.0.1:8000`. Verify its health check in a separate window:
+```powershell
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/health" -Method GET
+```
+
+### Step 7: Start the Local Agent Daemon (Terminal 2)
+In a second terminal (with `.venv` activated):
+```powershell
+querypilot-agent --open-browser
+```
+The daemon starts on `http://127.0.0.1:8001` and opens your default browser to:
+`http://127.0.0.1:8001/app/`
+
+### Step 8: Authenticate, Review, and Execute
+1. **Authentication**:
+   - The UI presents the **Local Agent Authentication** dialog upon initial load.
+   - Copy the single-use bootstrap token printed in your daemon terminal or read it from `~/.query_pilot/agent.token`.
+   - Paste the token into the dialog and click **Authenticate**.
+   - The frontend submits the token to `POST /agent/v1/auth/bootstrap`, which verifies the token, wipes the file on disk, and sets an ambient `qpt_session` `HttpOnly` session cookie.
+2. **Profile Selection**: Select your registered profile (`Local Development Database`) from the dropdown.
+3. **Ask a Question**: Enter a natural-language question (e.g. *"Show top 5 records by date"*).
+4. **Review Candidate SQL**: The agent fetches your schema locally, requests candidate SQL from the API, and renders the unexecuted SQL in the review editor.
+5. **Explicit Execution**: Click **Run Query**. The agent executes the SQL locally against your SQL Server database and displays the tabular results and execution metrics.
+
+---
+
+## CLI Reference
+
+### `querypilot-agent`
+```text
+usage: querypilot-agent [-h] [--host HOST] [--port PORT] [--open-browser]
+                        [--static-dir STATIC_DIR] [--upstream-api-url URL]
+                        [--token-dir TOKEN_DIR] [--profiles-file PROFILES_FILE]
+                        [--allow-dev-origin] {profile} ...
+
+Root Options:
+  --host HOST               Loopback host to bind (default: 127.0.0.1 or QUERYPILOT_AGENT_HOST).
+  --port PORT               TCP port to bind (default: 8001 or QUERYPILOT_AGENT_PORT).
+  --open-browser            Launch the system browser to the agent UI after startup.
+  --static-dir DIR          Path to frontend production build (default: frontend/dist or QUERYPILOT_AGENT_STATIC_DIR).
+  --upstream-api-url URL    Upstream generation API URL (default: http://127.0.0.1:8000 or QUERYPILOT_UPSTREAM_API_URL).
+  --token-dir PATH          Directory for bootstrap token file (default: ~/.query_pilot or QUERYPILOT_TOKEN_DIR).
+  --profiles-file PATH      Path to profiles JSON file (default: ~/.query_pilot/profiles.json or QUERYPILOT_PROFILES_FILE).
+  --allow-dev-origin        Permit Vite development origin (http://127.0.0.1:5173). Intended only for local frontend development; do not enable in normal production mode.
+
+Subcommands:
+  profile add               Register an approved SQL Server database profile.
+  profile list              List all registered database profiles.
+  profile validate          Validate the profile configuration file syntax and permissions.
+```
+
+### `querypilot-api`
+```text
+usage: querypilot-api [-h] [--host HOST] [--port PORT] [--reload]
+
+Options:
+  --host HOST               Host to bind the API (default: 127.0.0.1 or QUERYPILOT_API_HOST).
+  --port PORT               TCP port to bind the API (default: 8000 or QUERYPILOT_API_PORT).
+  --reload                  Enable auto-reload for development.
 ```
 
 ---
 
 ## Technology Stack
 
-The versions and libraries in use are verified directly against the project configuration:
+The project technologies and libraries are verified directly against project manifests:
 
 | Layer | Technology | Version | Purpose |
 | :--- | :--- | :--- | :--- |
-| **Frontend Framework** | React | `^19.2.8` | Declarative user interface components and state management |
-| **Frontend Language** | TypeScript | `~6.0.2` | Strict static typing and compile-time verification |
-| **Frontend Tooling** | Vite | `^8.3.0` | Ultra-fast development server, HMR, and build packaging |
-| **Frontend Linter** | Oxlint | `^1.81.0` | High-performance Rust-based code linting |
-| **Backend Framework** | FastAPI | `>=0.110.0` | Modern, asynchronous/synchronous Python web API |
-| **ASGI Web Server** | Uvicorn | `>=0.29.0` | High-performance local development ASGI server |
-| **Agent Orchestration**| LangGraph | `>=1.0.0` | Stateful graph orchestration with bounded self-correction loops |
-| **Validation Models** | Pydantic / Settings | `>=2.7.0` | Runtime request/response contract validation and environment parsing |
+| **Frontend Framework** | React | `^19.2.4` | Declarative UI components and state management |
+| **Frontend Language** | TypeScript | `~6.0.2` | Static type checking and verification |
+| **Frontend Bundler** | Vite | `^8.3.0` | Ultra-fast build packaging and asset compilation |
+| **Backend Framework** | FastAPI | `>=0.110.0` | Asynchronous/synchronous web routing and validation |
+| **ASGI Web Server** | Uvicorn | `>=0.29.0` | High-performance ASGI server for local daemons |
+| **Validation Models** | Pydantic / Settings | `>=2.7.0` | Strict request/response contract validation |
 | **Deterministic SQL** | sqlglot | `>=25.0.0` | SQL parsing, AST inspection, dialect-specific query validation |
-| **Database Engine** | SQL Server (T-SQL) | `>=2017` / Express | Target relational database engine with ODBC Driver 17 |
-| **Database ORM/Core** | SQLAlchemy / pyodbc| `>=2.0.0` / `>=5.1.0`| Connection pooling, parameterized execution, read-only session control |
-| **LLM Provider** | Google Gemini API | `google-genai >=0.1.0` | Gemini 3.8 Flash (`gemini-3.8-flash`) for structured text-to-SQL |
-| **Observability** | LangSmith | `>=0.1.0` | Privacy-safe, opt-in tracing (redacts queries, tables, and secrets) |
-| **Test Suite** | pytest | `>=8.0.0` | Comprehensive unit, offline integration, and regression suites |
+| **Database Driver** | pyodbc / SQLAlchemy | `>=5.1.0` / `>=2.0.0` | Parameterized local execution, pooling, and driver timeouts |
+| **LLM Provider** | Google Gemini API | `google-genai >=0.1.0` | Gemini 3.8 Flash (`gemini-3.8-flash`) for text-to-SQL reasoning |
+| **Test Suite** | pytest | `>=8.0.0` | Unit, offline integration, and regression test suites |
 
 ---
 
-## Engineering Guardrails
+## Testing
 
-1. **Safety First:** Read-only database access, zero unvalidated SQL execution, and deterministic AST verification before running queries.
-2. **Separation of Concerns:** Distinct boundaries between schema introspection, query generation, safety validation, query execution, and result interpretation.
-3. **Bounded Recovery:** Strictly limited correction attempts (`MAX_GENERATION_ATTEMPTS = 3`) to avoid runaway execution loops.
-4. **Data Privacy:** Sensitive columns (e.g., credentials, password hashes) are masked at the schema introspection layer and blocked at the AST validation layer.
-5. **No Hallucinated Insights:** Grounded answers backed directly by verified scalar templates or explicitly tagged as `UNVERIFIED_NARRATIVE`.
-6. **SQL Visibility Policy:** By default, generated SQL is hidden from the public client response (`include_sql=False`), protecting database internals while surfacing answers and tabular data.
-7. **Validated SQL-Only Mode:** Callers can request `execution_mode="sql_only"` to generate and validate queries against QueryPilot's checked-in GradeSense demo schema without connecting to or executing against a database (arbitrary user-supplied schemas are not supported). Approved queries return `status="VALIDATED_ONLY"` without executed row results.
+Run offline unit and security test suites without connecting to databases or external APIs:
 
----
+```powershell
+# Run all offline unit and agent tests
+pytest
 
-## Getting Started (Local Development)
+# Run agent application and configuration tests
+pytest tests/test_agent_app.py tests/test_agent_config.py tests/test_profile_onboarding.py
 
-### 1. Prerequisites
-
-Before installing, ensure your environment meets the minimum version requirements:
-
-* **Python:** `>=3.12` (tested with Python 3.12 and 3.13)
-* **Node.js:** `^20.19.0 || >=22.12.0` (LTS Node 20.19+ or Node 22.12+ required by modern Vite/Oxc lockfile dependencies)
-* **npm:** `>=10.0.0`
-* **Git**
-* **Google Gemini API Key:** Required for natural-language SQL generation and answer synthesis.
-* **Database (Optional):** Microsoft SQL Server Express or LocalDB with **ODBC Driver 17 for SQL Server** installed. *(Only required for live database execution; not required for Zero-Database evaluation).*
-
----
-
-### Option A: Zero-Database Quickstart (No SQL Server Required)
-
-If you want to immediately explore QueryPilot without installing SQL Server, configuring ODBC drivers, or provisioning a database, run in **Zero-Database (SQL-Only) Mode**:
-
-1. **Clone the repository:**
-   ```powershell
-   git clone https://github.com/Yash-Kakadiya/query-pilot.git
-   cd query-pilot
-   ```
-
-2. **Set up Python virtual environment:**
-   ```powershell
-   python -m venv .venv
-   .\.venv\Scripts\Activate.ps1
-   # On Linux/macOS: source .venv/bin/activate
-
-   pip install -r requirements.txt
-   ```
-
-3. **Configure environment:**
-   ```powershell
-   cp .env.example .env
-   ```
-   Edit `.env` and set:
-   ```text
-   GEMINI_API_KEY=your_gemini_api_key_here
-   QUERY_PILOT_FORCE_SQL_ONLY=true
-   ```
-
-4. **Start the FastAPI backend:**
-   ```powershell
-   uvicorn query_pilot.api.app:app --host 127.0.0.1 --port 8000
-   ```
-
-5. **Start the React frontend (in a second terminal):**
-   ```powershell
-   cd frontend
-   npm install
-   npm run dev
-   ```
-
-6. **Open in browser:**
-   * **Web App:** [http://127.0.0.1:5173](http://127.0.0.1:5173)
-   * **API Docs (Swagger UI):** [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
-   * **Process Health Check:** [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
-
-> [!NOTE]
-> **What Zero-Database Mode Does:** Natural-language questions are processed by Gemini, enriched with domain definitions, and validated against QueryPilot's checked-in GradeSense demo schema. Approved queries return `status="VALIDATED_ONLY"` with the generated SQL, AST validation metrics, and structured explanations.
->
-> **Limitation:** Live database queries are bypassed; tabular row results are not executed or returned in this mode.
-
----
-
-### Option B: Full Local Database Setup (SQL Server Express)
-
-When you want to execute queries against a live relational database:
-
-#### 1. Configure Local SQL Server Database
-
-Execute the setup scripts in strict dependency order:
-
-1. **Create the Database (`init_db.sql`):**
-   Idempotently creates the isolated `[GradeSense_Local]` database on your local SQL Server instance:
-   ```powershell
-   sqlcmd -S "localhost\SQLEXPRESS" -E -i data/schemas/init_db.sql
-   ```
-   *(Or execute [data/schemas/init_db.sql](data/schemas/init_db.sql) using SQL Server Management Studio / Azure Data Studio).*
-
-2. **Apply DDL Schema (`gradesense_schema.sql`):**
-   Deploys 17 core relational tables, foreign keys, check constraints, and 60 performance indexes. Contains safety checks enforcing execution against `[GradeSense_Local]`:
-   ```powershell
-   sqlcmd -S "localhost\SQLEXPRESS" -d GradeSense_Local -E -i data/schemas/gradesense_schema.sql
-   ```
-   *(Or execute [data/schemas/gradesense_schema.sql](data/schemas/gradesense_schema.sql) in SSMS with active database `GradeSense_Local`).*
-
-3. **Seed Database Records (`seed_db.py`):**
-   Populates tables in topological foreign-key dependency order using memory-sanitized credentials:
-   ```powershell
-   # Validate configuration and connectivity without writing
-   python data/seeds/seed_db.py --dry-run
-
-   # Seed database records
-   python data/seeds/seed_db.py
-   ```
-   *Source Data Note:* [data/seeds/seed_db.py](data/seeds/seed_db.py) merges checked-in supplemental records ([data/seeds/supplemental_faculty_assignments.json](data/seeds/supplemental_faculty_assignments.json), [data/seeds/supplemental_predictions.json](data/seeds/supplemental_predictions.json)) with raw CSV tables located at `D:\01. Github\gradesense-ml\data\raw`. In environments where this external path is absent, use the `--dry-run` flag or evaluate via Zero-Database Mode.
-
-#### 2. Configure Environment Variables
-
-Edit `.env` with your SQL Server connection:
-```text
-GEMINI_API_KEY=your_gemini_api_key_here
-DB_SERVER=localhost\SQLEXPRESS
-DB_NAME=GradeSense_Local
-DB_DRIVER=ODBC Driver 17 for SQL Server
-DB_USE_TRUSTED_CONNECTION=true
-QUERY_PILOT_FORCE_SQL_ONLY=false
+# Run frontend tests and linter
+cd frontend
+npm test
+npm run lint
+npm run build
+cd ..
 ```
 
-#### 3. Launch Services
+---
 
-Start backend and frontend as described in Option A:
-* **Terminal 1:** `uvicorn query_pilot.api.app:app --host 127.0.0.1 --port 8000`
-* **Terminal 2:** `cd frontend; npm run dev`
+## Release Status & Verification Evidence
+
+### 1. Controlled Preview Status
+QueryPilot is currently authorized strictly as a **Controlled Preview** (for local development, invited testing, and authorized evaluations):
+- **Loopback-Only Boundary**: `querypilot-agent` binds strictly to `127.0.0.1` / `localhost`.
+- **Public Distribution Blocked (NO-GO)**: General distribution to PyPI, public release tags, and untrusted multi-user environments are **BLOCKED** until clean dependency resolution, live model verification, and working-tree cleanup are resolved.
+
+### 2. Model Integration & Live Execution Evidence
+- **Mocked Model Generation in B11/B12**: The B11 and B12 end-to-end browser journeys, real-process integration tests, and workflow demonstrations used **deterministic mocked model generation** to validate system orchestration, UI routing, security boundaries, and Windows Integrated Authentication without external dependencies.
+- **Live Gemini Status**: **UNVERIFIED end-to-end**. Live Gemini generation has **not** been tested in an integrated browser-to-agent-to-API workflow during B11 or B12.
+- **Offline Test Boundary**: Offline test suite execution (1,134 passed tests) verifies software contracts, syntax transformations, and security boundaries; it does **not** establish live Gemini model accuracy, response latency, token-limit behavior, or external service availability.
+- **Live SQL Server Testing**: Live Microsoft SQL Server execution was tested against a real database instance (`QueryPilot_TestDB`) in earlier milestones (B9, B11-E, B11-F); milestone B12 testing was performed strictly offline with mocked database execution.
+
+### 3. Packaging & Distribution Verification
+- **Verified Wheel Smoke Test**: The distribution orchestration script (`python scripts/build_distribution.py`) compiles the React frontend into `frontend/dist/`, stages assets into `src/query_pilot/agent/static/`, and builds `dist/query_pilot-0.1.0-py3-none-any.whl`. Wheel asset serving has been verified using `pip install --no-deps` in an environment where runtime dependencies were already satisfied.
+- **Unverified Clean Dependency Resolution**: A clean, dependency-resolved fresh installation (installing the wheel into a blank virtual environment without `--no-deps`) has **not yet passed verification** due to offline test sandbox constraints and the absence of pre-cached wheels.
+- **CLI-Based Profile Setup**: Connection profile onboarding is performed strictly through the CLI (`querypilot-agent profile add`); there is **no browser-based profile creation wizard**.
 
 ---
 
-### Testing
+## Operational Limitations & Security Boundaries
 
-QueryPilot separates deterministic offline tests from database integration tests via the registered `@pytest.mark.integration` marker. Ordinary test runs execute offline tests by default without touching SQL Server or external APIs.
-
-* **Default Offline Suite:**
-  ```powershell
-  pytest
-  ```
-  *(Runs 743 offline unit tests covering AST validation, executor safeguards, LangGraph workflow, bounded Gemini retries, and API security. The 22 SQL Server integration tests are deselected automatically via `pyproject.toml`).*
-
-* **Opt-in SQL Server Integration Suite:**
-  ```powershell
-  pytest -m integration
-  ```
-  *(Runs the 22 integration tests that verify introspection, table constraints, and queries against `GradeSense_Local`. This requires the configured local Microsoft SQL Server test environment and must not be run when it is unavailable).*
-
-* **Full Suite (Offline + Integration):**
-  ```powershell
-  pytest -o "addopts=-ra -q --import-mode=importlib"
-  ```
-  *(Overrides the default exclusion in `pyproject.toml` to collect and run all 765 tests when the local SQL Server test environment is online).*
-
-* **Backend API & Security Tests:**
-  ```powershell
-  pytest tests/test_api.py tests/test_api_security.py tests/test_config.py -v
-  ```
-
-* **Frontend Code Quality & Build Checks:**
-  ```powershell
-  cd frontend
-  npm test
-  npm run lint
-  npm run build
-  ```
-
-### Cloud & Container Deployment
-
-QueryPilot supports both unified container deployment and split-origin cloud hosting:
-* **Docker Compose (Unified Local / VM):** See `docker-compose.yml` for running the backend and frontend reverse proxy together on a private network.
-* **Render SQL-Only Prototype (Split Origin):** See the [Deployment Guide](docs/deployment.md) for step-by-step instructions on deploying a zero-cost prototype using a Render Static Site and Web Service.
+1. **Standalone Packaging**: A single-binary installer is not provided. Running QueryPilot requires a Python `>=3.12` environment and Node.js for initial frontend builds.
+2. **Frontend Asset Bundling**: When running from a repository checkout, `npm run build` must be executed before starting `querypilot-agent`. The distribution wheel created via `scripts/build_distribution.py` bundles static assets, but fresh dependency-resolved installation from PyPI is not yet verified.
+3. **Manual Two-Service Launch**: Both `querypilot-api` and `querypilot-agent` must be started in separate terminals.
+4. **Hard Query Execution Ceilings**: Local query execution is hard-clamped to a **15-second statement timeout** (`GLOBAL_MAX_TIMEOUT_SECONDS = 15`) and a **100-row result limit** (`GLOBAL_MAX_ROW_LIMIT = 100`). Profile configurations or queries requesting higher limits are strictly clamped down.
+5. **No Browser Profile Creation**: Profiles are configured strictly through the CLI (`querypilot-agent profile add`). The web UI provides selection of pre-registered profiles only.
+6. **Windows ACL Boundaries**: Profile files in `~/.query_pilot/profiles.json` are hardened via Windows `icacls` to restrict access to the active user trustee. This provides standard operating system file discretionary access control; it does **not** provide hardware virtualization or an absolute guarantee against all explicit ACE configurations or multi-user filesystems.
+7. **No Secret Encryption at Rest**: Connection profile metadata is stored in plaintext JSON. Passwords and secret credentials are prohibited from profile files.
+8. **Stale Profile Lockfile Recovery**: If `querypilot-agent profile add` times out acquiring the cross-process lock (`profiles.json.lock`), confirm that no other `querypilot-agent` process is active before manually removing `~/.query_pilot/profiles.json.lock`.
+9. **Compliance Disclaimer**: QueryPilot is an open-source development tool. It is not production-certified, HIPAA/SOC2 compliant, or certified under any regulatory framework.
 
 ---
 
-## Product Limitations & Operational Safety
+## Documentation Links
 
-1. **Target Database Restriction:**
-   QueryPilot currently enforces a strict security boundary in [src/query_pilot/db/connection.py](src/query_pilot/db/connection.py) restricting execution exclusively to a database named `GradeSense_Local`. Connecting to another database triggers a fatal `DatabaseSecurityError`.
-2. **Health Check Semantics:**
-   The `GET /health` endpoint is strictly an **application process liveness check**. It verifies that the FastAPI process is up and handling HTTP requests. It **does NOT** test downstream SQL Server connectivity or Gemini API availability.
-3. **Local Reverse Proxy & Split-Origin Deployment:**
-   The frontend defaults to Vite's local dev server proxy configured in `frontend/vite.config.ts`. For production deployments where the frontend and backend reside on distinct origins, configure `VITE_API_BASE_URL` and `VITE_DEFAULT_EXECUTION_MODE` on the frontend at build time, and `CORS_ALLOWED_ORIGINS` on the backend (see [API Guide](docs/api.md) and [Deployment Guide](docs/deployment.md) for detailed configuration). Unified deployments behind a reverse proxy do not require CORS.
-4. **Windows Authentication Default:**
-   Default configuration assumes Windows Integrated Authentication with SQL Server Express on `localhost`. Linux environments and containerized deployments require SQL Authentication credentials (`DB_USER`, `DB_PASSWORD`) and Linux Microsoft ODBC packages.
-5. **SQL Visibility Policy:**
-   In compliance with security best practices, the public API omits raw SQL statements from responses by default (`include_sql=False`).
-6. **Observability Privacy:**
-   LangSmith tracing is disabled by default (`LANGCHAIN_TRACING_V2=false`). When enabled, strict payload redaction strips questions, schemas, raw SQL, and errors to prevent data leakage.
-7. **Prototype Security & Safeguards:**
-   For cloud prototypes and evaluation environments without user authentication, QueryPilot supports a runtime access-code gate (`QUERY_PILOT_ACCESS_KEY` via `X-QueryPilot-Access-Key` header), server-enforced SQL-only mode (`QUERY_PILOT_FORCE_SQL_ONLY`), in-memory request-body size limits (`QUERY_PILOT_MAX_REQUEST_BYTES`), sliding-window rate limiting (`QUERY_PILOT_RATE_LIMIT_PER_MINUTE`), and a concurrency guard (`QUERY_PILOT_MAX_CONCURRENT_QUERIES`). A shared access code is suitable for invited evaluators, but does not substitute for user-level authentication in a public product. Hard daily quota and spending caps should always be configured in Google AI Studio / Google Cloud Console.
+- [Configuration & Troubleshooting Guide](docs/configuration.md)
+- [Architecture & Decoupled Local Agent Specification](docs/architecture.md)
+- [API Reference (Legacy Prototype)](docs/api.md)
+- [Deployment Guide (Legacy Render Prototype)](docs/deployment.md)
+- [Evaluation Benchmark Harness](data/evaluation/README.md)
 
----
-
-## Evaluation Benchmarks
-
-QueryPilot includes an offline baseline evaluation harness (`data/evaluation/baseline_questions.json`) comprising **34 curated cases**: the original 32 benchmark questions plus two clarification cases (`C001` and `C002`).
-
-* **Capability:** Clarification-aware evaluation with bounded conversation-context forwarding. It verifies that query generation correctly requests clarification when questions are ambiguous and respects caller-supplied prior-turn intent.
-* **Scope Boundary:** This evaluates single-request generation boundaries with forwarded turn context; it does not provide an end-to-end interactive, stateful multi-turn dialogue evaluation loop.
-* **Historical Compatibility:** Historical 32-case evaluation artifacts remain preserved. Metrics from 32-case and 34-case datasets should not be compared directly without acknowledging the dataset difference.
-
-For complete benchmark schemas and category distributions, see [`data/evaluation/README.md`](data/evaluation/README.md).

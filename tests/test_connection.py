@@ -16,6 +16,7 @@ from query_pilot.db.connection import (
 )
 
 
+@pytest.mark.integration
 def test_verify_database_context_success():
     """Verify that an active connection to GradeSense_Local succeeds."""
     engine = create_db_engine()
@@ -55,6 +56,7 @@ def test_verify_database_context_query_failure():
     assert "Failed to query SQL Server session context" in str(exc_info.value)
 
 
+@pytest.mark.integration
 def test_get_connection_context_manager():
     """Verify that get_connection yields a verified connection and closes it."""
     engine = create_db_engine()

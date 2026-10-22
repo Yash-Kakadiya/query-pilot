@@ -493,7 +493,8 @@ def format_schema_context(schema: DatabaseSchema, dialect: str = "T-SQL") -> str
         for col in table.columns:
             pk_tag = " (PRIMARY KEY)" if col.name.lower() in pk_set or col.primary_key else ""
             null_tag = " NULL" if col.nullable else " NOT NULL"
-            lines.append(f"  - [{col.name}] ({col.data_type}{null_tag}{pk_tag})")
+            comment_tag = f" -- {col.comment.strip()}" if col.comment and col.comment.strip() else ""
+            lines.append(f"  - [{col.name}] ({col.data_type}{null_tag}{pk_tag}){comment_tag}")
 
         # Collect foreign keys
         for fk in table.foreign_keys:

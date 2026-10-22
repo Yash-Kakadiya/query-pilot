@@ -34,9 +34,12 @@ from query_pilot.api.security import (
     StreamingPayloadSizeMiddleware,
     verify_prototype_access_key,
 )
+from query_pilot.api.v1 import router as v1_router
 from query_pilot.config import Settings
 from query_pilot.presentation.formatter import sanitize_message
+from query_pilot.presentation.synthesizer import AnswerSynthesisService
 from query_pilot.runner import QueryRunner
+from query_pilot.sql.generation import SQLGenerator
 from query_pilot.tracing import sanitize_safe_identifier
 
 logger = logging.getLogger("query_pilot.api")
@@ -54,12 +57,16 @@ def get_runner(request: Request) -> QueryRunner:
 def create_app(
     runner: Optional[QueryRunner] = None,
     settings: Optional[Settings] = None,
+    sql_generator: Optional[SQLGenerator] = None,
+    synthesizer: Optional[AnswerSynthesisService] = None,
 ) -> FastAPI:
     """Create and configure a FastAPI application instance for QueryPilot.
 
     Args:
         runner: Optional pre-configured QueryRunner instance (e.g. for mocked unit testing).
         settings: Optional application settings.
+        sql_generator: Optional pre-configured SQLGenerator instance for hosted v1 SQL generation.
+        synthesizer: Optional pre-configured AnswerSynthesisService instance for hosted v1 synthesis.
 
     Returns:
         Configured FastAPI application instance.
@@ -90,6 +97,8 @@ def create_app(
 
     app.state.runner = runner
     app.state.settings = resolved_settings
+    app.state.sql_generator = sql_generator
+    app.state.synthesizer = synthesizer
 
     rate_limit_rpm = getattr(resolved_settings, "QUERY_PILOT_RATE_LIMIT_PER_MINUTE", 20) if resolved_settings else 20
     max_concurrent = getattr(resolved_settings, "QUERY_PILOT_MAX_CONCURRENT_QUERIES", 3) if resolved_settings else 3
@@ -299,6 +308,11 @@ def create_app(
         )
 
         return query_response
+
+    # --------------------------------------------------------------------------
+    # Mount Hosted API V1 Routers
+    # --------------------------------------------------------------------------
+    app.include_router(v1_router, prefix="/api/v1")
 
     return app
 

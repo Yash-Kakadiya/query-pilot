@@ -157,6 +157,110 @@
   color: var(--text-muted);
 }
 
+/* Local Agent Session Status Bar */
+.status-bars-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.65rem;
+  margin-top: 0.5rem;
+}
+
+.agent-session-bar {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.55rem 1.25rem;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 9999px;
+  max-width: 100%;
+}
+
+.agent-session-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.agent-session-label {
+  font-weight: 600;
+  color: var(--text-heading);
+}
+
+.agent-session-text {
+  color: var(--text-muted);
+}
+
+.agent-authenticated {
+  color: #059669;
+  font-weight: 600;
+}
+
+.agent-auth-needed {
+  color: #d97706;
+  font-weight: 600;
+}
+
+.agent-disconnected {
+  color: #dc2626;
+  font-weight: 500;
+}
+
+.agent-error {
+  color: #dc2626;
+  font-weight: 500;
+}
+
+.agent-session-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.agent-action-btn {
+  padding: 0.2rem 0.65rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.agent-logout-btn {
+  background: var(--pill-bg);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+}
+
+.agent-logout-btn:hover {
+  color: #dc2626;
+  background-color: rgba(220, 38, 38, 0.08);
+  border-color: rgba(220, 38, 38, 0.25);
+}
+
+.agent-auth-btn {
+  background: #2563eb;
+  border: 1px solid #1d4ed8;
+  color: #ffffff;
+}
+
+.agent-auth-btn:hover {
+  background-color: #1d4ed8;
+}
+
+.agent-retry-btn {
+  background: var(--pill-bg);
+  border: 1px solid var(--border-color);
+  color: var(--text-heading);
+}
+
+.agent-retry-btn:hover {
+  background-color: var(--border-color);
+}
+
 /* Main Content Workspace */
 .app-main {
   flex: 1;
