@@ -4,6 +4,7 @@ from query_pilot.api.cli import build_parser as build_api_parser, main as api_ma
 from query_pilot.api.models import (
     AnswerGroundingStatus,
     ColumnSchemaContext,
+    DATA_TYPE_REGEX,
     ForeignKeySchemaContext,
     GenerateSQLRequest,
     GenerateSQLResponse,
@@ -17,11 +18,13 @@ from query_pilot.api.models import (
     SynthesizeAnswerResponse,
     TableSchemaContext,
     ValidationReasonResponse,
+    normalize_data_type,
 )
 
 __all__ = [
     "AnswerGroundingStatus",
     "ColumnSchemaContext",
+    "DATA_TYPE_REGEX",
     "ForeignKeySchemaContext",
     "GenerateSQLRequest",
     "GenerateSQLResponse",
@@ -35,6 +38,7 @@ __all__ = [
     "SynthesizeAnswerResponse",
     "TableSchemaContext",
     "ValidationReasonResponse",
+    "normalize_data_type",
     "api_main",
     "app",
     "build_api_parser",

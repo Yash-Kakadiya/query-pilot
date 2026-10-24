@@ -31,6 +31,11 @@ The Local Agent daemon strictly enforces a 3-tier configuration precedence order
 
 No general configuration file precedence layer is introduced for agent runtime settings; configuration remains simple, explicit, and deterministic.
 
+> [!NOTE]
+> **Environment File Handling (`.env`)**:
+> - The Hosted API service (`querypilot-api`) automatically loads supported configuration from a local `.env` file via its Pydantic Settings integration.
+> - The Local Agent daemon (`querypilot-agent`) reads strictly from process-level environment variables (`os.getenv`). It does **not** automatically parse `.env` files. When launching the agent, ensure any required environment variables are set in the launching shell (e.g. via PowerShell `$env:VAR = "value"`) or loaded explicitly prior to execution.
+
 ---
 
 ## 3. Local Agent Configuration Inventory
@@ -47,7 +52,7 @@ No general configuration file precedence layer is introduced for agent runtime s
 | `session_max_lifetime_seconds` | *N/A* | `QUERYPILOT_AGENT_SESSION_MAX_LIFETIME_SECONDS` | `43200` (12 hrs) | Hard session expiration ceiling (range: `300`–`86400`s). |
 | `max_request_bytes` | *N/A* | `QUERYPILOT_AGENT_MAX_REQUEST_BYTES` | `65536` (64 KB) | Maximum incoming HTTP request body size (range: `1024`–`1048576` bytes / 1 MiB ceiling). |
 | `max_concurrent_requests` | *N/A* | `QUERYPILOT_AGENT_MAX_CONCURRENT_REQUESTS` | `2` | Maximum concurrent requests processed by agent. |
-| `static_dir` | `--static-dir` | `QUERYPILOT_AGENT_STATIC_DIR` | `frontend/dist` | Directory containing compiled frontend SPA assets. |
+| `static_dir` | `--static-dir` | `QUERYPILOT_AGENT_STATIC_DIR` | Package `static/` or `frontend/dist` | Directory containing compiled frontend SPA assets. Resolves to package-bundled `query_pilot/agent/static` if present (wheel installation), falling back to repository `frontend/dist`. |
 | `upstream_api_url` | `--upstream-api-url` | `QUERYPILOT_UPSTREAM_API_URL` *(alias: `QUERYPILOT_AGENT_UPSTREAM_API_URL`)* | `http://127.0.0.1:8000` | Upstream API URL. If HTTP, must be loopback. |
 | `upstream_timeout_seconds` | *N/A* | `QUERYPILOT_UPSTREAM_TIMEOUT_SECONDS` *(alias: `QUERYPILOT_AGENT_UPSTREAM_TIMEOUT_SECONDS`)* | `30.0`s | Timeout for proxied upstream API requests (distinct from SQL statement execution timeout, which is hard-clamped to 15s). |
 
@@ -274,7 +279,7 @@ Settings for the Hosted/Local API service are managed via `query_pilot.config.Se
 | Setting | CLI Argument / Flag | Environment Variable | Default | Required? | Purpose |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | `GEMINI_API_KEY` | *N/A* | `GEMINI_API_KEY` | *None* | **Yes** | Google Gemini API key for LLM generation. |
-| `GEMINI_MODEL` | *N/A* | `GEMINI_MODEL` | `"gemini-3.8-flash"` | No | LLM model identifier. |
+| `GEMINI_MODEL` | *N/A* | `GEMINI_MODEL` | `"gemini-3.8-flash"` | No | LLM model identifier (configured default: `"gemini-3.8-flash"`; live milestone verification used `"gemini-3.5-flash-lite"`). |
 | `LANGCHAIN_TRACING_V2`| *N/A* | `LANGCHAIN_TRACING_V2` | `False` | No | Enables LangSmith telemetry. |
 | `LANGCHAIN_API_KEY` | *N/A* | `LANGCHAIN_API_KEY` | *None* | No | LangSmith API credential. |
 | `LANGCHAIN_PROJECT` | *N/A* | `LANGCHAIN_PROJECT` | `"query-pilot"` | No | Project grouping name for LangSmith traces. |
@@ -338,7 +343,7 @@ The configuration contract maintains all QueryPilot security controls:
 1. **Loopback-Only Binding**: The agent rejects any non-loopback bind address (`0.0.0.0`, LAN IPs, public hostnames) and fails closed at startup.
 2. **SSRF Defense**: Unencrypted HTTP upstream URLs (`upstream_api_url`) must point strictly to loopback (`127.0.0.1`, `localhost`, `::1`). Non-loopback upstreams must use `https://`.
 3. **Single-Use Bootstrap Authentication**: Access to the agent web interface requires retrieving the ephemeral 32-byte bootstrap token from `<token_dir>/<token_filename>`, establishing a secure `qpt_session` cookie, and invalidating the token immediately.
-4. **Credential Boundary**: SQL passwords and connection strings remain strictly local to the agent process and are never transmitted to the upstream API.
+4. **Credential & Data Boundaries**: SQL passwords and connection strings remain strictly local to the agent process and are never transmitted to the upstream API. Tabular query result rows are delivered exclusively to the loopback browser client and retained in browser memory.
 5. **Hard Global Execution Ceilings**: Local query execution is strictly clamped to a 15-second statement timeout (`GLOBAL_MAX_TIMEOUT_SECONDS = 15`) and 100 returned rows (`GLOBAL_MAX_ROW_LIMIT = 100`). Profile configurations or query parameters attempting to exceed these bounds are clamped down.
 6. **Payload Size Envelopes**: The agent limits incoming request bodies to 65,536 bytes (64 KB) by default with a 1 MiB hard ceiling. The hosted API enforces a 1 MiB streaming ceiling.
 7. **Distinct Proxy vs. SQL Timeouts**: The agent's `upstream_timeout_seconds` (default 30.0s) governs HTTP reverse-proxy requests to the upstream generation API and is distinct from the 15-second SQL statement execution timeout.
@@ -347,10 +352,11 @@ The configuration contract maintains all QueryPilot security controls:
 
 ## 8. Release Status & Evidence Alignment
 
-- **Controlled Preview Only**: QueryPilot is currently authorized strictly as a Controlled Preview for local developer and invited evaluation environments. Public distribution (e.g. to PyPI) is **BLOCKED / NO-GO** until dependency-resolved clean install tests and live model validation pass.
-- **Model Generation Evidence**: The B11 and B12 end-to-end browser journeys and real-process startup verifications were executed using **mocked model generation**.
-- **Live Gemini Status**: **UNVERIFIED end-to-end**. Live Gemini generation has **not** been verified end-to-end in the integrated stack during those milestones.
-- **Offline Tests Do Not Verify External Services**: Passing offline unit and contract tests (1,134 passed) verifies software contracts and safety bounds, but does **not** verify live Gemini model accuracy, response latency, token bounds, or external API uptime.
-- **Database Testing History**: Live SQL Server execution was verified against real instances (`QueryPilot_TestDB`) during earlier milestones (B9, B11-E, B11-F); milestone B12-E testing was performed offline with mocked database execution.
+- **Controlled Preview Only**: QueryPilot is currently authorized strictly as a Controlled Preview for local developer and invited evaluation environments. Public distribution (e.g. to PyPI) is **BLOCKED / NO-GO** until dependency-resolved clean install tests and multi-platform packaging pass.
+- **Live Gemini Synthetic Verification (Milestone B12-F5D)**: Completed four bounded live Gemini requests (`gemini-3.5-flash-lite`, one attempt per request) using synthetic inputs: answerable read-only SQL generation, refusal of an unsupported request, clarification prompting for an ambiguous request, and metadata-only answer synthesis.
+- **Controlled End-to-End Browser Journey (Milestone B12-F5E2)**: Verified the complete browser workflow against the dedicated `QueryPilot_TestDB`: live schema introspection and type normalization (`NVARCHAR(100)`), sensitive-column redaction (`password_hash` omitted), exactly one live Gemini candidate generation call, explicit human-in-the-loop authorization, and execution of a read-only query returning two records (`record_count: 2`).
+- **Generation vs. Synthesis Execution Boundaries**: In Milestone B12-F5E2, zero database execution calls occurred during candidate SQL generation, and the browser UI workflow rendered a deterministic local answer directly from client memory without invoking Gemini for synthesis.
+- **Dedicated SQL Server Integration Suite (Milestone B12-F5C)**: Reported 32 passing live integration tests against the dedicated test database.
+- **Offline Test Reconciled Baseline (Milestone B12-F5G)**: The latest reconciled offline test suite execution reported **1,217 passed, 62 deselected, 5 warnings** (the 62 deselected tests are live integration tests excluded by the `-m 'not integration'` filter). This count represents milestone-specific evidence rather than a permanent guarantee.
 - **CLI-Based Profile Management**: There is no browser-based profile onboarding wizard. All profile setup occurs via `querypilot-agent profile add`.
 

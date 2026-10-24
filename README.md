@@ -12,7 +12,7 @@ QueryPilot employs a **decoupled architecture** separating text-to-SQL generatio
    - Handles natural-language to SQL translation and query explanation using Google Gemini models.
    - Provides optional metadata-only answer synthesis based on column headers and row counts.
    - **Zero Database Access**: The API service has **no connection to customer databases** and stores no database credentials or connection strings.
-   - **Privacy Boundary**: By default, grounded answer synthesis receives only column metadata and row counts—**never raw database row values or cell records**.
+   - **Data Flow Boundary**: In the tested decoupled workflow, query results are returned to the local browser. The SQL-generation request does not include query-result rows. The hosted synthesis request schema declares metadata fields (`question`, `candidate_sql`, column names, row count, execution duration) rather than a raw-rows field. Permitted text fields, such as the question and candidate SQL, are not scanned comprehensively for embedded row/cell values; this is a description of the implemented request/data-flow boundary, not a blanket guarantee that sensitive information can never be transmitted externally. The browser UI can also perform deterministic local answer rendering directly from client memory without invoking external synthesis (as demonstrated in Milestone B12-F5E2).
 
 2. **`querypilot-agent` (Local Agent Daemon — Port `8001`)**:
    - Runs strictly on loopback (`http://127.0.0.1:8001/app/`) on the user's local machine.
@@ -72,10 +72,10 @@ flowchart TD
 ## Safety Invariants & Engineering Guardrails
 
 1. **Loopback-Only Binding**: `querypilot-agent` binds strictly to `127.0.0.1` or `localhost`. Binding to public hostnames or non-loopback network interfaces fails closed immediately.
-2. **Explicit Human-in-the-Loop Review**: Generated SQL statements are strictly unexecuted candidates until the user explicitly reviews the query in the UI and clicks **Run Query**.
+2. **Explicit Human-in-the-Loop Review**: Generated SQL statements are strictly unexecuted candidates until the user explicitly reviews the query in the UI and clicks **Execute Query on Database**.
 3. **Approved Connection Profiles**: The frontend references registered profile IDs (e.g. `local_dev`). Clients cannot supply arbitrary connection strings or target arbitrary database servers. Profiles are managed strictly via the CLI (`querypilot-agent profile`); there is no browser-based profile creation wizard.
 4. **Windows Integrated Authentication**: All database connections use `Trusted_Connection=yes`. SQL Server username/password profile authentication is unsupported to prevent storing cleartext credentials.
-5. **Data Minimization**: Customer database rows remain strictly on the local machine and are never transmitted to the generation API. Schema structure and the user's question are sent to the model to generate candidate SQL.
+5. **Implemented Data-Flow Boundary**: In the tested decoupled workflow, query results are returned to the local browser. The SQL-generation request does not include query-result rows, and the hosted synthesis request schema declares metadata fields rather than a raw-rows field. Permitted text fields, such as the question and candidate SQL, are not scanned comprehensively for embedded row/cell values; this is a description of the implemented request/data-flow boundary, not a blanket guarantee that sensitive information can never be transmitted externally. Avoid including sensitive personal information in query text or database identifiers.
 6. **Concurrent Process Requirement**: Both `querypilot-api` and `querypilot-agent` must be running concurrently for interactive natural-language querying.
 7. **Strict Database Execution Ceilings**: Local SQL execution is hard-clamped to a **15-second statement timeout** (`GLOBAL_MAX_TIMEOUT_SECONDS = 15`) and a **100-row result limit** (`GLOBAL_MAX_ROW_LIMIT = 100`). Profile configurations or queries requesting higher limits are strictly clamped down.
 8. **Bounded Request Payloads**: The local agent daemon enforces a default request body limit of **65,536 bytes (64 KB)** with a configurable ceiling of **1 MiB (1,048,576 bytes)** (`AgentConfig.max_request_bytes`). The hosted API enforces a hard streaming ceiling of **1 MiB**.
@@ -175,7 +175,7 @@ The daemon starts on `http://127.0.0.1:8001` and opens your default browser to:
 2. **Profile Selection**: Select your registered profile (`Local Development Database`) from the dropdown.
 3. **Ask a Question**: Enter a natural-language question (e.g. *"Show top 5 records by date"*).
 4. **Review Candidate SQL**: The agent fetches your schema locally, requests candidate SQL from the API, and renders the unexecuted SQL in the review editor.
-5. **Explicit Execution**: Click **Run Query**. The agent executes the SQL locally against your SQL Server database and displays the tabular results and execution metrics.
+5. **Explicit Execution**: Click **Execute Query on Database** in the candidate review card. The agent executes the SQL locally against your SQL Server database and displays the tabular results and execution metrics.
 
 ---
 
@@ -230,7 +230,7 @@ The project technologies and libraries are verified directly against project man
 | **Validation Models** | Pydantic / Settings | `>=2.7.0` | Strict request/response contract validation |
 | **Deterministic SQL** | sqlglot | `>=25.0.0` | SQL parsing, AST inspection, dialect-specific query validation |
 | **Database Driver** | pyodbc / SQLAlchemy | `>=5.1.0` / `>=2.0.0` | Parameterized local execution, pooling, and driver timeouts |
-| **LLM Provider** | Google Gemini API | `google-genai >=0.1.0` | Gemini 3.8 Flash (`gemini-3.8-flash`) for text-to-SQL reasoning |
+| **LLM Provider** | Google Gemini API | `google-genai >=0.1.0` | Gemini 3.8 Flash (`gemini-3.8-flash` configured default; `gemini-3.5-flash-lite` validated in live milestone tests) |
 | **Test Suite** | pytest | `>=8.0.0` | Unit, offline integration, and regression test suites |
 
 ---
@@ -264,10 +264,11 @@ QueryPilot is currently authorized strictly as a **Controlled Preview** (for loc
 - **Public Distribution Blocked (NO-GO)**: General distribution to PyPI, public release tags, and untrusted multi-user environments are **BLOCKED** until clean dependency resolution, live model verification, and working-tree cleanup are resolved.
 
 ### 2. Model Integration & Live Execution Evidence
-- **Mocked Model Generation in B11/B12**: The B11 and B12 end-to-end browser journeys, real-process integration tests, and workflow demonstrations used **deterministic mocked model generation** to validate system orchestration, UI routing, security boundaries, and Windows Integrated Authentication without external dependencies.
-- **Live Gemini Status**: **UNVERIFIED end-to-end**. Live Gemini generation has **not** been tested in an integrated browser-to-agent-to-API workflow during B11 or B12.
-- **Offline Test Boundary**: Offline test suite execution (1,134 passed tests) verifies software contracts, syntax transformations, and security boundaries; it does **not** establish live Gemini model accuracy, response latency, token-limit behavior, or external service availability.
-- **Live SQL Server Testing**: Live Microsoft SQL Server execution was tested against a real database instance (`QueryPilot_TestDB`) in earlier milestones (B9, B11-E, B11-F); milestone B12 testing was performed strictly offline with mocked database execution.
+- **Live Gemini Synthetic Verification (Milestone B12-F5D)**: Completed four bounded live Gemini requests (`gemini-3.5-flash-lite`, one attempt per request) using synthetic inputs: answerable read-only SQL generation, refusal of an unsupported/mutating request, clarification prompting for an ambiguous request, and metadata-only answer synthesis.
+- **Controlled End-to-End Browser Journey (Milestone B12-F5E2)**: Verified the complete browser workflow against the dedicated `QueryPilot_TestDB`: live schema introspection and type normalization (`NVARCHAR(100)`), sensitive-column redaction (`password_hash` omitted), exactly one live Gemini candidate generation call, explicit human-in-the-loop authorization, and execution of a read-only query returning two records (`record_count: 2`).
+- **Generation vs. Synthesis Execution Boundaries**: In Milestone B12-F5E2, zero database execution calls occurred during candidate SQL generation, and the browser UI workflow rendered a deterministic local answer directly from client memory without invoking Gemini for synthesis.
+- **Dedicated SQL Server Integration Suite (Milestone B12-F5C)**: Reported 32 passing live integration tests against the dedicated test database.
+- **Offline Test Reconciled Baseline (Milestone B12-F5G)**: The latest reconciled offline test suite execution reported **1,217 passed, 62 deselected, 5 warnings** (the 62 deselected tests are live integration tests excluded by the `-m 'not integration'` filter). This count represents milestone-specific evidence rather than a permanent guarantee.
 
 ### 3. Packaging & Distribution Verification
 - **Verified Wheel Smoke Test**: The distribution orchestration script (`python scripts/build_distribution.py`) compiles the React frontend into `frontend/dist/`, stages assets into `src/query_pilot/agent/static/`, and builds `dist/query_pilot-0.1.0-py3-none-any.whl`. Wheel asset serving has been verified using `pip install --no-deps` in an environment where runtime dependencies were already satisfied.

@@ -509,12 +509,47 @@ class HealthResponse(BaseModel):
 # ==============================================================================
 
 IDENTIFIER_REGEX = re.compile(r"^[a-zA-Z0-9_#$]+$")
-DATA_TYPE_REGEX = re.compile(r"^[a-zA-Z0-9_#$(), ]+$")
+DATA_TYPE_REGEX = re.compile(
+    r"^(?P<base>[a-zA-Z_#$][a-zA-Z0-9_#$]*(?: +[a-zA-Z_#$][a-zA-Z0-9_#$]*)*"
+    r"(?: *\((?:\d+|max)(?: *, *\d+)? *\))?)"
+    r"(?: +COLLATE +(?:\"[a-zA-Z0-9_#$]+\"|[a-zA-Z0-9_#$]+))?$",
+    re.IGNORECASE,
+)
 MAX_TABLES: int = 50
 MAX_COLUMNS_PER_TABLE: int = 100
 MAX_IDENTIFIER_LENGTH: int = 128
 MAX_DESCRIPTION_LENGTH: int = 250
 MAX_SCHEMA_PAYLOAD_BYTES: int = 48 * 1024  # 49,152 bytes (48 KB)
+
+
+def normalize_data_type(v: str) -> str:
+    """Validate and normalize untrusted column data type metadata.
+
+    Accepts valid canonical SQL data types (e.g. 'INT', 'NVARCHAR(100)', 'DECIMAL(10, 2)')
+    and reflected SQL Server types with valid quoted or unquoted collation clauses
+    (e.g. 'NVARCHAR(100) COLLATE "SQL_Latin1_General_CP1_CI_AS"').
+
+    Normalizes the type by stripping any collation clause and returning the canonical
+    base type string.
+
+    Rejects inputs that are empty, exceed MAX_IDENTIFIER_LENGTH, contain control
+    characters, or fail the structural grammar.
+    """
+    if not isinstance(v, str):
+        raise ValueError(f"data_type must be a string, got {type(v).__name__}.")
+    if len(v) > MAX_IDENTIFIER_LENGTH:
+        raise ValueError(
+            f"data_type exceeds maximum length of {MAX_IDENTIFIER_LENGTH} characters."
+        )
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in v):
+        raise ValueError("data_type cannot contain control characters.")
+    cleaned = v.strip()
+    if not cleaned:
+        raise ValueError("data_type cannot be empty.")
+    m = DATA_TYPE_REGEX.match(cleaned)
+    if not m:
+        raise ValueError(f"Invalid data type {v!r}. Must match regex {DATA_TYPE_REGEX.pattern}")
+    return m.group("base").strip()
 
 
 class GenerationStatus(str, Enum):
@@ -580,10 +615,7 @@ class ColumnSchemaContext(BaseModel):
     @field_validator("data_type")
     @classmethod
     def validate_data_type(cls, v: str) -> str:
-        cleaned = v.strip()
-        if not cleaned or not DATA_TYPE_REGEX.match(cleaned):
-            raise ValueError(f"Invalid data type {v!r}. Must match regex {DATA_TYPE_REGEX.pattern}")
-        return cleaned
+        return normalize_data_type(v)
 
     @field_validator("comment")
     @classmethod

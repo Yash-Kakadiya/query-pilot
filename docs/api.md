@@ -1,24 +1,124 @@
 # QueryPilot API Guide
 
 > [!WARNING]
-> **Historical Documentation Notice (Legacy Prototype)**
-> This document describes the legacy Phase 1–6 prototype architecture where the API service connected directly to SQL Server and executed queries server-side.
->
-> In the current architecture, QueryPilot is decoupled into a local loopback agent daemon (`querypilot-agent`) that executes queries locally and a generation API (`querypilot-api`) that handles SQL generation:
-> - **Controlled Preview Status**: QueryPilot is currently authorized strictly as a Controlled Preview for local and invited evaluation environments. Public distribution is **BLOCKED**.
-> - **Execution Ceilings**: Local database execution is hard-clamped to a **15-second statement timeout** (`GLOBAL_MAX_TIMEOUT_SECONDS = 15`) and a **100-row result limit** (`GLOBAL_MAX_ROW_LIMIT = 100`).
-> - **Timeout Distinction**: Upstream HTTP proxy and client timeouts (default **30.0 seconds**) are network transport timeouts, completely distinct from database statement execution timeouts (hard-clamped to 15s).
-> - **Payload Bounds**: Request payloads are bounded (64 KB default on agent, 1 MiB ceiling; 1 MiB streaming ceiling on hosted API).
-> - **Model Verification Status**: B11 and B12 integration testing used **mocked model generation**; live Gemini generation is **UNVERIFIED end-to-end**.
->
-> For the current supported architecture, configuration, and first-run instructions, refer to:
-> - [Root README](../README.md)
-> - [Configuration Guide](configuration.md)
-> - [Architecture Specification](architecture.md)
+> **Architecture & Scope Notice**
+> QueryPilot is organized into a decoupled architecture separating text-to-SQL generation from local database execution:
+> - **Local Agent Daemon (`querypilot-agent` — Port 8001)**: Binds strictly to loopback (`127.0.0.1`), serves the web UI at `/app/`, introspects schemas locally, and executes approved SQL queries locally under Windows Integrated Authentication.
+> - **Generation API Service (`querypilot-api` — Port 8000)**: Generates unexecuted candidate SQL and provides optional metadata-only answer synthesis via Google Gemini (`gemini-3.8-flash` configured default; `gemini-3.5-flash-lite` validated in live milestone tests). It has **zero database access or credentials**.
+> - **Controlled Preview Status**: QueryPilot is authorized strictly as a Controlled Preview for local development and invited evaluations. Public distribution remains **BLOCKED**.
+> - **Milestone-Verified Evidence**: Milestone B12-F5D verified live Gemini API generation and synthesis payload contracts; Milestone B12-F5E2 verified the complete browser journey against `QueryPilot_TestDB` (1 live Gemini generation call, 0 DB calls during generation, explicit execution of read-only query returning 2 records, and deterministic local answer rendering without external synthesis); Milestone B12-F5C verified 32 live SQL Server integration tests; Milestone B12-F5G reconciled 1,217 passing offline unit/contract tests (62 live integration tests deselected).
+> - **Hard Execution Ceilings**: Local query execution is strictly clamped to a **15-second statement timeout** (`GLOBAL_MAX_TIMEOUT_SECONDS = 15`) and a **100-row result limit** (`GLOBAL_MAX_ROW_LIMIT = 100`).
+> - **Timeout Distinction**: Upstream HTTP proxy and transport timeouts (default **30.0 seconds**) are network transport timeouts, completely distinct from database query statement execution timeouts (hard-clamped to 15s).
 
 ---
 
-## 1. Running Locally
+## 1. Decoupled Architecture Endpoints (Current v1 Workflow)
+
+### 1.1 `POST /api/v1/generate-sql` (Hosted Generation API)
+Translates a natural-language question and model-facing schema context into a read-only candidate SQL query without executing it.
+
+* **Method:** `POST`
+* **Path:** `/api/v1/generate-sql` (also available via local agent reverse-proxy at `http://127.0.0.1:8001/api/v1/generate-sql`)
+* **Service:** Generation API (`querypilot-api :8000`)
+* **Database Boundary:** **Zero database access.** The service never connects to customer databases and does not execute SQL queries.
+* **Authentication:** Optional `X-QueryPilot-Access-Key: <string>` when configured on backend. No session cookie required.
+* **Proxy Exposure:** Proxied on local agent daemon at `/api/v1/generate-sql` via the agent's proxy allowlist (`/api/health`, `/api/v1/generate-sql`, `/api/v1/synthesize-answer`, `/api/query`). Upstream proxy forwards `Content-Type`, `Accept`, `X-Request-ID`, and `X-QueryPilot-Access-Key`, stripping cookies and agent-specific headers.
+* **Headers:** `Content-Type: application/json`, optional `X-Request-ID: <string>`, optional `X-QueryPilot-Access-Key: <string>`.
+
+#### Request Model (`GenerateSQLRequest` — `extra = "forbid"`)
+
+| Field | Type | Required | Constraints & Description |
+| :--- | :--- | :---: | :--- |
+| `question` | `string` | **Yes** | Natural-language query question (1–1,000 characters). Transmitted to Google Gemini. |
+| `schema_context` | `object` | **Yes** | Model-facing database schema (`database_name`, list of `tables` with normalized `columns`). Transmitted to Google Gemini. |
+| `conversation_context` | `array[object]` | No | Optional list of prior conversation turns (maximum 3 turns). |
+| `request_id` | `string` | No | Optional client tracking correlation ID (maximum 128 characters). |
+
+#### Response Model (`GenerateSQLResponse` — `extra = "forbid"`)
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `candidate_sql` | `string \| null` | Generated read-only T-SQL candidate query. Present only when `status == "generated"`. |
+| `status` | `string` | Generation outcome (`"generated"`, `"clarification_needed"`, `"unsupported"`, `"generation_failed"`). |
+| `clarification_prompt` | `string \| null` | Clarification question when status is `"clarification_needed"`. |
+| `unsupported_reason` | `string \| null` | Refusal explanation when status is `"unsupported"`. |
+| `execution_disclaimer` | `string` | Fixed disclaimer: `"Candidate SQL is unexecuted."` |
+| `is_executed` | `boolean` | Fixed literal `false` confirming the query has **not** been executed. |
+| `request_id` | `string` | Correlated request tracking ID. |
+
+---
+
+### 1.2 `POST /api/v1/synthesize-answer` (Hosted Metadata Answer Synthesis)
+Generates an optional natural-language answer narrative from query metadata and aggregate dimensions without receiving database row records.
+
+* **Method:** `POST`
+* **Path:** `/api/v1/synthesize-answer` (also available via local agent reverse-proxy at `http://127.0.0.1:8001/api/v1/synthesize-answer`)
+* **Service:** Generation API (`querypilot-api :8000`)
+* **Authentication:** Optional `X-QueryPilot-Access-Key: <string>` when configured on backend. No session cookie required.
+* **Proxy Exposure:** Proxied on local agent daemon at `/api/v1/synthesize-answer` via the agent's proxy allowlist. The proxy strips cookies and agent headers before forwarding.
+* **Privacy Boundary:** The request schema declares aggregate metadata and execution metrics (`question`, `candidate_sql`, `columns`, `row_count`, `truncated`, `execution_status`, `execution_time_ms`, and `request_id`) and does not include raw result rows or cell records. Unknown fields are rejected by model validation (`extra = "forbid"`), and column items are validated as SQL identifiers. However, `extra = "forbid"` alone does not inspect or prevent row/cell values from being embedded within permitted text fields (such as within the user's question or SQL string literals). When hosted synthesis is invoked, the question, candidate SQL, and column names are transmitted to Google Gemini. Note that during the Milestone B12-F5E2 browser journey, the UI executed deterministic local answer rendering directly from client memory without invoking this hosted synthesis route.
+* **Headers:** `Content-Type: application/json`, optional `X-Request-ID: <string>`, optional `X-QueryPilot-Access-Key: <string>`.
+
+#### Request Model (`SynthesizeAnswerRequest` — `extra = "forbid"`)
+
+| Field | Type | Required | Constraints & Description |
+| :--- | :--- | :---: | :--- |
+| `question` | `string` | **Yes** | Original natural-language question (1–1,000 characters). |
+| `candidate_sql` | `string` | **Yes** | Validated SQL query executed locally (1–10,000 characters). |
+| `columns` | `array[string]` | **Yes** | List of returned column identifiers (1–100 items; validated against SQL identifier regex `^[a-zA-Z0-9_#$]+$|\[[a-zA-Z0-9_#$ ]+\]$`). |
+| `row_count` | `integer` | **Yes** | Total count of rows returned by query (range: `0`–`10000`). |
+| `truncated` | `boolean` | No | `true` if results exceeded effective row limit and were truncated (default: `false`). |
+| `execution_status` | `string` | **Yes** | Must be strictly `"succeeded"`. |
+| `execution_time_ms` | `float` | **Yes** | Local query execution time in milliseconds (range: `0.0`–`60000.0`). |
+| `request_id` | `string` | **Yes** | Correlated request tracking ID (1–128 characters). |
+
+#### Response Model (`SynthesizeAnswerResponse` — `extra = "forbid"`)
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `summary` | `string` | Grounded prose narrative explaining findings from aggregate metadata. |
+| `status` | `string` | Grounding outcome (`"grounded"`, `"ungrounded"`, `"partially_grounded"`, `"unavailable"`). |
+| `grounding_notes` | `string \| null` | Transparency notes on synthesis grounding. |
+| `request_id` | `string` | Correlated request tracking ID. |
+
+---
+
+### 1.3 `POST /agent/v1/profiles/{profile_id}/execute` (Local Agent Execution Route)
+Executes a human-reviewed, read-only SQL query locally against an approved database profile.
+
+* **Method:** `POST`
+* **Path:** `/agent/v1/profiles/{profile_id}/execute`
+* **Service:** Local Agent Daemon (`querypilot-agent :8001` only — **strictly local; rejected by proxy allowlist and never forwarded upstream**)
+* **Authentication:** Valid loopback `qpt_session` `HttpOnly` cookie (established via `/agent/v1/auth/bootstrap`) and mandatory `X-QueryPilot-Request: 1` header for CSRF protection on state-changing agent endpoints.
+* **Execution Boundary:** Enforces read-only AST safety validation, statement timeout (profile timeout clamped $\le$ 15s), result row limit (profile limit clamped $\le$ 100 rows), and database context identity checks (`SELECT DB_NAME()`).
+* **Data Flow:** Executes locally against SQL Server via `pyodbc` using Windows Integrated Authentication. Tabular row records are returned directly to the loopback browser client and retained in browser memory; they are never transmitted to the hosted API service.
+
+#### Request Model (`ExecuteQueryRequest` — `extra = "forbid"`)
+
+| Field | Type | Required | Constraints & Description |
+| :--- | :--- | :---: | :--- |
+| `sql` | `string` | **Yes** | Read-only SQL candidate query to validate and execute (1–10,000 characters). |
+| `request_id` | `string` | No | Optional client tracking correlation ID (maximum 128 characters). |
+
+*(Note: Clients cannot override database targets, timeouts, or row limits in the request payload; execution parameters are governed strictly by the verified local connection profile and global ceilings).*
+
+#### Response Model (`ExecuteQueryResponse` — `extra = "forbid"`)
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `columns` | `array[string]` | List of returned column names in SELECT order. |
+| `rows` | `array[object]` | Serialized tabular row records as JSON objects (retained strictly in local browser memory). |
+| `row_count` | `integer` | Number of rows returned in this batch. |
+| `truncated` | `boolean` | `true` if results were truncated by the effective row ceiling. |
+| `execution_time_ms` | `float` | Server-side execution duration in milliseconds. |
+| `request_id` | `string \| null` | Echoed correlation tracking ID. |
+
+---
+
+## 2. Legacy Prototype API (Phase 1–6 Monolithic Prototype)
+
+> [!NOTE]
+> The endpoints below represent the Phase 1–6 monolithic prototype where `querypilot-api` connected directly to database engines server-side. They are maintained for regression evaluation and legacy evaluation harnesses, but are distinct from the supported decoupled agent workflow above.
 
 ### Prerequisites
 * Python `>=3.12` (as declared in `pyproject.toml`)
