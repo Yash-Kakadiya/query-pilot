@@ -49,6 +49,14 @@ from query_pilot.db.profile import (
     ConnectionProfile,
     ProfileStore,
 )
+from query_pilot.api.models import (
+    AnswerGroundingStatus,
+    GenerateSQLRequest,
+    GenerateSQLResponse,
+    GenerationStatus,
+    SynthesizeAnswerRequest,
+    SynthesizeAnswerResponse,
+)
 
 logger = logging.getLogger("browser_test_server")
 
@@ -63,6 +71,27 @@ class AuditRecord:
     method: str
     path: str
     status_code: int
+
+
+class MockCursorResult:
+    """Mock SQLAlchemy CursorResult for deterministic offline query execution."""
+
+    def __init__(self, columns: List[str], rows: List[tuple], scalar_val: Any = None):
+        self._columns = columns
+        self._rows = rows
+        self._scalar_val = scalar_val
+
+    def scalar(self) -> Any:
+        return self._scalar_val
+
+    def keys(self) -> List[str]:
+        return list(self._columns)
+
+    def fetchmany(self, size: int) -> List[tuple]:
+        return self._rows[:size]
+
+    def close(self) -> None:
+        pass
 
 
 class MockProfileConnectionFactory(ProfileConnectionFactory):
@@ -95,8 +124,77 @@ class MockProfileConnectionFactory(ProfileConnectionFactory):
             mock_engine.connect.side_effect = exc
             return mock_engine
 
-        # Default: deterministic success returning configured database name
-        mock_conn.execute.return_value.scalar.return_value = profile.database_name
+        # DBAPI connection mock with timeout support for driver-level checks
+        raw_dbapi = MagicMock()
+        raw_dbapi.timeout = profile.timeout_seconds
+        mock_conn.connection.dbapi_connection = raw_dbapi
+
+        def execute_statement(statement, *args, **kwargs):
+            sql_str = str(statement).strip()
+
+            # 1. DB context verification or scalar DB name probe
+            if "DB_NAME()" in sql_str.upper():
+                if "db_mismatch" in name_lower:
+                    return MockCursorResult(
+                        columns=["db_name"],
+                        rows=[("Mismatched_DB",)],
+                        scalar_val="Mismatched_DB",
+                    )
+                return MockCursorResult(
+                    columns=["db_name"],
+                    rows=[(profile.database_name,)],
+                    scalar_val=profile.database_name,
+                )
+
+            # 2. Timeout simulation trigger via profile configuration
+            if "timeout" in name_lower or profile.timeout_seconds == 1:
+                raise OperationalError(
+                    "SELECT 1",
+                    {},
+                    Exception("HYT00: [Microsoft][ODBC] Query timeout expired"),
+                )
+
+            # 3. Connection disruption simulation
+            if "link_fail" in name_lower:
+                raise OperationalError(
+                    "08S01 Communication link failure",
+                    {},
+                    Exception("08S01: Connection reset by peer"),
+                )
+
+            # 4. Deterministic query execution results based on referenced table
+            upper_sql = sql_str.upper()
+            if "ORDERS" in upper_sql:
+                cols = ["OrderID", "CustomerID", "OrderDate", "TotalAmount"]
+                rows = [
+                    (1001, 1, "2024-01-15T10:00:00", 250.50),
+                    (1002, 2, "2024-01-16T14:30:00", 89.99),
+                    (1003, 1, "2024-01-18T09:15:00", 420.00),
+                ]
+            else:
+                # Default Customers table data
+                cols = ["CustomerID", "CompanyName", "City"]
+                if "truncate" in name_lower or profile.max_row_limit < 3:
+                    # Provide enough rows to trigger profile truncation detection
+                    rows = [
+                        (i, f"Company {i}", "Seattle" if i % 2 == 0 else "Portland")
+                        for i in range(1, 15)
+                    ]
+                else:
+                    rows = [
+                        (1, "Contoso Ltd", "Seattle"),
+                        (2, "Fabrikam Inc", "Seattle"),
+                        (3, "Northwind Traders", "Portland"),
+                    ]
+
+            return MockCursorResult(
+                columns=cols,
+                rows=rows,
+                scalar_val=rows[0][0] if rows else None,
+            )
+
+        mock_conn.execute.side_effect = execute_statement
+        mock_conn.execution_options.return_value = mock_conn
         mock_conn.__enter__.return_value = mock_conn
         mock_conn.__exit__.return_value = None
         mock_engine.connect.return_value = mock_conn
@@ -199,7 +297,66 @@ class BrowserTestServer:
                         "tracing_enabled": False,
                     },
                 )
-            return httpx.Response(404, json={"detail": "Not found in mock upstream"})
+
+            if request.url.path == "/api/v1/generate-sql":
+                try:
+                    req_data = json.loads(request.content.decode("utf-8"))
+                    gen_req = GenerateSQLRequest.model_validate(req_data)
+                except Exception as exc:
+                    return httpx.Response(422, json={"detail": f"Request validation failed: {exc}"})
+
+                req_id = gen_req.request_id or request.headers.get("x-request-id") or "req-test-mock-gen"
+                q_lower = gen_req.question.lower()
+
+                # Controlled generation-failure triggers based on question text
+                if "unsupported" in q_lower:
+                    resp = GenerateSQLResponse(
+                        status=GenerationStatus.UNSUPPORTED,
+                        unsupported_reason="The requested business question is not supported by the available database schema.",
+                        request_id=req_id,
+                    )
+                elif "clarification" in q_lower:
+                    resp = GenerateSQLResponse(
+                        status=GenerationStatus.CLARIFICATION_NEEDED,
+                        clarification_prompt="Please specify whether you want active or all customers.",
+                        request_id=req_id,
+                    )
+                elif "fail" in q_lower or "error" in q_lower:
+                    resp = GenerateSQLResponse(
+                        status=GenerationStatus.GENERATION_FAILED,
+                        request_id=req_id,
+                    )
+                else:
+                    # Deterministic candidate SQL matching the active sample schema
+                    if "order" in q_lower:
+                        candidate_sql = "SELECT OrderID, CustomerID, OrderDate, TotalAmount FROM dbo.Orders WHERE TotalAmount > 100;"
+                    else:
+                        candidate_sql = "SELECT CustomerID, CompanyName, City FROM dbo.Customers WHERE City = 'Seattle';"
+
+                    resp = GenerateSQLResponse(
+                        candidate_sql=candidate_sql,
+                        status=GenerationStatus.GENERATED,
+                        request_id=req_id,
+                    )
+
+                return httpx.Response(200, json=resp.model_dump(mode="json"))
+
+            if request.url.path == "/api/v1/synthesize-answer":
+                try:
+                    synth_data = json.loads(request.content.decode("utf-8"))
+                    synth_req = SynthesizeAnswerRequest.model_validate(synth_data)
+                except Exception as exc:
+                    return httpx.Response(422, json={"detail": f"Request validation failed: {exc}"})
+
+                synth_resp = SynthesizeAnswerResponse(
+                    summary=f"Found {synth_req.row_count} matching records across columns: {', '.join(synth_req.columns)}.",
+                    status=AnswerGroundingStatus.GROUNDED_FROM_METADATA,
+                    grounding_notes="Offline deterministic test synthesis grounded in result metadata.",
+                    request_id=synth_req.request_id,
+                )
+                return httpx.Response(200, json=synth_resp.model_dump(mode="json"))
+
+            return httpx.Response(404, json={"detail": f"Route '{request.url.path}' not found in mock upstream"})
 
         self.mock_upstream_client = httpx.AsyncClient(
             transport=httpx.MockTransport(mock_upstream_handler)
