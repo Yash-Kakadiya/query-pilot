@@ -660,3 +660,211 @@ test('Profile Onboarding - Explicit Selection & Decoupled Workflow', async (t) =
     }
   )
 })
+
+// ==============================================================================
+// 4. Strict Request Sequence, Failure Gating & Session Invalidation
+// ==============================================================================
+
+test('Profile Onboarding - Strict Sequence, Failure Gating & Session Invalidation', async (t) => {
+  t.afterEach(() => {
+    restoreFetch()
+  })
+
+  await t.test(
+    'complete onboarding workflow executes requests in strict sequential order without premature testing or execution',
+    async () => {
+      const dispatchedRequests: Array<{ url: string; method: string }> = []
+
+      globalThis.fetch = (async (url: string | URL | Request, options?: RequestInit) => {
+        const urlStr = String(url)
+        const method = options?.method || 'GET'
+        dispatchedRequests.push({ url: urlStr, method })
+
+        if (urlStr.includes('/validate-config') && method === 'POST') {
+          return new Response(
+            JSON.stringify({ valid: true, message: 'Configuration valid.' }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+        }
+
+        if (urlStr.includes('/test-connection') && method === 'POST') {
+          return new Response(
+            JSON.stringify({
+              connected: true,
+              database_name: 'AnalyticsDB',
+              latency_ms: 15.4,
+              message: 'Verified',
+              failure_code: null,
+            } satisfies TestConnectionResponse),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+        }
+
+        if (urlStr.includes('/schema') && method === 'GET') {
+          return new Response(JSON.stringify(SAMPLE_RAW_SCHEMA), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        }
+
+        if (urlStr.includes('/v1/profiles') && method === 'POST') {
+          return new Response(
+            JSON.stringify({
+              profile: SAMPLE_NEW_PROFILE_SUMMARY,
+              is_default: false,
+              message: 'Profile created.',
+            }),
+            { status: 201, headers: { 'Content-Type': 'application/json' } }
+          )
+        }
+
+        if (urlStr.includes('/v1/profiles') && method === 'GET') {
+          return new Response(
+            JSON.stringify({
+              profiles: [...SAMPLE_EXISTING_PROFILES, SAMPLE_NEW_PROFILE_SUMMARY],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+        }
+
+        return new Response('Not Found', { status: 404 })
+      }) as typeof fetch
+
+      const coordinator = new AgentSessionCoordinator({
+        status: 'authenticated',
+        profiles: SAMPLE_EXISTING_PROFILES,
+        selectedProfileId: null,
+      })
+
+      // Step 1: Validate config
+      const valRes = await coordinator.validateConfig(SAMPLE_NEW_PROFILE_CONFIG)
+      assert.strictEqual(valRes.valid, true)
+      assert.strictEqual(dispatchedRequests.length, 1)
+      assert.ok(dispatchedRequests[0].url.includes('/v1/profiles/validate-config'))
+      assert.strictEqual(dispatchedRequests[0].method, 'POST')
+
+      // Step 2: Add profile (create + refresh)
+      const createRes = await coordinator.addProfile(SAMPLE_NEW_PROFILE_CONFIG)
+      assert.strictEqual(createRes.profile.profile_id, 'mssql_analytics')
+      assert.strictEqual(dispatchedRequests.length, 3)
+      assert.ok(dispatchedRequests[1].url.includes('/v1/profiles'))
+      assert.strictEqual(dispatchedRequests[1].method, 'POST')
+      assert.ok(dispatchedRequests[2].url.includes('/v1/profiles'))
+      assert.strictEqual(dispatchedRequests[2].method, 'GET')
+
+      // Invariant: No connection test or schema loading initiated during creation
+      assert.strictEqual(coordinator.getState().selectedProfileId, null)
+      assert.strictEqual(coordinator.getState().schemaStatus, 'idle')
+      assert.strictEqual(coordinator.getState().connectionTestStatus, 'idle')
+
+      // Step 3: Explicit connection test
+      const testRes = await coordinator.testConnection('mssql_analytics')
+      assert.strictEqual(testRes.connected, true)
+      assert.strictEqual(dispatchedRequests.length, 4)
+      assert.ok(dispatchedRequests[3].url.includes('/test-connection'))
+      assert.strictEqual(dispatchedRequests[3].method, 'POST')
+
+      // Invariant: Testing connection does NOT select profile or load schema
+      assert.strictEqual(coordinator.getState().selectedProfileId, null)
+      assert.strictEqual(coordinator.getState().schemaStatus, 'idle')
+      assert.strictEqual(coordinator.getState().connectionTestStatus, 'success')
+
+      // Step 4: Explicit profile selection
+      await coordinator.selectProfile('mssql_analytics')
+      assert.strictEqual(dispatchedRequests.length, 5)
+      assert.ok(dispatchedRequests[4].url.includes('/schema'))
+      assert.strictEqual(dispatchedRequests[4].method, 'GET')
+
+      // Invariant: Selection loads schema and resets connection test status to idle
+      const finalState = coordinator.getState()
+      assert.strictEqual(finalState.selectedProfileId, 'mssql_analytics')
+      assert.strictEqual(finalState.schemaStatus, 'loaded')
+      assert.strictEqual(finalState.connectionTestStatus, 'idle')
+      assert.strictEqual(finalState.connectionTestResult, null)
+    }
+  )
+
+  await t.test(
+    'failed connection test preserves profile and isolates subsequent schema introspection failure',
+    async () => {
+      globalThis.fetch = (async (url: string | URL | Request) => {
+        const urlStr = String(url)
+        if (urlStr.includes('/test-connection')) {
+          return new Response(
+            JSON.stringify({
+              connected: false,
+              database_name: null,
+              latency_ms: null,
+              message: 'Database does not exist or target is unreachable.',
+              failure_code: 'DATABASE_MISMATCH',
+            } satisfies TestConnectionResponse),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+        }
+        if (urlStr.includes('/schema')) {
+          return new Response(
+            JSON.stringify({
+              error: 'schema_error',
+              detail: 'Cannot introspect schema on unreachable database.',
+            }),
+            { status: 500, headers: { 'Content-Type': 'application/json' } }
+          )
+        }
+        return new Response('Not Found', { status: 404 })
+      }) as typeof fetch
+
+      const coordinator = new AgentSessionCoordinator({
+        status: 'authenticated',
+        profiles: [...SAMPLE_EXISTING_PROFILES, SAMPLE_NEW_PROFILE_SUMMARY],
+      })
+
+      // 1. Connection test fails
+      const testRes = await coordinator.testConnection('mssql_analytics')
+      assert.strictEqual(testRes.connected, false)
+      assert.strictEqual(testRes.failure_code, 'DATABASE_MISMATCH')
+      assert.strictEqual(coordinator.getState().connectionTestStatus, 'failed')
+
+      // 2. Profile is selected despite failed test
+      await coordinator.selectProfile('mssql_analytics')
+
+      // Invariant: Selecting profile clears connectionTestStatus
+      const state = coordinator.getState()
+      assert.strictEqual(state.connectionTestStatus, 'idle')
+      assert.strictEqual(state.connectionTestResult, null)
+
+      // Invariant: Schema status fails closed
+      assert.strictEqual(state.schemaStatus, 'error')
+      assert.ok(state.schemaError?.includes('Cannot introspect schema'))
+      assert.strictEqual(state.schemaContext, null)
+    }
+  )
+
+  await t.test(
+    'clearSelectedProfile and clearConnectionTest clear connection test status and results',
+    async () => {
+      const coordinator = new AgentSessionCoordinator({
+        status: 'authenticated',
+        profiles: [...SAMPLE_EXISTING_PROFILES, SAMPLE_NEW_PROFILE_SUMMARY],
+        selectedProfileId: 'mssql_analytics',
+        connectionTestStatus: 'success',
+        connectionTestResult: {
+          connected: true,
+          database_name: 'AnalyticsDB',
+          latency_ms: 12.0,
+        },
+      })
+
+      coordinator.clearSelectedProfile()
+      const state1 = coordinator.getState()
+      assert.strictEqual(state1.selectedProfileId, null)
+      assert.strictEqual(state1.connectionTestStatus, 'idle')
+      assert.strictEqual(state1.connectionTestResult, null)
+
+      // Setting connection test manually and clearing via clearConnectionTest()
+      coordinator.clearConnectionTest()
+      const state2 = coordinator.getState()
+      assert.strictEqual(state2.connectionTestStatus, 'idle')
+      assert.strictEqual(state2.connectionTestResult, null)
+    }
+  )
+})

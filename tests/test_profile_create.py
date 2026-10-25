@@ -978,3 +978,65 @@ def test_profile_file_lock_cleaned_up_on_sync_failure(agent_fixture):
     # Lock file released
     assert not profiles_file.with_name(f"{profiles_file.name}.lock").exists()
 
+
+def test_create_profile_corrupted_disk_store_fails_closed(agent_fixture):
+    """When on-disk profiles file is corrupted/unparseable JSON, creation fails closed with 500 and releases lock."""
+    client = agent_fixture["client"]
+    session_id = agent_fixture["session_id"]
+    profiles_file = agent_fixture["profiles_file"]
+    store = agent_fixture["store"]
+
+    # Write corrupt data to on-disk file
+    profiles_file.write_text("{ malformed json content !!!", encoding="utf-8")
+
+    payload = {
+        "profile_id": "corrupt_disk_test",
+        "display_name": "Corrupt Disk Test",
+        "server": "localhost",
+        "database_name": "TestDB",
+    }
+
+    resp = client.post(
+        "/agent/v1/profiles",
+        headers={"Host": "127.0.0.1:8001", "X-QueryPilot-Request": "1"},
+        cookies={SESSION_COOKIE_NAME: session_id},
+        json=payload,
+    )
+    assert resp.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    assert resp.json()["detail"] == "Failed to persist profile configuration."
+
+    # In-memory store remains unaffected
+    assert "corrupt_disk_test" not in store.profiles
+
+    # Lock file released
+    assert not profiles_file.with_name(f"{profiles_file.name}.lock").exists()
+
+
+def test_create_profile_non_dict_root_disk_store_fails_closed(agent_fixture):
+    """When on-disk profiles file has invalid root structure (not a JSON dict), creation fails closed with 500."""
+    client = agent_fixture["client"]
+    session_id = agent_fixture["session_id"]
+    profiles_file = agent_fixture["profiles_file"]
+    store = agent_fixture["store"]
+
+    # Write valid JSON array instead of dict root
+    profiles_file.write_text('["not", "a", "dict"]', encoding="utf-8")
+
+    payload = {
+        "profile_id": "non_dict_root_test",
+        "display_name": "Non Dict Root Test",
+        "server": "localhost",
+        "database_name": "TestDB",
+    }
+
+    resp = client.post(
+        "/agent/v1/profiles",
+        headers={"Host": "127.0.0.1:8001", "X-QueryPilot-Request": "1"},
+        cookies={SESSION_COOKIE_NAME: session_id},
+        json=payload,
+    )
+    assert resp.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    assert resp.json()["detail"] == "Failed to persist profile configuration."
+
+    assert "non_dict_root_test" not in store.profiles
+    assert not profiles_file.with_name(f"{profiles_file.name}.lock").exists()

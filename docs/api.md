@@ -5,7 +5,7 @@
 > QueryPilot is organized into a decoupled architecture separating text-to-SQL generation from local database execution:
 > - **Local Agent Daemon (`querypilot-agent` — Port 8001)**: Binds strictly to loopback (`127.0.0.1`), serves the web UI at `/app/`, introspects schemas locally, and executes approved SQL queries locally under Windows Integrated Authentication.
 > - **Generation API Service (`querypilot-api` — Port 8000)**: Generates unexecuted candidate SQL and provides optional metadata-only answer synthesis via Google Gemini (`gemini-3.8-flash` configured default; `gemini-3.5-flash-lite` validated in live milestone tests). It has **zero database access or credentials**.
-> - **Controlled Preview Status**: QueryPilot is authorized strictly as a Controlled Preview for local development and invited evaluations. Public distribution remains **BLOCKED**.
+> - **Controlled Preview Status**: QueryPilot is authorized strictly as a Controlled Preview for local development and invited evaluations. Public distribution remains **BLOCKED**; unverified live Gemini generation across external multi-tenant production workloads remains unverified for general public release.
 > - **Milestone-Verified Evidence**: Milestone B12-F5D verified live Gemini API generation and synthesis payload contracts; Milestone B12-F5E2 verified the complete browser journey against `QueryPilot_TestDB` (1 live Gemini generation call, 0 DB calls during generation, explicit execution of read-only query returning 2 records, and deterministic local answer rendering without external synthesis); Milestone B12-F5C verified 32 live SQL Server integration tests; Milestone B12-F5G reconciled 1,217 passing offline unit/contract tests (62 live integration tests deselected).
 > - **Hard Execution Ceilings**: Local query execution is strictly clamped to a **15-second statement timeout** (`GLOBAL_MAX_TIMEOUT_SECONDS = 15`) and a **100-row result limit** (`GLOBAL_MAX_ROW_LIMIT = 100`).
 > - **Timeout Distinction**: Upstream HTTP proxy and transport timeouts (default **30.0 seconds**) are network transport timeouts, completely distinct from database query statement execution timeouts (hard-clamped to 15s).
@@ -112,6 +112,149 @@ Executes a human-reviewed, read-only SQL query locally against an approved datab
 | `truncated` | `boolean` | `true` if results were truncated by the effective row ceiling. |
 | `execution_time_ms` | `float` | Server-side execution duration in milliseconds. |
 | `request_id` | `string \| null` | Echoed correlation tracking ID. |
+
+---
+
+### 1.4 `GET /agent/v1/profiles` (List Approved Profiles)
+Retrieves safe, redacted summaries of all approved database connection profiles registered in the local agent daemon.
+
+* **Method:** `GET`
+* **Path:** `/agent/v1/profiles`
+* **Service:** Local Agent Daemon (`querypilot-agent :8001` only — strictly loopback)
+* **Authentication:** Valid `qpt_session` cookie.
+* **Privacy Guarantee:** Returns zero passwords, connection strings, or server hostnames. Returns only human-readable metadata (`profile_id`, `display_name`, `schema_name`, `timeout_seconds`, `max_row_limit`).
+
+#### Response Model (`ListProfilesResponse`)
+```json
+{
+  "profiles": [
+    {
+      "profile_id": "corp_dw",
+      "display_name": "Corporate Data Warehouse",
+      "schema_name": "dbo",
+      "timeout_seconds": 15,
+      "max_row_limit": 100,
+      "has_allowlist": false,
+      "allowed_tables": null
+    }
+  ]
+}
+```
+
+---
+
+### 1.5 `GET /agent/v1/profiles/{profile_id}/schema` (Introspect Database Schema)
+Introspects the target profile's database schema locally via SQLAlchemy, verifies runtime database identity (`SELECT DB_NAME()`), redacts sensitive columns, and returns model-facing schema metadata.
+
+* **Method:** `GET`
+* **Path:** `/agent/v1/profiles/{profile_id}/schema`
+* **Service:** Local Agent Daemon (`querypilot-agent :8001` only)
+* **Authentication:** Valid `qpt_session` cookie.
+* **Security & Redaction:** Replaces unknown profiles with HTTP 404 (never falls back to default databases). Strips sensitive columns matching `SensitiveColumnPolicy` (e.g. `password_hash`, `ssn`, `api_key`).
+* **Query Parameter:** `project=true` (optional, default: true) projects schema into bounded `ModelFacingSchemaContext`.
+
+---
+
+### 1.6 `POST /agent/v1/profiles/validate-config` (Offline Profile Validation)
+Performs 100% offline syntax, boundary, and policy validation of a proposed local SQL Server profile configuration.
+
+* **Method:** `POST`
+* **Path:** `/agent/v1/profiles/validate-config`
+* **Service:** Local Agent Daemon (`querypilot-agent :8001` only)
+* **Authentication:** Valid `qpt_session` cookie and `X-QueryPilot-Request: 1` header.
+* **Zero I/O Guarantee:** Absolute zero database connections, zero ODBC driver calls, zero engine creation, and zero disk writes.
+* **Security Enforcement:**
+  - `server` target must be an approved loopback host (`localhost`, `127.0.0.1`, `[::1]`, `.\INSTANCE`). Arbitrary remote IPs or hostnames are rejected with HTTP 422.
+  - `database_name` cannot be a system database (`master`, `model`, `msdb`, `tempdb`).
+  - Cleartext credentials (`password`, `user`, `secret`, `token`) are strictly forbidden (`extra = "forbid"`).
+  - Validates `profile_id` uniqueness against the local profile store without altering stored profiles.
+
+#### Request Model (`ValidateProfileConfigRequest` — `extra = "forbid"`)
+```json
+{
+  "profile_id": "analytics_local",
+  "display_name": "Local Sales Analytics",
+  "server": "localhost\\SQLEXPRESS",
+  "database_name": "SalesAnalytics",
+  "schema_name": "dbo",
+  "timeout_seconds": 15,
+  "max_row_limit": 100
+}
+```
+
+#### Response Model (`ValidateProfileConfigResponse`)
+```json
+{
+  "valid": true,
+  "message": "Profile configuration is valid and complies with security policies."
+}
+```
+
+---
+
+### 1.7 `POST /agent/v1/profiles` (Create & Register Approved Profile)
+Registers and persists an approved database connection profile into the local profile store (`~/.query_pilot/profiles.json`).
+
+* **Method:** `POST`
+* **Path:** `/agent/v1/profiles`
+* **Service:** Local Agent Daemon (`querypilot-agent :8001` only)
+* **Authentication:** Valid `qpt_session` cookie and `X-QueryPilot-Request: 1` header.
+* **Atomicity & Locking:** Re-loads latest profiles from disk under an exclusive cross-process lock (`profiles.json.lock`), re-checks for duplicate profile IDs (HTTP 409 Conflict), writes atomically via temporary sibling replace, applies Windows `icacls` user-only permissions, and synchronizes the active daemon memory store.
+* **Decoupling Notice:** Successfully creating a profile registers it in the local store. **It does NOT prove reachability or establish an active database connection.**
+
+#### Request Model (`CreateProfileRequest` — `extra = "forbid"`)
+Accepts all fields of `ValidateProfileConfigRequest` plus optional `set_as_default: boolean`.
+
+#### Response Model (`CreateProfileResponse`)
+```json
+{
+  "profile": {
+    "profile_id": "analytics_local",
+    "display_name": "Local Sales Analytics",
+    "schema_name": "dbo",
+    "timeout_seconds": 15,
+    "max_row_limit": 100,
+    "has_allowlist": false,
+    "allowed_tables": null
+  },
+  "is_default": false,
+  "message": "Database connection profile created and registered successfully."
+}
+```
+
+---
+
+### 1.8 `POST /agent/v1/profiles/{profile_id}/test-connection` (Isolated Connection Test)
+Executes an explicit, bounded connection test against a registered profile using an isolated SQLAlchemy `NullPool` engine.
+
+* **Method:** `POST`
+* **Path:** `/agent/v1/profiles/{profile_id}/test-connection`
+* **Service:** Local Agent Daemon (`querypilot-agent :8001` only)
+* **Authentication:** Valid `qpt_session` cookie and `X-QueryPilot-Request: 1` header.
+* **Empty Request Payload:** Accepts `{}`. Client-supplied connection parameters or query strings are strictly forbidden (`extra = "forbid"`). All parameters resolve from the trusted server-side profile store.
+* **Execution Boundary:** Connects using an isolated temporary engine (`poolclass=NullPool`), issues a single probe query `SELECT DB_NAME()`, verifies database context identity, measures round-trip latency, and immediately disposes the engine (`engine.dispose()`).
+* **Safe Failure Classification:** Returns HTTP 200 with sanitized diagnosis and `connected: false` if connection fails. **Failed connection tests never delete the saved profile.**
+
+#### Response Model (`TestConnectionResponse`)
+```json
+{
+  "connected": true,
+  "database_name": "SalesAnalytics",
+  "latency_ms": 14.8,
+  "message": "Connection verified successfully. SELECT DB_NAME() returned SalesAnalytics.",
+  "failure_code": null
+}
+```
+
+#### Diagnostic Failure Codes (`failure_code`):
+| Failure Code | Description | User Action |
+| :--- | :--- | :--- |
+| `AUTH_FAILED` | Windows Integrated Authentication failed. | Verify active Windows user has access to SQL Server. |
+| `UNREACHABLE` | SQL Server instance cannot be reached. | Ensure SQL Server is running and TCP/IP or Named Pipes is enabled. |
+| `TIMEOUT` | Connection timed out. | Check local host responsiveness and firewall rules. |
+| `DATABASE_MISMATCH` | Connected database does not match profile name. | Ensure target database exists and is not failing over to `master`. |
+| `DRIVER_ERROR` | Missing or incompatible ODBC driver. | Verify Microsoft ODBC Driver 17 or 18 is installed. |
+| `CONNECTION_FAILED` | Generic connection error. | Inspect SQL Server local error log for details. |
 
 ---
 

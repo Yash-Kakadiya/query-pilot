@@ -176,7 +176,7 @@ To establish a sound security model, three distinct security properties must be 
   - Server hostname or IP address (`server`)
   - ODBC driver (`driver`)
   - Authentication method or credentials
-- **Local Resolution:** The Local Agent resolves all connection parameters and the expected database name exclusively from its trusted configuration file (`~/.query_pilot/agent_profiles.json`) on the local disk.
+- **Local Resolution:** The Local Agent resolves all connection parameters and the expected database name exclusively from its trusted configuration file (`~/.query_pilot/profiles.json`) on the local disk.
 - **Strict Boundary Rejection:**
   - If a request attempts to supply connection override parameters (`server`, `db_name`, `user`), the agent immediately rejects the request with HTTP 400 Bad Request.
   - If a request references an unregistered `profile_id`, the agent returns HTTP 404 Profile Not Found.
@@ -403,37 +403,46 @@ Security mitigations must be accurately characterized; no single control elimina
 ## 8. Trusted Connection Profiles & Execution Isolation
 
 ### 8.1 Connection Profile Structure
-Stored in `~/.query_pilot/agent_profiles.json` on the user's local machine:
+Stored in `~/.query_pilot/profiles.json` on the user's local machine:
 
 ```json
 {
   "profiles": {
     "corp_dw": {
+      "profile_id": "corp_dw",
       "display_name": "Corporate Data Warehouse",
       "server": "localhost\\SQLEXPRESS",
       "database_name": "GradeSense_Local",
+      "schema_name": "dbo",
       "driver": "ODBC Driver 17 for SQL Server",
+      "engine_type": "mssql",
       "use_trusted_connection": true,
-      "user": null,
-      "password": null,
       "timeout_seconds": 15,
       "max_row_limit": 100
     }
-  }
+  },
+  "default_profile_id": "corp_dw"
 }
 ```
 
 ### 8.2 Profile Authorization & Invariant Enforcement
 
 1. **Agent-Controlled Execution Target:** The browser supplies only `profile_id`. The Local Agent resolves server, port, credentials, and `expected_db` exclusively from local disk.
-2. **Replacement of `ALLOWED_TARGET_DATABASE`:**
-   - In legacy code, `ALLOWED_TARGET_DATABASE = "GradeSense_Local"` was a hardcoded constant.
-   - **The Replacement Invariant:** When a connection is established for profile `P`, the Local Agent executes:
+2. **Strict Loopback Target Boundary:** Server targets must point to the local machine (`localhost`, `127.0.0.1`, `[::1]`, `.\INSTANCE`, `localhost\INSTANCE`). Arbitrary remote database endpoints are forbidden.
+3. **Windows Integrated Authentication Only:** Password persistence and cleartext credential parameters (`user`, `password`, `token`) are recursively rejected by security validation (`extra = "forbid"`).
+4. **Replacement of `ALLOWED_TARGET_DATABASE`:**
+   - When a connection is established for profile `P`, the Local Agent executes:
      ```sql
      SELECT DB_NAME();
      ```
    - If the returned database name does not strictly match `P.database_name` (case-insensitive, trimmed), the connection is terminated immediately and a fatal `DatabaseSecurityError` is raised.
    - Browser requests attempting to pass `expected_db` are rejected with HTTP 400.
+5. **Decoupled 5-Stage Onboarding & Execution Flow:**
+   - Stage 1: Validation (`POST /agent/v1/profiles/validate-config`) — 100% offline regex and syntax check.
+   - Stage 2: Persistence (`POST /agent/v1/profiles`) — Saves to `~/.query_pilot/profiles.json` under `.lock`. Does not prove reachability.
+   - Stage 3: Explicit Connection Test (`POST /agent/v1/profiles/{id}/test-connection`) — Temporary `NullPool` engine tests `SELECT DB_NAME()`. Disposed immediately.
+   - Stage 4: Selection & Introspection (`GET /agent/v1/profiles/{id}/schema`) — Discovers tables and redacts sensitive columns.
+   - Stage 5: Execution (`POST /agent/v1/profiles/{id}/execute`) — Read-only AST validation and bounded local execution.
 
 ### 8.3 Scoping & Cache Invalidation
 
@@ -443,8 +452,7 @@ Stored in `~/.query_pilot/agent_profiles.json` on the user's local machine:
   ```
   Engines are keyed strictly by `profile_id`. A connection for Profile A never shares or uses the connection pool of Profile B.
 - **Schema Cache TTL:** Model-facing schemas are cached in memory keyed by `profile_id` with a 1-hour TTL.
-- **Explicit Invalidation:** A dedicated endpoint `POST /agent/v1/profiles/{id}/refresh-schema` invalidates the cached schema and triggers fresh SQLAlchemy inspection.
-- **Revocation & Cleanup:** If a profile is deleted from `agent_profiles.json`, the agent disposes of the corresponding SQLAlchemy engine pool (`engine.dispose()`) and purges its schema cache. Subsequent requests for that profile fail closed with HTTP 404 Profile Not Found.
+- **Revocation & Cleanup:** If a profile is deleted from `profiles.json`, the agent disposes of the corresponding SQLAlchemy engine pool (`engine.dispose()`) and purges its schema cache. Subsequent requests for that profile fail closed with HTTP 404 Profile Not Found.
 
 ---
 

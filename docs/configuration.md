@@ -86,20 +86,24 @@ The Local Agent daemon supports backwards-compatible secondary aliases for key e
 
 ## 4. Database Profile Onboarding & Management
 
-Starting in Milestone B12-C, the local agent automatically loads approved database connection profiles from `profiles_file` at startup. Profiles are safely created, inspected, and validated using the `querypilot-agent profile` CLI subcommands.
+Database connection profiles configure approved local database instances for schema introspection and local query execution. Profiles can be registered through two equivalent entry points that share identical validation policies:
+1. **Interactive Web UI**: Via the **`+ Add Profile`** button in the browser header or empty state.
+2. **Command-Line Interface**: Via `querypilot-agent profile add`.
+
+Both entry points enforce identical loopback address policies, Windows Integrated Authentication defaults, identifier bounds, and file-lock persistence.
 
 ### 4.1 Supported Scope & Authentication Architecture
 
 - **Supported Engine**: Microsoft SQL Server (`engine_type: "mssql"`).
 - **Supported Authentication**: **Windows Integrated Authentication only** (`use_trusted_connection: true`).
-- **Explicit Credential Limitation**: SQL username/password authentication is **strictly unsupported** in this milestone. Any profile attempting to provide a password, username, token, or `use_trusted_connection: false` is rejected immediately to prevent plaintext credential exposure.
-- **Connection Boundary**: All database connection parameters remain strictly local to the agent process. Browser clients cannot provide arbitrary connection strings or target arbitrary database hosts.
-- **CLI-Based Profile Onboarding**: Database profiles are registered strictly via the CLI (`querypilot-agent profile add`). There is **no browser-based profile creation wizard** in the web interface.
+- **Explicit Credential Limitation**: SQL username/password authentication is **strictly unsupported**. Any profile attempting to provide a password, username, token, or `use_trusted_connection: false` is rejected immediately to prevent plaintext credential exposure.
+- **Connection Boundary & Loopback Policy**: All database connection parameters remain strictly local to the agent process. Server targets must point to the local machine (`localhost`, `127.0.0.1`, `[::1]`, `.\SQLEXPRESS`, `localhost\INSTANCE`). Arbitrary remote IP addresses, public hostnames, and cloud endpoints are rejected to prevent server-side request forgery (SSRF).
+- **Dual Onboarding Interfaces**: Profiles can be added either through the browser onboarding modal (`+ Add Profile`) or via the CLI (`querypilot-agent profile add`). Both interfaces invoke the authoritative local agent validation and storage layers.
 - **Hard Global Resource Ceilings**: SQL statement execution is hard-clamped to **15 seconds** (`GLOBAL_MAX_TIMEOUT_SECONDS = 15`), and query result sets are hard-clamped to **100 rows** (`GLOBAL_MAX_ROW_LIMIT = 100`). Profile configurations or query requests attempting to exceed these values are strictly clamped down.
 
 ### 4.2 Windows Integrated Authentication Prerequisites
 
-1. **SQL Server Instance**: A local or network SQL Server instance reachable from the host machine (e.g., `localhost\SQLEXPRESS`).
+1. **SQL Server Instance**: A local SQL Server instance running on the host machine (e.g., `localhost` or `localhost\SQLEXPRESS`).
 2. **Windows Login & Permissions**: The active Windows user account must have login access and query permissions on the target database (e.g. `CONNECT`, `SELECT`).
 3. **ODBC Driver**: An installed Microsoft ODBC Driver for SQL Server (e.g. `ODBC Driver 17 for SQL Server` or `ODBC Driver 18 for SQL Server`). Verify installed drivers in Windows PowerShell:
    ```powershell
@@ -263,12 +267,67 @@ Exits with code `0` if all profiles are valid and safe, or code `1` with actiona
 - **Root Cause**: The active Windows user account lacks permission to connect to the SQL Server instance or target database.
 - **Resolution**: In SQL Server Management Studio (SSMS), ensure the active Windows account is added under **Security -> Logins**, and map the login with `db_datareader` (or `SELECT`) permissions on the target database.
 
+### 4.5 Browser-Based Profile Onboarding Flow
+
+Starting in Milestone B12-F8, users can onboard local database profiles directly from the QueryPilot browser interface (`http://127.0.0.1:8001/app/`) by clicking **`+ Add Profile`** in the profile selector.
+
+The browser onboarding workflow strictly enforces a decoupled 5-stage lifecycle:
+
+```
+[ Form Input ]
+      ↓
+(1. Offline Validation)        ──> POST /agent/v1/profiles/validate-config
+      ↓
+(2. Atomic Profile Creation)    ──> POST /agent/v1/profiles  (Saves to ~/.query_pilot/profiles.json)
+      ↓
+(3. Explicit Connection Test)   ──> POST /agent/v1/profiles/{id}/test-connection (Optional / Explicit)
+      ↓
+(4. Explicit Profile Selection) ──> GET  /agent/v1/profiles/{id}/schema (Introspects & projects schema)
+      ↓
+(5. Local Execution)            ──> POST /agent/v1/profiles/{id}/execute (Human-reviewed SQL execution)
+```
+
+#### Supported Profile Fields & Constraints
+
+| Field | Input Label | Required? | Constraints & Validations |
+| :--- | :--- | :---: | :--- |
+| `profile_id` | Profile ID | **Yes** | 1–64 characters; letters, numbers, underscores, and hyphens (`^[a-zA-Z0-9_-]+$`). Must be unique. |
+| `display_name` | Display Name | No | 1–128 characters human-readable label (defaults to `profile_id` if omitted). |
+| `server` | SQL Server Host / Instance | **Yes** | 1–255 characters. Must target local machine (`localhost`, `127.0.0.1`, `[::1]`, `.\INSTANCE`, `localhost\INSTANCE`). |
+| `database_name` | Database Name | **Yes** | 1–128 characters. System databases (`master`, `model`, `msdb`, `tempdb`) are strictly rejected. |
+| `schema_name` | Default Schema | No | Relational namespace (1–128 characters; defaults to `dbo`). |
+| `timeout_seconds` | Timeout (seconds) | No | Bounded execution ceiling: 1 to 15 seconds (default: 15s). |
+| `max_row_limit` | Max Row Limit | No | Bounded result ceiling: 1 to 100 rows (default: 100 rows). |
+| `set_as_default` | Set as Default | No | Boolean flag; designates this profile as the initial active profile. |
+
+#### Lifecycle Invariants
+
+1. **Validation is 100% Offline**: `POST /agent/v1/profiles/validate-config` verifies field syntax, identifier bounds, loopback server targets, and rejection of system databases without connecting to SQL Server, without touching ODBC drivers, and without writing to disk.
+2. **Creation Does NOT Prove Reachability**: `POST /agent/v1/profiles` persists the validated configuration into `~/.query_pilot/profiles.json` under an exclusive cross-process lock (`profiles.json.lock`). Successfully saving a profile does **not** establish a network connection or prove that the SQL Server service is running.
+3. **Connection Testing is Explicit & Isolated**: Clicking **Test Connection** (`POST /agent/v1/profiles/{id}/test-connection`) launches a dedicated, temporary SQLAlchemy `NullPool` engine that issues a single bounded probe query: `SELECT DB_NAME()`. It confirms:
+   - The SQL Server service is active.
+   - The current Windows user has `CONNECT` permissions.
+   - The connected database matches the configured `database_name` (preventing fallback to `master`).
+   - The engine is immediately disposed (`engine.dispose()`), leaving active connection pools untouched.
+4. **Interpreting Connection-Test Failures**:
+   - `AUTH_FAILED`: Windows Integrated Authentication failed. Ensure the active Windows account has permissions on the SQL Server instance.
+   - `UNREACHABLE`: SQL Server instance is unreachable. Confirm that SQL Server is running, TCP/IP or Named Pipes is enabled in SQL Server Configuration Manager, and the instance name is correct.
+   - `TIMEOUT`: The local database did not respond within the test timeout window.
+   - `DATABASE_MISMATCH`: Connected to SQL Server successfully, but `SELECT DB_NAME()` returned a different database or the specified database does not exist.
+   - `DRIVER_ERROR`: Microsoft ODBC Driver 17/18 for SQL Server is not installed or misconfigured.
+   - `CONNECTION_FAILED`: Generic connection failure.
+   - *Note: A failed connection test does not delete or invalidate the saved profile. The user can retry testing after resolving the local service state.*
+5. **Selection & Schema Loading are Decoupled**: Creating or testing a profile does not automatically select it or introspect its schema. Schema introspection occurs only when the profile is explicitly selected.
+6. **Query Execution Isolation**: Connection testing does not execute natural-language queries. Query execution requires human review of candidate SQL, passes AST read-only safety validation, and is bounded by driver statement timeouts.
+
+---
+
 #### 7. No Profiles Configured on First Run
 - **Behavior**: If `profiles.json` does not exist on initial agent startup, the agent starts cleanly with an empty profile store:
   ```
   No database profiles file found at '~/.query_pilot/profiles.json'. Starting agent with empty profile store. Register a profile using 'querypilot-agent profile add'.
   ```
-  The UI displays an empty profile selector. Register a profile via the CLI to enable query execution.
+- **Resolution**: The web UI presents an empty state with an **`+ Add Profile`** button to launch the browser onboarding dialog. Alternatively, a profile can be created via `querypilot-agent profile add`.
 
 ---
 
@@ -357,6 +416,23 @@ The configuration contract maintains all QueryPilot security controls:
 - **Controlled End-to-End Browser Journey (Milestone B12-F5E2)**: Verified the complete browser workflow against the dedicated `QueryPilot_TestDB`: live schema introspection and type normalization (`NVARCHAR(100)`), sensitive-column redaction (`password_hash` omitted), exactly one live Gemini candidate generation call, explicit human-in-the-loop authorization, and execution of a read-only query returning two records (`record_count: 2`).
 - **Generation vs. Synthesis Execution Boundaries**: In Milestone B12-F5E2, zero database execution calls occurred during candidate SQL generation, and the browser UI workflow rendered a deterministic local answer directly from client memory without invoking Gemini for synthesis.
 - **Dedicated SQL Server Integration Suite (Milestone B12-F5C)**: Reported 32 passing live integration tests against the dedicated test database.
-- **Offline Test Reconciled Baseline (Milestone B12-F5G)**: The latest reconciled offline test suite execution reported **1,217 passed, 62 deselected, 5 warnings** (the 62 deselected tests are live integration tests excluded by the `-m 'not integration'` filter). This count represents milestone-specific evidence rather than a permanent guarantee.
-- **CLI-Based Profile Management**: There is no browser-based profile onboarding wizard. All profile setup occurs via `querypilot-agent profile add`.
+- **Historical Testing Evidence (Milestones B9, B11)**: Earlier milestones (B9, B11) verified system orchestration and offline contracts using mocked model generation and mocked database execution, with live SQL Server execution verified in dedicated test databases.
+- **Testing Boundaries & Unverified Production Workloads**: Passing offline test suites establishes software contracts but does not verify live Gemini model accuracy or external network latency; unverified live Gemini generation across external production workloads remains unverified for general release.
+- **Unified Profile Management**: Database profiles can be registered either via the browser onboarding modal (`+ Add Profile`) or through the CLI (`querypilot-agent profile add`), both enforcing identical security policies. Prior to Milestone B12-F8, there was no browser-based profile creation wizard; both modalities are now supported.
+
+---
+
+## 9. Distribution Packaging & Frontend Rebuilds
+
+When building a distribution wheel after modifying frontend sources or onboarding components, run:
+
+```powershell
+python scripts/build_distribution.py --rebuild-frontend
+```
+
+**Key Behaviors**:
+- Compiles the React/TypeScript frontend via Vite (`npm run build`) into `frontend/dist/`.
+- Stages the compiled assets into `src/query_pilot/agent/static/`.
+- Verifies static asset presence and builds the Python wheel in `dist/`.
+- Building without `--rebuild-frontend` packages existing staged static assets and will not incorporate uncompiled frontend source changes.
 
