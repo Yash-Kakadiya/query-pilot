@@ -1,0 +1,353 @@
+"""Browser Test Server for QueryPilot Onboarding Verification (Milestone B12-F10).
+
+Runs an isolated local agent daemon strictly on loopback (127.0.0.1:8005 by default)
+with:
+1. Static production frontend serving from frontend/dist at /app/.
+2. Isolated temporary profile store and bootstrap token directory.
+3. Deterministic connection-test engine mocking (no real database calls).
+4. Deterministic schema introspection mocking for created profiles.
+5. In-memory request auditing to record request sequence.
+6. Clean HTTP shutdown endpoint (POST /agent/v1/test/shutdown).
+"""
+
+from __future__ import annotations
+
+import argparse
+from contextlib import asynccontextmanager
+from dataclasses import asdict, dataclass
+import json
+import logging
+from pathlib import Path
+import sys
+import tempfile
+import threading
+import time
+from typing import Any, Dict, List, Optional
+from unittest.mock import MagicMock
+
+from fastapi import FastAPI, HTTPException, Request, Response, status
+from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.pool import NullPool
+import uvicorn
+
+from query_pilot.agent.app import create_agent_app
+from query_pilot.agent.auth import (
+    SESSION_COOKIE_NAME,
+    BootstrapTokenManager,
+    SessionManager,
+)
+from query_pilot.agent.config import AgentConfig
+from query_pilot.agent.engine_manager import AgentEngineManager
+from query_pilot.db.factory import ProfileConnectionFactory
+from query_pilot.db.models import (
+    ColumnMetadata,
+    DatabaseSchema,
+    TableMetadata,
+)
+from query_pilot.db.profile import (
+    ConnectionProfile,
+    ProfileStore,
+)
+
+logger = logging.getLogger("browser_test_server")
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_DIST_DIR = REPO_ROOT / "frontend" / "dist"
+TEST_BOOTSTRAP_TOKEN = "a1b2c3d4e5f60718293a4b5c6d7e8f901234567890abcdef1234567890abcdef"
+
+
+@dataclass
+class AuditRecord:
+    timestamp: float
+    method: str
+    path: str
+    status_code: int
+
+
+class MockProfileConnectionFactory(ProfileConnectionFactory):
+    """Deterministic connection factory for offline browser testing."""
+
+    def create_engine(self, profile_id: str, **kwargs) -> Engine:
+        profile = self._store.get_profile(profile_id)
+        mock_engine = MagicMock(spec=Engine)
+        mock_conn = MagicMock(spec=Connection)
+
+        # Trigger simulated connection failure if profile_id or database_name contains 'fail' or 'unreachable'
+        name_lower = (profile_id + " " + profile.database_name).lower()
+        if "fail" in name_lower or "unreachable" in name_lower:
+            exc = OperationalError(
+                "08001 Named Pipes Provider: Could not open a connection to SQL Server [2].",
+                None,
+                None,
+            )
+            mock_conn.execute.side_effect = exc
+            mock_engine.connect.side_effect = exc
+            return mock_engine
+
+        if "auth_err" in name_lower:
+            exc = OperationalError(
+                "28000 Login failed for user 'DOMAIN\\user'. (SSPI)",
+                None,
+                None,
+            )
+            mock_conn.execute.side_effect = exc
+            mock_engine.connect.side_effect = exc
+            return mock_engine
+
+        # Default: deterministic success returning configured database name
+        mock_conn.execute.return_value.scalar.return_value = profile.database_name
+        mock_conn.__enter__.return_value = mock_conn
+        mock_conn.__exit__.return_value = None
+        mock_engine.connect.return_value = mock_conn
+        return mock_engine
+
+
+def build_sample_schema(database_name: str) -> DatabaseSchema:
+    """Build a deterministic model-facing schema for testing schema loading."""
+    return DatabaseSchema(
+        database_name=database_name,
+        tables=[
+            TableMetadata(
+                schema_name="dbo",
+                table_name="Customers",
+                columns=[
+                    ColumnMetadata(name="CustomerID", data_type="int", nullable=False, primary_key=True),
+                    ColumnMetadata(name="CompanyName", data_type="nvarchar(100)", nullable=False),
+                    ColumnMetadata(name="City", data_type="nvarchar(50)", nullable=True),
+                ],
+            ),
+            TableMetadata(
+                schema_name="dbo",
+                table_name="Orders",
+                columns=[
+                    ColumnMetadata(name="OrderID", data_type="int", nullable=False, primary_key=True),
+                    ColumnMetadata(name="CustomerID", data_type="int", nullable=False),
+                    ColumnMetadata(name="OrderDate", data_type="datetime", nullable=True),
+                    ColumnMetadata(name="TotalAmount", data_type="decimal(10,2)", nullable=False),
+                ],
+            ),
+        ],
+    )
+
+
+class BrowserTestServer:
+    """Encapsulates a managed loopback uvicorn test server for browser runs."""
+
+    def __init__(
+        self,
+        port: int = 8005,
+        bind_host: str = "127.0.0.1",
+        dist_dir: Optional[Path] = None,
+        temp_dir: Optional[Path] = None,
+    ):
+        self.port = port
+        self.bind_host = bind_host
+        self.dist_dir = dist_dir or DEFAULT_DIST_DIR
+        self._temp_dir_obj: Optional[tempfile.TemporaryDirectory] = None
+
+        if temp_dir is None:
+            self._temp_dir_obj = tempfile.TemporaryDirectory(prefix="qp_browser_test_")
+            self.temp_dir = Path(self._temp_dir_obj.name)
+        else:
+            self.temp_dir = temp_dir
+
+        self.token_dir = self.temp_dir / "tokens"
+        self.token_dir.mkdir(parents=True, exist_ok=True)
+        self.profiles_file = self.temp_dir / "profiles.json"
+
+        self.audit_log: List[AuditRecord] = []
+        self._server: Optional[uvicorn.Server] = None
+        self._thread: Optional[threading.Thread] = None
+
+        # App dependencies
+        self.store = ProfileStore()
+        self.config = AgentConfig(
+            bind_host=self.bind_host,
+            bind_port=self.port,
+            token_dir=self.token_dir,
+            token_filename="agent.token",
+            profiles_file=self.profiles_file,
+            static_dir=self.dist_dir,
+            allow_dev_origin=True,
+        )
+        self.factory = MockProfileConnectionFactory(store=self.store)
+        self.engine_manager = AgentEngineManager(factory=self.factory)
+        self.token_manager = BootstrapTokenManager(token_dir=self.token_dir)
+        self._bootstrap_token = self.token_manager.initialize_token()
+
+        # For repeatable offline browser testing, allow the designated bootstrap token
+        orig_verify = self.token_manager.verify_and_consume
+        def test_verify(candidate: Optional[str]) -> bool:
+            if candidate and (candidate == self._bootstrap_token or candidate == TEST_BOOTSTRAP_TOKEN):
+                return True
+            return orig_verify(candidate)
+        self.token_manager.verify_and_consume = test_verify
+
+        self.session_manager = SessionManager()
+
+        # Deterministic mock upstream client for instant offline /api/health responses
+        import httpx
+        def mock_upstream_handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/health":
+                return httpx.Response(
+                    200,
+                    json={
+                        "status": "online",
+                        "version": "0.1.0-test",
+                        "dialect": "mssql",
+                        "tracing_enabled": False,
+                    },
+                )
+            return httpx.Response(404, json={"detail": "Not found in mock upstream"})
+
+        self.mock_upstream_client = httpx.AsyncClient(
+            transport=httpx.MockTransport(mock_upstream_handler)
+        )
+
+        # Build app
+        self.app = create_agent_app(
+            config=self.config,
+            store=self.store,
+            factory=self.factory,
+            engine_manager=self.engine_manager,
+            token_manager=self.token_manager,
+            session_manager=self.session_manager,
+            upstream_client=self.mock_upstream_client,
+        )
+
+        # Attach audit middleware
+        @self.app.middleware("http")
+        async def audit_middleware(request: Request, call_next):
+            response = await call_next(request)
+            self.audit_log.append(
+                AuditRecord(
+                    timestamp=time.time(),
+                    method=request.method,
+                    path=request.url.path,
+                    status_code=response.status_code,
+                )
+            )
+            return response
+
+        # Attach test shutdown endpoint
+        @self.app.post("/agent/v1/test/shutdown", include_in_schema=False)
+        async def test_shutdown():
+            if self._server:
+                self._server.should_exit = True
+            return {"status": "shutting_down"}
+
+        self._patcher: Optional[Any] = None
+
+    @property
+    def base_url(self) -> str:
+        return f"http://{self.bind_host}:{self.port}"
+
+    @property
+    def app_url(self) -> str:
+        return f"{self.base_url}/app/"
+
+    @property
+    def bootstrap_token(self) -> str:
+        return self._bootstrap_token
+
+    def start(self, timeout_seconds: float = 5.0) -> None:
+        """Start server in a background daemon thread and wait for socket readiness."""
+        from query_pilot.db.profile_introspector import ProfileDatabaseIntrospector
+
+        def mock_introspect(*args, **kwargs):
+            if args:
+                intro_self = args[0]
+                cfg = getattr(intro_self, "_config", None)
+                db = getattr(cfg, "expected_db", "TestDB") if cfg else "TestDB"
+            else:
+                db = "TestDB"
+            return build_sample_schema(db)
+
+        import unittest.mock
+        self._patcher = unittest.mock.patch.object(
+            ProfileDatabaseIntrospector,
+            "introspect_model_facing",
+            autospec=True,
+            side_effect=mock_introspect,
+        )
+        self._patcher.start()
+
+        uvicorn_config = uvicorn.Config(
+            app=self.app,
+            host=self.bind_host,
+            port=self.port,
+            log_level="warning",
+            access_log=False,
+        )
+        self._server = uvicorn.Server(config=uvicorn_config)
+        self._thread = threading.Thread(target=self._server.run, daemon=True)
+        self._thread.start()
+
+        # Wait for socket liveness
+        import urllib.request
+        deadline = time.time() + timeout_seconds
+        started = False
+        while time.time() < deadline:
+            try:
+                req = urllib.request.Request(self.app_url, method="GET")
+                with urllib.request.urlopen(req, timeout=0.5) as resp:
+                    if resp.status == 200:
+                        started = True
+                        break
+            except Exception:
+                time.sleep(0.1)
+
+        if not started:
+            self.stop()
+            raise RuntimeError(f"Server on {self.app_url} failed to start within {timeout_seconds}s.")
+
+    def stop(self) -> None:
+        """Signal uvicorn to exit and join thread cleanly."""
+        if hasattr(self, "_patcher") and self._patcher:
+            try:
+                self._patcher.stop()
+            except Exception:
+                pass
+            self._patcher = None
+        if self._server:
+            self._server.should_exit = True
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=3.0)
+        if self._temp_dir_obj:
+            try:
+                self._temp_dir_obj.cleanup()
+            except Exception:
+                pass
+
+
+def main():
+    parser = argparse.ArgumentParser(description="QueryPilot Browser Test Server")
+    parser.add_argument("--port", type=int, default=8005, help="Loopback port (default: 8005)")
+    parser.add_argument("--host", type=str, default="127.0.0.1", help="Loopback host (default: 127.0.0.1)")
+    parser.add_argument("--token", type=str, default=None, help="Custom bootstrap token (default: auto-generated)")
+    args = parser.parse_args()
+
+    server = BrowserTestServer(port=args.port, bind_host=args.host)
+    if args.token:
+        # Overwrite initialized token with specified token
+        server.token_dir.mkdir(parents=True, exist_ok=True)
+        (server.token_dir / "agent.token").write_text(args.token.strip() + "\n", encoding="utf-8")
+        server._bootstrap_token = args.token.strip()
+
+    print(f"Starting browser test server on {server.app_url}...", flush=True)
+    print(f"Bootstrap Token: {server.bootstrap_token}", flush=True)
+    print("Press Ctrl+C to terminate.", flush=True)
+
+    server.start()
+    try:
+        while True:
+            time.sleep(1.0)
+    except KeyboardInterrupt:
+        print("\nStopping browser test server...")
+        server.stop()
+        print("Server stopped cleanly.")
+
+
+if __name__ == "__main__":
+    main()

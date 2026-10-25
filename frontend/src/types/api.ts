@@ -208,6 +208,7 @@ export interface ValidateProfileConfigRequest {
   max_row_limit?: number
   allowed_tables?: string[] | null
   sensitive_columns?: string[] | null
+  set_as_default?: boolean
 }
 
 export interface ValidateProfileConfigResponse {

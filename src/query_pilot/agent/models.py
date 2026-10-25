@@ -245,6 +245,10 @@ class ValidateProfileConfigRequest(BaseModel):
         default=None,
         description="Optional list of sensitive column names to redact.",
     )
+    set_as_default: Optional[bool] = Field(
+        default=False,
+        description="Optionally designate this profile as the default. If False and no default exists, it becomes default automatically.",
+    )
 
     @field_validator("profile_id")
     @classmethod

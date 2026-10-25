@@ -275,6 +275,18 @@ def test_validate_profile_config_request_valid():
     assert req.max_row_limit == 50
     assert req.allowed_tables == ["Users", "Orders"]
     assert req.sensitive_columns == ["SSN", "TaxID"]
+    assert req.set_as_default is False
+
+
+def test_validate_profile_config_request_accepts_set_as_default():
+    req = ValidateProfileConfigRequest(
+        profile_id="local_dev",
+        display_name="Local SQL Server Express",
+        server=r"localhost\SQLEXPRESS",
+        database_name="TestDB",
+        set_as_default=True,
+    )
+    assert req.set_as_default is True
 
 
 @pytest.mark.parametrize(

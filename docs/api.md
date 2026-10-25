@@ -178,7 +178,8 @@ Performs 100% offline syntax, boundary, and policy validation of a proposed loca
   "database_name": "SalesAnalytics",
   "schema_name": "dbo",
   "timeout_seconds": 15,
-  "max_row_limit": 100
+  "max_row_limit": 100,
+  "set_as_default": false
 }
 ```
 
