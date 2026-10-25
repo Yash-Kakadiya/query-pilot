@@ -25,15 +25,23 @@ import {
   MAX_BOOTSTRAP_TOKEN_LENGTH,
   MIN_BOOTSTRAP_TOKEN_LENGTH,
   bootstrapAgent,
+  createProfile,
   getProfileSchema,
   getProfiles,
   logoutAgent,
+  testProfileConnection,
+  validateProfileConfig,
 } from './agentClient.ts'
 import { projectToModelFacingSchema } from './schemaProjection.ts'
 import type {
   AgentDatabaseSchema,
+  CreateProfileRequest,
+  CreateProfileResponse,
   ModelFacingSchemaContext,
   ProfileSummary,
+  TestConnectionResponse,
+  ValidateProfileConfigRequest,
+  ValidateProfileConfigResponse,
 } from '../types/api.ts'
 
 export type AgentSessionStatus =
@@ -64,6 +72,10 @@ export interface AgentSessionState {
   schemaContext: ModelFacingSchemaContext | null
   rawSchema: AgentDatabaseSchema | null
   schemaError?: string
+
+  // Explicit Connection Testing (B12-F8H)
+  connectionTestStatus?: 'idle' | 'testing' | 'success' | 'failed'
+  connectionTestResult?: TestConnectionResponse | null
 }
 
 export interface BootstrapResult {
@@ -76,6 +88,7 @@ export class AgentSessionCoordinator {
   private listeners: Set<(state: AgentSessionState) => void> = new Set()
   private generation: number = 0
   private schemaGeneration: number = 0
+  private connectionTestGeneration: number = 0
   private currentAbortController: AbortController | null = null
   private currentSchemaAbortController: AbortController | null = null
 
@@ -91,6 +104,8 @@ export class AgentSessionCoordinator {
       schemaContext: null,
       rawSchema: null,
       schemaError: undefined,
+      connectionTestStatus: 'idle',
+      connectionTestResult: null,
       ...initialState,
     }
   }
@@ -168,6 +183,7 @@ export class AgentSessionCoordinator {
           newSelectedProfile = found
         } else {
           // Previously selected profile no longer exists in agent profiles
+          this.connectionTestGeneration++
           newSelectedId = null
           newSelectedProfile = null
           newSchemaStatus = 'idle'
@@ -201,6 +217,7 @@ export class AgentSessionCoordinator {
 
       // Clear profile & schema selection on probe failure
       this.schemaGeneration++
+      this.connectionTestGeneration++
       if (this.currentSchemaAbortController) {
         this.currentSchemaAbortController.abort()
         this.currentSchemaAbortController = null
@@ -387,8 +404,9 @@ export class AgentSessionCoordinator {
     const cleanId = profileId.trim()
     const targetProfile = this.state.profiles.find((p) => p.profile_id === cleanId) || null
 
-    // 1. Advance schema generation counter and abort any pending schema request
+    // 1. Advance schema and connection-test generation counters and abort any pending schema request
     const currentSchemaGen = ++this.schemaGeneration
+    this.connectionTestGeneration++
     if (this.currentSchemaAbortController) {
       this.currentSchemaAbortController.abort()
       this.currentSchemaAbortController = null
@@ -405,6 +423,8 @@ export class AgentSessionCoordinator {
       schemaContext: null,
       rawSchema: null,
       schemaError: undefined,
+      connectionTestStatus: 'idle',
+      connectionTestResult: null,
     })
 
     try {
@@ -481,6 +501,7 @@ export class AgentSessionCoordinator {
    */
   clearSelectedProfile(): void {
     this.schemaGeneration++
+    this.connectionTestGeneration++
     if (this.currentSchemaAbortController) {
       this.currentSchemaAbortController.abort()
       this.currentSchemaAbortController = null
@@ -493,6 +514,110 @@ export class AgentSessionCoordinator {
       schemaContext: null,
       rawSchema: null,
       schemaError: undefined,
+      connectionTestStatus: 'idle',
+      connectionTestResult: null,
+    })
+  }
+
+  /**
+   * Refreshes the list of registered profiles without altering selection unless the currently
+   * selected profile was removed or optional targetProfileId is explicitly provided.
+   */
+  async refreshProfiles(targetProfileId?: string): Promise<ProfileSummary[]> {
+    const currentGen = ++this.generation
+    const response = await getProfiles()
+    if (this.generation !== currentGen) {
+      return response.profiles
+    }
+
+    let activeId = targetProfileId !== undefined ? targetProfileId : this.state.selectedProfileId
+    let activeProfile: ProfileSummary | null = null
+    if (activeId) {
+      activeProfile = response.profiles.find((p) => p.profile_id === activeId) || null
+      if (!activeProfile) {
+        activeId = null
+      }
+    }
+
+    this.setState({
+      status: 'authenticated',
+      profiles: response.profiles,
+      selectedProfileId: activeId,
+      selectedProfile: activeProfile,
+    })
+    return response.profiles
+  }
+
+  /**
+   * Validates a profile configuration offline with the local agent daemon.
+   */
+  async validateConfig(payload: ValidateProfileConfigRequest): Promise<ValidateProfileConfigResponse> {
+    return validateProfileConfig(payload)
+  }
+
+  /**
+   * Creates an approved local database connection profile and refreshes the profiles list.
+   * Note: Does NOT automatically select the profile or trigger schema loading.
+   */
+  async addProfile(payload: CreateProfileRequest): Promise<CreateProfileResponse> {
+    const res = await createProfile(payload)
+    // Refresh profiles without changing current selection
+    await this.refreshProfiles()
+    return res
+  }
+
+  /**
+   * Executes an explicit, bounded connection test against the specified profile ID.
+   * Updates connectionTestStatus and connectionTestResult in state.
+   */
+  async testConnection(profileId: string): Promise<TestConnectionResponse> {
+    const cleanId = profileId ? profileId.trim() : ''
+    const currentTestGen = ++this.connectionTestGeneration
+
+    this.setState({
+      connectionTestStatus: 'testing',
+      connectionTestResult: null,
+    })
+
+    try {
+      const res = await testProfileConnection(cleanId)
+      if (
+        this.connectionTestGeneration !== currentTestGen ||
+        (this.state.selectedProfileId !== null && this.state.selectedProfileId !== cleanId)
+      ) {
+        return res
+      }
+      this.setState({
+        connectionTestStatus: res.connected ? 'success' : 'failed',
+        connectionTestResult: res,
+      })
+      return res
+    } catch (err: unknown) {
+      if (
+        this.connectionTestGeneration !== currentTestGen ||
+        (this.state.selectedProfileId !== null && this.state.selectedProfileId !== cleanId)
+      ) {
+        throw err
+      }
+      this.setState({
+        connectionTestStatus: 'failed',
+        connectionTestResult: null,
+      })
+      if (err instanceof AgentClientError && (err.kind === 'authentication' || err.statusCode === 401)) {
+        this.setState({
+          status: 'auth_required',
+          isModalOpen: true,
+        })
+      }
+      throw err
+    }
+  }
+
+  clearConnectionTest(): void {
+    this.connectionTestGeneration++
+    this.setState({
+      connectionTestStatus: 'idle',
+      connectionTestResult: null,
     })
   }
 
@@ -516,6 +641,7 @@ export class AgentSessionCoordinator {
     // 1. Advance generation counters to disregard any late asynchronous responses
     this.generation++
     this.schemaGeneration++
+    this.connectionTestGeneration++
 
     if (this.currentAbortController) {
       this.currentAbortController.abort()

@@ -24,12 +24,14 @@ from contextlib import asynccontextmanager
 import logging
 import mimetypes
 import threading
+import time
 from typing import Any, Callable, Dict, Optional, Union
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 import httpx
 from sqlalchemy.engine import Engine
+from sqlalchemy.pool import NullPool
 
 from query_pilot.agent.api_router import api_router
 from query_pilot.agent.auth import (
@@ -55,17 +57,31 @@ from query_pilot.agent.models import (
     ProfileListResponse,
     ProfileSummary,
     RotateTokenResponse,
+    ValidateProfileConfigRequest,
+    ValidateProfileConfigResponse,
+    CreateProfileRequest,
+    CreateProfileResponse,
+    TestConnectionRequest,
+    TestConnectionResponse,
 )
 from query_pilot.api.security import StreamingPayloadSizeMiddleware
-from query_pilot.db.connection import DatabaseConnectionError, DatabaseSecurityError
+from query_pilot.db.connection import (
+    DatabaseConnectionError,
+    DatabaseSecurityError,
+    verify_database_context,
+)
 from query_pilot.db.executor import QueryTimeoutError, UnsafeQueryError
 from query_pilot.db.factory import ProfileConnectionFactory
 from query_pilot.db.models import DatabaseSchema
 from query_pilot.db.profile import (
+    ConnectionProfile,
     ConnectionTargetOverrideError,
+    ProfileConfigurationError,
     ProfileStore,
     UnknownProfileError,
     load_trusted_profiles_file,
+    profile_file_lock,
+    save_trusted_profiles_file,
 )
 from query_pilot.db.profile_executor import (
     ProfileExecutionBoundary,
@@ -337,6 +353,277 @@ def create_agent_app(
                 )
             )
         return ProfileListResponse(profiles=summaries)
+
+    @app.post(
+        "/agent/v1/profiles/validate-config",
+        response_model=ValidateProfileConfigResponse,
+        responses={
+            400: {"model": AgentErrorResponse},
+            401: {"model": AgentErrorResponse},
+            409: {"model": AgentErrorResponse},
+            422: {"model": AgentErrorResponse},
+        },
+    )
+    def validate_profile_config(
+        body: ValidateProfileConfigRequest,
+        session: Session = Depends(get_current_session),
+    ):
+        """Validate a proposed database connection profile configuration offline.
+
+        Enforces:
+        - Strict offline evaluation (zero network access, zero database connections, zero file writes).
+        - Rejection of SQL Server system databases (master, msdb, model, tempdb).
+        - Local-only server target policy (loopback and local machine identities only; no remote targets).
+        - Rejection of credentials, passwords, usernames, and unapproved connection overrides.
+        - Detection of duplicate profile ID against active store (HTTP 409 Conflict).
+        - Bounded ceilings (timeout <= 15s, max_row_limit <= 100).
+        """
+        if resolved_store.has_profile(body.profile_id):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Profile ID '{body.profile_id}' already exists in approved profile store.",
+            )
+
+        return ValidateProfileConfigResponse()
+
+    @app.post(
+        "/agent/v1/profiles",
+        response_model=CreateProfileResponse,
+        status_code=status.HTTP_201_CREATED,
+        responses={
+            400: {"model": AgentErrorResponse},
+            401: {"model": AgentErrorResponse},
+            403: {"model": AgentErrorResponse},
+            409: {"model": AgentErrorResponse},
+            422: {"model": AgentErrorResponse},
+            500: {"model": AgentErrorResponse},
+            503: {"model": AgentErrorResponse},
+        },
+    )
+    def create_profile(
+        body: CreateProfileRequest,
+        session: Session = Depends(get_current_session),
+    ):
+        """Create an approved database connection profile, persist it atomically to disk,
+        and synchronize the running agent's in-memory store.
+
+        Enforces:
+        - Strict offline execution: zero database connections, zero ODBC calls, zero engine creation.
+        - Strict validation: Windows Integrated Auth only, loopback targets only, system DB rejection.
+        - Cross-process file locking with safe timeout handling.
+        - Duplicate detection against reloaded disk state.
+        - Default profile preservation (or assignment if no default exists).
+        - Hardened atomic file persistence with user-restricted permissions.
+        - In-memory store synchronization without invalidating existing engines.
+        - Honest error reporting if persistence succeeds but in-memory sync fails.
+        """
+        # Fast in-memory duplicate check
+        if resolved_store.has_profile(body.profile_id):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Profile ID '{body.profile_id}' already exists in approved profile store.",
+            )
+
+        new_profile = ConnectionProfile(
+            profile_id=body.profile_id,
+            display_name=body.display_name,
+            server=body.server,
+            database_name=body.database_name,
+            driver=body.driver,
+            engine_type=body.engine_type,
+            use_trusted_connection=body.use_trusted_connection,
+            timeout_seconds=body.timeout_seconds,
+            max_row_limit=body.max_row_limit,
+            allowed_tables=tuple(body.allowed_tables) if body.allowed_tables is not None else None,
+            sensitive_columns=tuple(body.sensitive_columns) if body.sensitive_columns is not None else None,
+            schema_name=body.schema_name,
+        )
+
+        profiles_path = resolved_config.resolved_profiles_file
+        disk_store: Optional[ProfileStore] = None
+        is_default = False
+
+        try:
+            with profile_file_lock(profiles_path, timeout=5.0):
+                # Reload latest trusted profile file under lock
+                if profiles_path.exists():
+                    disk_store = load_trusted_profiles_file(profiles_path)
+                else:
+                    disk_store = ProfileStore()
+
+                # Authoritative duplicate check against reloaded disk state
+                if disk_store.has_profile(new_profile.profile_id):
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=f"Profile ID '{new_profile.profile_id}' already exists in approved profile store.",
+                    )
+
+                # Register new profile and determine default status
+                disk_store.register_profile(new_profile)
+                if disk_store.default_profile_id is None:
+                    disk_store.set_default_profile(new_profile.profile_id)
+                    is_default = True
+                elif body.set_as_default:
+                    disk_store.set_default_profile(new_profile.profile_id)
+                    is_default = True
+                else:
+                    is_default = False
+
+                # Persist atomically to disk
+                save_trusted_profiles_file(profiles_path, disk_store)
+
+                # Synchronize running agent's in-memory store while still holding the cross-process lock.
+                # This guarantees that serialized or concurrent profile creations cannot interleave
+                # in a way that an older snapshot overwrites a newer in-memory state.
+                try:
+                    resolved_store.sync_from_store(disk_store)
+                except Exception as sync_exc:
+                    logger.error("In-memory store sync failed after disk persistence: %s", sync_exc)
+                    try:
+                        reloaded = load_trusted_profiles_file(profiles_path)
+                        resolved_store.sync_from_store(reloaded)
+                    except Exception as reload_exc:
+                        logger.critical(
+                            "Controlled reload also failed after disk persistence: %s", reload_exc
+                        )
+                        raise HTTPException(
+                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail="PROFILE_PERSISTED_SYNC_FAILED: Profile was successfully saved to disk, but in-memory synchronization failed. Please restart the agent daemon to load the new profile.",
+                        )
+        except HTTPException:
+            raise
+        except ProfileConfigurationError as exc:
+            if "Timeout" in str(exc):
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Timeout acquiring profile lock. Another profile operation may be in progress.",
+                )
+            logger.error("Failed to persist database profile: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to persist profile configuration.",
+            )
+        except Exception as exc:
+            logger.error("Unexpected error persisting profile: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to persist profile configuration.",
+            )
+
+        summary = ProfileSummary(
+            profile_id=new_profile.profile_id,
+            display_name=new_profile.display_name,
+            schema_name=new_profile.schema_name or "dbo",
+            timeout_seconds=new_profile.timeout_seconds,
+            max_row_limit=new_profile.max_row_limit,
+            has_allowlist=new_profile.allowed_tables is not None,
+            allowed_tables=list(new_profile.allowed_tables) if new_profile.allowed_tables is not None else None,
+        )
+        return CreateProfileResponse(
+            profile=summary,
+            is_default=is_default,
+            message=f"Database connection profile '{new_profile.profile_id}' created and registered successfully.",
+        )
+
+    @app.post(
+        "/agent/v1/profiles/{profile_id}/test-connection",
+        response_model=TestConnectionResponse,
+        status_code=status.HTTP_200_OK,
+        responses={
+            400: {"model": AgentErrorResponse},
+            401: {"model": AgentErrorResponse},
+            404: {"model": AgentErrorResponse},
+            422: {"model": AgentErrorResponse},
+        },
+    )
+    def test_profile_connection(
+        profile_id: str,
+        body: Optional[TestConnectionRequest] = None,
+        session: Session = Depends(get_current_session),
+    ):
+        """Execute a safe, bounded connection test against an approved database profile.
+
+        Enforces:
+        - Strict authentication via ambient loopback session cookie (HTTP 401).
+        - State-changing CSRF defense requiring X-QueryPilot-Request: 1 header (HTTP 400).
+        - Profile resolution strictly from trusted ProfileStore; unknown profiles fail closed (HTTP 404).
+        - Rejection of client-supplied connection overrides or arbitrary SQL (HTTP 422).
+        - Isolated ephemeral engine with NullPool (no shared pool usage, zero pool poisoning).
+        - Driver login timeout bound by approved profile (clamped <= 15 seconds).
+        - Fixed read-only SELECT DB_NAME() probe; never accepts user SQL.
+        - Runtime database identity verification against profile expected database.
+        - Deterministic connection closure and engine disposal on all exit paths.
+        - Sanitized response model returning HTTP 200 with typed failure codes on probe failures.
+        - Zero leakage of raw driver exceptions, connection strings, hostnames, or credentials.
+        """
+        try:
+            profile = resolved_store.get_profile(profile_id)
+        except UnknownProfileError:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Profile '{profile_id}' not found.",
+            )
+
+        temp_engine = None
+        start_time = time.perf_counter()
+        try:
+            temp_engine = resolved_factory.create_engine(
+                profile_id=profile_id,
+                poolclass=NullPool,
+            )
+            with temp_engine.connect() as conn:
+                actual_db = verify_database_context(conn, expected_db=profile.database_name)
+                elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+                return TestConnectionResponse(
+                    connected=True,
+                    database_name=actual_db,
+                    latency_ms=round(elapsed_ms, 2),
+                    message="Connection established and database context verified successfully.",
+                    failure_code=None,
+                )
+        except DatabaseSecurityError:
+            elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+            return TestConnectionResponse(
+                connected=False,
+                database_name=None,
+                latency_ms=round(elapsed_ms, 2),
+                message="Connected database did not match the expected database configured on this profile.",
+                failure_code="DATABASE_MISMATCH",
+            )
+        except Exception as exc:
+            elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+            err_str = str(exc).lower()
+
+            # Classify error using bounded diagnostic failure codes
+            if "timeout" in err_str or "hyt00" in err_str or "login timeout" in err_str:
+                failure_code = "TIMEOUT"
+                msg = "Connection attempt timed out. The database server did not respond within the configured timeout limit."
+            elif any(s in err_str for s in ("login failed", "sspi", "ssspi", "28000", "access is denied", "untrusted domain")):
+                failure_code = "AUTH_FAILED"
+                msg = "Authentication failed. Windows Integrated Authentication was rejected by the database server."
+            elif any(s in err_str for s in ("server does not exist", "access denied", "network-related", "instance failure", "connection refused", "could not open a connection", "08001", "named pipes provider", "tcp provider")):
+                failure_code = "UNREACHABLE"
+                msg = "Database server is unreachable or the specified instance is not accepting connections."
+            elif any(s in err_str for s in ("data source name not found", "driver not found", "im002")) or ("driver" in err_str and "not found" in err_str):
+                failure_code = "DRIVER_ERROR"
+                msg = "ODBC driver error. The specified ODBC driver is missing or misconfigured on this machine."
+            else:
+                failure_code = "CONNECTION_FAILED"
+                msg = "Failed to establish a database connection."
+
+            return TestConnectionResponse(
+                connected=False,
+                database_name=None,
+                latency_ms=round(elapsed_ms, 2),
+                message=msg,
+                failure_code=failure_code,
+            )
+        finally:
+            if temp_engine is not None:
+                try:
+                    temp_engine.dispose()
+                except Exception:
+                    pass
 
     @app.get(
         "/agent/v1/profiles/{profile_id}/schema",

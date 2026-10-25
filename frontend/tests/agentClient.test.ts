@@ -9,6 +9,7 @@ import {
   MAX_SQL_QUERY_LENGTH,
   MIN_BOOTSTRAP_TOKEN_LENGTH,
   bootstrapAgent,
+  createProfile,
   executeProfileQuery,
   getAgentBaseUrl,
   getProfileSchema,
@@ -17,6 +18,8 @@ import {
   logoutAgent,
   resolveAgentEndpoint,
   rotateAgentToken,
+  testProfileConnection,
+  validateProfileConfig,
 } from '../src/services/agentClient.ts'
 
 function setTestAgentBaseUrl(url: string | undefined): void {
@@ -738,3 +741,218 @@ test('Local Agent Client - Error Classification', async (t) => {
     )
   })
 })
+
+// ==============================================================================
+// 7. Profile Onboarding & Connection Testing (B12-F8H)
+// ==============================================================================
+
+test('Local Agent Client - Profile Onboarding & Explicit Connection Testing', async (t) => {
+  const originalFetch = globalThis.fetch
+
+  t.afterEach(() => {
+    globalThis.fetch = originalFetch
+    setTestAgentBaseUrl(undefined)
+  })
+
+  const sampleValidConfig = {
+    profile_id: 'test_sql_server',
+    display_name: 'Test SQL Server Instance',
+    server: 'localhost\\SQLEXPRESS',
+    database_name: 'TestDB',
+    schema_name: 'dbo',
+    driver: 'ODBC Driver 17 for SQL Server',
+    engine_type: 'mssql' as const,
+    use_trusted_connection: true,
+    timeout_seconds: 15,
+    max_row_limit: 100,
+  }
+
+  await t.test('validateProfileConfig() sends POST with custom header, credentials, and payload', async () => {
+    let capturedUrl: string | URL | Request | undefined
+    let capturedOptions: RequestInit | undefined
+
+    globalThis.fetch = (async (url: string | URL | Request, options?: RequestInit) => {
+      capturedUrl = url
+      capturedOptions = options
+      return new Response(
+        JSON.stringify({
+          valid: true,
+          message: 'Profile configuration is valid and complies with security policies.',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    }) as typeof fetch
+
+    const res = await validateProfileConfig(sampleValidConfig)
+    assert.strictEqual(capturedUrl, '/agent/v1/profiles/validate-config')
+    assert.strictEqual(capturedOptions?.method, 'POST')
+    assert.strictEqual(capturedOptions?.credentials, 'include')
+
+    const headers = capturedOptions?.headers as Record<string, string>
+    assert.strictEqual(headers[AGENT_CUSTOM_HEADER], AGENT_CUSTOM_HEADER_VALUE)
+    assert.strictEqual(headers['Content-Type'], 'application/json')
+    assert.strictEqual(headers['Accept'], 'application/json')
+    assert.strictEqual(res.valid, true)
+  })
+
+  await t.test('validateProfileConfig() rejects client-side invalid profile_id before fetch', async () => {
+    await assert.rejects(
+      async () => validateProfileConfig({ ...sampleValidConfig, profile_id: 'invalid id with spaces' }),
+      (err: unknown) => {
+        assert(err instanceof AgentClientError)
+        assert.strictEqual(err.kind, 'validation')
+        assert(err.message.includes('Profile ID must be 1-64 characters'))
+        return true
+      }
+    )
+  })
+
+  await t.test('validateProfileConfig() handles HTTP 422 server validation error', async () => {
+    globalThis.fetch = (async () => {
+      return new Response(
+        JSON.stringify({
+          detail: [{ loc: ['body', 'server'], msg: 'Target server is not an approved loopback host' }],
+        }),
+        { status: 422, headers: { 'Content-Type': 'application/json' } }
+      )
+    }) as typeof fetch
+
+    await assert.rejects(
+      async () => validateProfileConfig(sampleValidConfig),
+      (err: unknown) => {
+        assert(err instanceof AgentClientError)
+        assert.strictEqual(err.kind, 'validation')
+        assert.strictEqual(err.statusCode, 422)
+        assert(err.message.includes('Target server is not an approved loopback host'))
+        return true
+      }
+    )
+  })
+
+  await t.test('createProfile() handles HTTP 201 Created and returns CreateProfileResponse', async () => {
+    let capturedUrl: string | URL | Request | undefined
+    let capturedOptions: RequestInit | undefined
+
+    globalThis.fetch = (async (url: string | URL | Request, options?: RequestInit) => {
+      capturedUrl = url
+      capturedOptions = options
+      return new Response(
+        JSON.stringify({
+          profile: {
+            profile_id: 'test_sql_server',
+            display_name: 'Test SQL Server Instance',
+            schema_name: 'dbo',
+            timeout_seconds: 15,
+            max_row_limit: 100,
+            has_allowlist: false,
+            allowed_tables: null,
+          },
+          is_default: true,
+          message: 'Database connection profile created and registered successfully.',
+        }),
+        { status: 201, headers: { 'Content-Type': 'application/json' } }
+      )
+    }) as typeof fetch
+
+    const res = await createProfile({ ...sampleValidConfig, set_as_default: true })
+    assert.strictEqual(capturedUrl, '/agent/v1/profiles')
+    assert.strictEqual(capturedOptions?.method, 'POST')
+    assert.strictEqual(capturedOptions?.credentials, 'include')
+    assert.strictEqual(res.profile.profile_id, 'test_sql_server')
+    assert.strictEqual(res.is_default, true)
+  })
+
+  await t.test('createProfile() handles HTTP 409 Conflict when profile_id already exists', async () => {
+    globalThis.fetch = (async () => {
+      return new Response(
+        JSON.stringify({
+          error: 'conflict',
+          detail: "Profile 'test_sql_server' already exists in the profile store.",
+        }),
+        { status: 409, headers: { 'Content-Type': 'application/json' } }
+      )
+    }) as typeof fetch
+
+    await assert.rejects(
+      async () => createProfile(sampleValidConfig),
+      (err: unknown) => {
+        assert(err instanceof AgentClientError)
+        assert.strictEqual(err.kind, 'conflict')
+        assert.strictEqual(err.statusCode, 409)
+        assert(err.message.includes('already exists in the profile store'))
+        return true
+      }
+    )
+  })
+
+  await t.test('testProfileConnection() sends POST with empty body to correct endpoint', async () => {
+    let capturedUrl: string | URL | Request | undefined
+    let capturedOptions: RequestInit | undefined
+
+    globalThis.fetch = (async (url: string | URL | Request, options?: RequestInit) => {
+      capturedUrl = url
+      capturedOptions = options
+      return new Response(
+        JSON.stringify({
+          connected: true,
+          database_name: 'TestDB',
+          latency_ms: 24.5,
+          message: 'Connection verified successfully. SELECT DB_NAME() returned TestDB.',
+          failure_code: null,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    }) as typeof fetch
+
+    const res = await testProfileConnection('test_sql_server')
+    assert.strictEqual(capturedUrl, '/agent/v1/profiles/test_sql_server/test-connection')
+    assert.strictEqual(capturedOptions?.method, 'POST')
+    assert.strictEqual(capturedOptions?.body, '{}')
+    assert.strictEqual(res.connected, true)
+    assert.strictEqual(res.database_name, 'TestDB')
+    assert.strictEqual(res.latency_ms, 24.5)
+  })
+
+  await t.test('testProfileConnection() correctly receives typed failure with HTTP 200 and connected: false', async () => {
+    globalThis.fetch = (async () => {
+      return new Response(
+        JSON.stringify({
+          connected: false,
+          database_name: null,
+          latency_ms: null,
+          message: 'Windows Integrated Authentication failed for target SQL Server.',
+          failure_code: 'AUTH_FAILED',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    }) as typeof fetch
+
+    const res = await testProfileConnection('test_sql_server')
+    assert.strictEqual(res.connected, false)
+    assert.strictEqual(res.failure_code, 'AUTH_FAILED')
+    assert(res.message.includes('Authentication failed'))
+  })
+
+  await t.test('testProfileConnection() handles 404 for nonexistent profile', async () => {
+    globalThis.fetch = (async () => {
+      return new Response(
+        JSON.stringify({
+          error: 'not_found',
+          detail: "Profile 'nonexistent' not found in profile store.",
+        }),
+        { status: 404, headers: { 'Content-Type': 'application/json' } }
+      )
+    }) as typeof fetch
+
+    await assert.rejects(
+      async () => testProfileConnection('nonexistent'),
+      (err: unknown) => {
+        assert(err instanceof AgentClientError)
+        assert.strictEqual(err.kind, 'not_found')
+        assert.strictEqual(err.statusCode, 404)
+        return true
+      }
+    )
+  })
+})
+

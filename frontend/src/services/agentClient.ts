@@ -22,11 +22,16 @@ import {
   type AgentDatabaseSchema,
   type AgentErrorKind,
   type BootstrapResponse,
+  type CreateProfileRequest,
+  type CreateProfileResponse,
   type ExecuteQueryResponse,
   type LogoutResponse,
   type ModelFacingSchemaContext,
   type ProfileListResponse,
   type RotateTokenResponse,
+  type TestConnectionResponse,
+  type ValidateProfileConfigRequest,
+  type ValidateProfileConfigResponse,
 } from '../types/api.ts'
 import { projectToModelFacingSchema } from './schemaProjection.ts'
 
@@ -151,6 +156,8 @@ function mapHttpStatusToErrorKind(status: number): AgentErrorKind {
       return 'forbidden'
     case 404:
       return 'not_found'
+    case 409:
+      return 'conflict'
     case 504:
       return 'timeout'
     case 429:
@@ -271,6 +278,9 @@ async function sendAgentRequest<T>(
           break
         case 'forbidden':
           errorMessage = 'Access denied by local agent.'
+          break
+        case 'conflict':
+          errorMessage = 'A profile with this identifier already exists in the profile store.'
           break
         case 'not_found':
           errorMessage = 'The requested profile or agent resource was not found.'
@@ -552,3 +562,177 @@ export async function executeProfileQuery(
     }
   )
 }
+
+const PROFILE_ID_REGEX = /^[a-zA-Z0-9_-]+$/
+
+function validateProfileConfigPayload(payload: ValidateProfileConfigRequest): void {
+  if (!payload || typeof payload !== 'object') {
+    throw new AgentClientError({
+      message: 'Profile configuration payload must be an object.',
+      kind: 'validation',
+    })
+  }
+
+  const pid = payload.profile_id?.trim()
+  if (!pid) {
+    throw new AgentClientError({
+      message: 'Profile ID is required and cannot be blank.',
+      kind: 'validation',
+    })
+  }
+  if (pid.length > 64 || !PROFILE_ID_REGEX.test(pid)) {
+    throw new AgentClientError({
+      message: 'Profile ID must be 1-64 characters containing only letters, numbers, underscores, and hyphens.',
+      kind: 'validation',
+    })
+  }
+
+  const dname = payload.display_name?.trim()
+  if (!dname) {
+    throw new AgentClientError({
+      message: 'Display name is required and cannot be blank.',
+      kind: 'validation',
+    })
+  }
+  if (dname.length > 128) {
+    throw new AgentClientError({
+      message: 'Display name cannot exceed 128 characters.',
+      kind: 'validation',
+    })
+  }
+
+  const srv = payload.server?.trim()
+  if (!srv) {
+    throw new AgentClientError({
+      message: 'Server target is required and cannot be blank.',
+      kind: 'validation',
+    })
+  }
+  if (srv.length > 255) {
+    throw new AgentClientError({
+      message: 'Server target cannot exceed 255 characters.',
+      kind: 'validation',
+    })
+  }
+
+  const db = payload.database_name?.trim()
+  if (!db) {
+    throw new AgentClientError({
+      message: 'Database name is required and cannot be blank.',
+      kind: 'validation',
+    })
+  }
+  if (db.length > 128) {
+    throw new AgentClientError({
+      message: 'Database name cannot exceed 128 characters.',
+      kind: 'validation',
+    })
+  }
+
+  if (payload.engine_type && payload.engine_type !== 'mssql') {
+    throw new AgentClientError({
+      message: "Unsupported engine_type. QueryPilot only supports 'mssql'.",
+      kind: 'validation',
+    })
+  }
+
+  if (payload.use_trusted_connection !== undefined && payload.use_trusted_connection !== true) {
+    throw new AgentClientError({
+      message: 'QueryPilot requires Windows Integrated Authentication (use_trusted_connection=true).',
+      kind: 'validation',
+    })
+  }
+}
+
+/**
+ * Validates a local database connection profile configuration offline with the local agent daemon.
+ *
+ * Security & Protocol:
+ * - 100% offline regex, boundary, and policy check on the local daemon.
+ * - Does not access network or live database.
+ * - Forbids credentials, SQL logins, or raw connection strings.
+ */
+export async function validateProfileConfig(
+  payload: ValidateProfileConfigRequest,
+  options?: AgentRequestOptions
+): Promise<ValidateProfileConfigResponse> {
+  validateProfileConfigPayload(payload)
+
+  const url = resolveAgentEndpoint('/v1/profiles/validate-config')
+  return sendAgentRequest<ValidateProfileConfigResponse>(
+    url,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    },
+    options
+  )
+}
+
+/**
+ * Persists an approved local database connection profile into the local agent ProfileStore.
+ *
+ * Security & Protocol:
+ * - Persisted under cross-process file lock into ~/.query_pilot/profiles.json.
+ * - Returns HTTP 201 Created on success with redacted ProfileSummary.
+ * - Rejects duplicate profile IDs with HTTP 409 Conflict.
+ */
+export async function createProfile(
+  payload: CreateProfileRequest,
+  options?: AgentRequestOptions
+): Promise<CreateProfileResponse> {
+  validateProfileConfigPayload(payload)
+
+  const url = resolveAgentEndpoint('/v1/profiles')
+  return sendAgentRequest<CreateProfileResponse>(
+    url,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    },
+    options
+  )
+}
+
+/**
+ * Performs an explicit, bounded connection test against an already registered database profile.
+ *
+ * Security & Protocol:
+ * - Connects using isolated NullPool engine executing SELECT DB_NAME().
+ * - Rejects arbitrary client connection parameters; strictly uses server-side registered config.
+ * - Returns HTTP 200 with typed diagnosis and bounded latency.
+ * - If connected is false, the profile remains safely saved.
+ */
+export async function testProfileConnection(
+  profileId: string,
+  options?: AgentRequestOptions
+): Promise<TestConnectionResponse> {
+  if (typeof profileId !== 'string' || !profileId.trim()) {
+    throw new AgentClientError({
+      message: 'Profile ID must be a non-empty string.',
+      kind: 'validation',
+    })
+  }
+
+  const encodedId = encodeURIComponent(profileId.trim())
+  const url = resolveAgentEndpoint(`/v1/profiles/${encodedId}/test-connection`)
+
+  return sendAgentRequest<TestConnectionResponse>(
+    url,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({}),
+    },
+    options
+  )
+}
+

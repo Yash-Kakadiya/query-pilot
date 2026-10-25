@@ -3,6 +3,7 @@ import { AccessKeyBar } from './components/AccessKeyBar'
 import { AgentAuthModal } from './components/AgentAuthModal'
 import { CandidateSqlReview } from './components/CandidateSqlReview'
 import { ErrorAlert } from './components/ErrorAlert'
+import { ProfileOnboardingModal } from './components/ProfileOnboardingModal'
 import { ProfileSelector } from './components/ProfileSelector'
 import { QueryInput } from './components/QueryInput'
 import { QueryResults } from './components/QueryResults'
@@ -45,6 +46,7 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator }: 
 
   // 2. Local Agent session coordinator
   const { state: agentSession, coordinator } = useAgentSession(agentCoordinator)
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState<boolean>(false)
 
   // 3. Decoupled SQL Generation coordinator (Phase 7.3 / F28-A9-B6)
   const { state: sqlGenState, coordinator: sqlGenCoordinator } = useSqlGeneration(sqlCoordinator)
@@ -403,6 +405,12 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator }: 
                 onRetrySchema={() => {
                   void coordinator.retryLoadSchema()
                 }}
+                onOpenOnboarding={() => setIsOnboardingOpen(true)}
+                onTestConnection={(profileId) => {
+                  void coordinator.testConnection(profileId)
+                }}
+                connectionTestStatus={agentSession.connectionTestStatus}
+                connectionTestResult={agentSession.connectionTestResult}
               />
             </section>
           )}
@@ -514,6 +522,18 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator }: 
         authError={agentSession.authError}
         onSubmit={handleAgentBootstrap}
         onClose={() => coordinator.closeModal()}
+      />
+
+      {/* Local Database Profile Onboarding & Connection Test Dialog (B12-F8H) */}
+      <ProfileOnboardingModal
+        isOpen={isOnboardingOpen}
+        onClose={() => setIsOnboardingOpen(false)}
+        onProfileCreated={async () => {
+          await coordinator.refreshProfiles()
+        }}
+        onUseProfile={(profileId) => {
+          void coordinator.selectProfile(profileId)
+        }}
       />
     </div>
   )

@@ -2,6 +2,7 @@ import type {
   AgentDatabaseSchema,
   ModelFacingSchemaContext,
   ProfileSummary,
+  TestConnectionResponse,
 } from '../types/api.ts'
 import type { SchemaIntrospectionStatus } from '../services/agentSession.ts'
 import './ProfileSelector.css'
@@ -16,6 +17,10 @@ export interface ProfileSelectorProps {
   schemaError?: string
   onSelectProfile: (profileId: string | null) => void
   onRetrySchema: () => void
+  onOpenOnboarding?: () => void
+  onTestConnection?: (profileId: string) => Promise<void> | void
+  connectionTestStatus?: 'idle' | 'testing' | 'success' | 'failed'
+  connectionTestResult?: TestConnectionResponse | null
 }
 
 /**
@@ -23,7 +28,7 @@ export interface ProfileSelectorProps {
  *
  * Exposes approved loopback connection profiles discovered from the local agent daemon,
  * manages schema introspection state transitions, displays bounded schema statistics,
- * and handles retry on schema introspection failure.
+ * provides explicit connection testing, and allows triggering the profile onboarding flow.
  */
 export function ProfileSelector({
   profiles,
@@ -34,9 +39,14 @@ export function ProfileSelector({
   schemaError,
   onSelectProfile,
   onRetrySchema,
+  onOpenOnboarding,
+  onTestConnection,
+  connectionTestStatus = 'idle',
+  connectionTestResult,
 }: ProfileSelectorProps) {
   const hasProfiles = profiles.length > 0
   const isSchemaLoading = schemaStatus === 'loading'
+  const isTestingConn = connectionTestStatus === 'testing'
 
   return (
     <div
@@ -49,6 +59,16 @@ export function ProfileSelector({
           <span className="profile-header-icon" aria-hidden="true">🗄️</span>
           <h2 className="profile-selector-title">Target Database Profile</h2>
         </div>
+        {onOpenOnboarding && (
+          <button
+            type="button"
+            className="profile-add-header-btn"
+            onClick={onOpenOnboarding}
+            aria-label="Configure new local database profile"
+          >
+            + Add Profile
+          </button>
+        )}
         <p className="profile-selector-desc">
           Select an approved local database profile to introspect its schema metadata.
         </p>
@@ -57,10 +77,21 @@ export function ProfileSelector({
       {!hasProfiles ? (
         <div className="profile-empty-alert" role="status">
           <span aria-hidden="true">ℹ️</span>
-          <span>
-            No database profiles configured in local agent. Define profiles in{' '}
-            <code>~/.query_pilot/profiles.yaml</code> to begin.
-          </span>
+          <div className="empty-alert-body">
+            <span>
+              No database profiles configured in local agent. Define profiles in{' '}
+              <code>~/.query_pilot/profiles.json</code> or click <strong>Add Profile</strong> to configure a local SQL Server profile.
+            </span>
+            {onOpenOnboarding && (
+              <button
+                type="button"
+                className="profile-add-header-btn profile-empty-add-btn"
+                onClick={onOpenOnboarding}
+              >
+                + Add Profile
+              </button>
+            )}
+          </div>
         </div>
       ) : (
         <div className="profile-select-row">
@@ -72,7 +103,7 @@ export function ProfileSelector({
             className="profile-dropdown"
             value={selectedProfileId || ''}
             onChange={(e) => onSelectProfile(e.target.value || null)}
-            disabled={isSchemaLoading}
+            disabled={isSchemaLoading || isTestingConn}
             aria-describedby="profile-meta-info"
           >
             <option value="">-- Choose a database profile --</option>
@@ -83,17 +114,48 @@ export function ProfileSelector({
             ))}
           </select>
 
+          {selectedProfileId && onTestConnection && (
+            <button
+              type="button"
+              className="profile-action-btn profile-test-btn"
+              onClick={() => onTestConnection(selectedProfileId)}
+              disabled={isTestingConn || isSchemaLoading}
+              aria-label="Test connection to active database profile"
+            >
+              {isTestingConn ? 'Testing Connection...' : 'Test Connection'}
+            </button>
+          )}
+
           {selectedProfileId && (
             <button
               type="button"
               className="profile-clear-btn"
               onClick={() => onSelectProfile(null)}
-              disabled={isSchemaLoading}
+              disabled={isSchemaLoading || isTestingConn}
               aria-label="Clear profile selection"
             >
               Clear
             </button>
           )}
+        </div>
+      )}
+
+      {/* Explicit Connection Test Result Banner */}
+      {selectedProfile && connectionTestResult && (
+        <div
+          className={`profile-conn-banner ${
+            connectionTestResult.connected ? 'conn-banner-success' : 'conn-banner-failure'
+          }`}
+          role="status"
+        >
+          <span className="conn-banner-icon" aria-hidden="true">
+            {connectionTestResult.connected ? '✓' : '⚠️'}
+          </span>
+          <span className="conn-banner-text">
+            {connectionTestResult.connected
+              ? `Connection Verified: ${connectionTestResult.database_name || selectedProfile.display_name} (${Math.round(connectionTestResult.latency_ms || 0)} ms)`
+              : `Connection Failed: ${connectionTestResult.message}`}
+          </span>
         </div>
       )}
 

@@ -30,8 +30,9 @@ import re
 import secrets
 import stat
 import subprocess
+import threading
 import time
-from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Tuple
+from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Set, Tuple
 import urllib.parse
 
 from pydantic import (
@@ -56,7 +57,7 @@ GLOBAL_MAX_ROW_LIMIT: int = 100
 logger = logging.getLogger(__name__)
 
 
-class ProfileError(Exception):
+class ProfileError(ValueError):
     """Base exception for connection profile operations."""
 
     pass
@@ -210,6 +211,223 @@ def inspect_for_forbidden_client_keys(obj: Any, path: str = "") -> None:
     elif isinstance(obj, (list, tuple, set)):
         for idx, item in enumerate(obj):
             inspect_for_forbidden_client_keys(item, path=f"{path}[{idx}].")
+
+
+# SQL Server well-known system databases rejected case-insensitively
+SQLSERVER_SYSTEM_DATABASES: FrozenSet[str] = frozenset({
+    "master",
+    "msdb",
+    "model",
+    "tempdb",
+})
+
+# Approved local loopback host identifiers for QueryPilot database profiles
+APPROVED_LOOPBACK_HOSTS: FrozenSet[str] = frozenset({
+    "localhost",
+    "127.0.0.1",
+    "[::1]",
+    ".",
+})
+
+
+
+def validate_safe_profile_id(profile_id: str) -> str:
+    """Validate profile identifier syntax and length.
+
+    Must be 1-64 alphanumeric characters, underscores, or hyphens.
+    """
+    if not isinstance(profile_id, str):
+        raise ProfileConfigurationError("profile_id must be a string.")
+    trimmed = profile_id.strip()
+    if not trimmed:
+        raise ProfileConfigurationError("profile_id cannot be blank or whitespace.")
+    if len(trimmed) > 64:
+        raise ProfileConfigurationError(f"profile_id exceeds maximum length of 64 characters (got {len(trimmed)}).")
+    if not re.match(r"^[a-zA-Z0-9_\-]+$", trimmed):
+        raise ProfileConfigurationError(
+            f"profile_id '{profile_id}' contains invalid characters. Must contain only letters, numbers, underscores, and hyphens."
+        )
+    return trimmed
+
+
+def validate_safe_database_identifier(database_name: str) -> str:
+    """Validate SQL Server database name identifier and enforce system database rejection.
+
+    Must be 1-128 characters, conforming to SQL Server regular identifier syntax:
+    ^[a-zA-Z0-9_#$]+$.
+    Rejects SQL Server system databases (master, msdb, model, tempdb) case-insensitively.
+    """
+    if not isinstance(database_name, str):
+        raise ProfileConfigurationError("database_name must be a string.")
+    trimmed = database_name.strip()
+    if not trimmed:
+        raise ProfileConfigurationError("database_name cannot be blank or whitespace.")
+    if len(trimmed) > 128:
+        raise ProfileConfigurationError(f"database_name exceeds maximum length of 128 characters (got {len(trimmed)}).")
+    if not re.match(r"^[a-zA-Z0-9_#$]+$", trimmed):
+        raise ProfileConfigurationError(
+            f"database_name '{database_name}' contains invalid characters. Must conform to SQL Server regular identifier rules (letters, numbers, underscore, '#', '$')."
+        )
+    if trimmed.lower() in SQLSERVER_SYSTEM_DATABASES:
+        raise ProfileConfigurationError(
+            f"SECURITY REJECTION: Target database '{trimmed}' is a SQL Server system database. Direct connection to system databases is prohibited."
+        )
+    return trimmed
+
+
+def validate_safe_schema_identifier(schema_name: str) -> str:
+    """Validate SQL Server schema name identifier."""
+    if not isinstance(schema_name, str):
+        raise ProfileConfigurationError("schema_name must be a string.")
+    trimmed = schema_name.strip()
+    if not trimmed:
+        return "dbo"
+    if len(trimmed) > 128:
+        raise ProfileConfigurationError(f"schema_name exceeds maximum length of 128 characters (got {len(trimmed)}).")
+    if not re.match(r"^[a-zA-Z0-9_#$]+$", trimmed):
+        raise ProfileConfigurationError(
+            f"schema_name '{schema_name}' contains invalid characters. Must conform to SQL Server regular identifier rules."
+        )
+    return trimmed
+
+
+def validate_server_target_syntax(server: str) -> str:
+    """Validate server target string syntax before evaluating target policy.
+
+    Rejects:
+    - Empty or excessively long strings (> 255 chars).
+    - Control characters (ASCII < 32 or 127).
+    - Whitespace anywhere in the string.
+    - UNC paths (e.g. \\\\attacker\\share or //attacker/share).
+    - URLs and URI schemes (e.g. http://, https://, smb://).
+    - Unsupported protocol forms (e.g. np:, lpc:).
+    - ODBC delimiters or connection string fragments (; = { } ' \").
+    """
+    if not isinstance(server, str):
+        raise ProfileConfigurationError("server target must be a string.")
+    trimmed = server.strip()
+    if not trimmed:
+        raise ProfileConfigurationError("server target cannot be blank or whitespace.")
+    if len(trimmed) > 255:
+        raise ProfileConfigurationError(f"server target exceeds maximum length of 255 characters (got {len(trimmed)}).")
+    if any(ord(c) < 32 or ord(c) == 127 for c in trimmed):
+        raise ProfileConfigurationError("SECURITY REJECTION: server target contains prohibited control characters.")
+    if any(c.isspace() for c in trimmed):
+        raise ProfileConfigurationError("SECURITY REJECTION: server target cannot contain whitespace characters.")
+    if trimmed.startswith(("\\", "//")):
+        raise ProfileConfigurationError("SECURITY REJECTION: UNC paths and network shares are prohibited as server targets.")
+    if "://" in trimmed or any(trimmed.lower().startswith(p) for p in ("http:", "https:", "ftp:", "smb:", "file:")):
+        raise ProfileConfigurationError("SECURITY REJECTION: URLs and URI schemes are prohibited as server targets.")
+    if any(trimmed.lower().startswith(p) for p in ("np:", "lpc:")):
+        raise ProfileConfigurationError("SECURITY REJECTION: Named pipe and LPC protocol prefixes are prohibited.")
+    # Check for ODBC delimiters and injection characters
+    forbidden_delims = (";", "=", "{", "}", "'", '"')
+    if any(d in trimmed for d in forbidden_delims):
+        raise ProfileConfigurationError(
+            "SECURITY REJECTION: server target contains prohibited ODBC delimiter characters (; = { } ' \")."
+        )
+    return trimmed
+
+
+def validate_local_server_target_policy(server: str) -> str:
+    """Enforce conservative loopback-only server-target policy for QueryPilot.
+
+    Treats syntax validation and local loopback policy as separate checks.
+    Evaluates parsed host and instance/port components to ensure the target
+    is strictly an approved local workstation loopback SQL Server instance:
+    - Approved loopback hosts: 'localhost', '127.0.0.1', canonical bracketed '[::1]', '.'
+    - Optional named instance: backslash followed by alphanumeric instance name (e.g. 'localhost\\SQLEXPRESS', '.\\SQLEXPRESS')
+    - Optional TCP port: comma followed by valid port number 1-65535 (e.g. 'localhost,1433', '[::1],1433')
+
+    Rejects:
+    - Computer names (COMPUTERNAME / platform.node()) unless matching an approved loopback form
+    - Unbracketed bare IPv6 literals (e.g. '::1', which the ODBC builder cannot safely represent)
+    - Remote IP addresses, LAN/private IPs, metadata-service IPs (169.254.169.254)
+    - External or corporate domain names
+    - Colon-port syntax (SQL Server ODBC requires comma-port notation)
+    """
+    clean_syntax = validate_server_target_syntax(server)
+
+    # In SQL Server ODBC, ports are specified using a comma (,), NOT a colon (:)
+    # Reject colon-separated ports, and reject unbracketed IPv6 literals
+    if clean_syntax.startswith("["):
+        bracket_end = clean_syntax.find("]")
+        if bracket_end == -1:
+            raise ProfileConfigurationError(
+                f"Invalid server target '{clean_syntax}'. Missing closing bracket for IPv6 literal."
+            )
+        remainder = clean_syntax[bracket_end + 1 :]
+        if ":" in remainder:
+            raise ProfileConfigurationError(
+                f"Invalid server target '{clean_syntax}'. In SQL Server ODBC, port numbers must be separated by a comma (e.g. '[::1],1433'), not a colon."
+            )
+    elif ":" in clean_syntax:
+        if clean_syntax.count(":") == 1:
+            raise ProfileConfigurationError(
+                f"Invalid server target '{clean_syntax}'. In SQL Server ODBC, port numbers must be separated by a comma (e.g. 'localhost,1433'), not a colon."
+            )
+        else:
+            # Two or more colons in unbracketed string indicates an unbracketed IPv6 literal (e.g. '::1')
+            raise ProfileConfigurationError(
+                f"SECURITY REJECTION: Server target '{clean_syntax}' is an unbracketed IPv6 literal. "
+                "SQL Server ODBC requires IPv6 addresses to be enclosed in brackets (e.g. '[::1]')."
+            )
+
+    # Parse optional port (comma-separated in SQL Server ODBC)
+    if "," in clean_syntax:
+        parts = clean_syntax.split(",")
+        if len(parts) != 2:
+            raise ProfileConfigurationError(
+                f"Invalid server target '{clean_syntax}'. Port format must be '<host>,<port>' or '<host>\\<instance>,<port>'."
+            )
+        host_inst_part = parts[0]
+        port_str = parts[1]
+        if not port_str.isdigit():
+            raise ProfileConfigurationError(f"Server port '{port_str}' must be a numeric integer.")
+        port = int(port_str)
+        if not (1 <= port <= 65535):
+            raise ProfileConfigurationError(f"Server port {port} is out of valid range (1-65535).")
+    else:
+        host_inst_part = clean_syntax
+
+    # Parse optional instance name (backslash-separated)
+    if "\\" in host_inst_part:
+        h_parts = host_inst_part.split("\\")
+        if len(h_parts) != 2:
+            raise ProfileConfigurationError(
+                f"Invalid server target '{clean_syntax}'. Instance format must be '<host>\\<instance>'."
+            )
+        host_part = h_parts[0]
+        instance = h_parts[1]
+        if not instance:
+            raise ProfileConfigurationError("Instance name cannot be empty when backslash is present.")
+        if not re.match(r"^[a-zA-Z0-9_]+$", instance):
+            raise ProfileConfigurationError(
+                f"Instance name '{instance}' contains invalid characters. Instance names must contain only letters, numbers, and underscores."
+            )
+    else:
+        host_part = host_inst_part
+
+    if not host_part:
+        raise ProfileConfigurationError("Server host component cannot be empty.")
+
+    # Reject bare IPv6 if host_part is ::1 or contains unbracketed colons
+    if host_part == "::1":
+        raise ProfileConfigurationError(
+            f"SECURITY REJECTION: Server target '{host_part}' is an unbracketed IPv6 literal. "
+            "SQL Server ODBC requires IPv6 addresses to be enclosed in brackets (e.g. '[::1]')."
+        )
+
+    # Enforce loopback-only host policy
+    if host_part.lower() not in APPROVED_LOOPBACK_HOSTS:
+        raise ProfileConfigurationError(
+            f"SECURITY REJECTION: Server target '{host_part}' is not an approved local loopback host. "
+            "QueryPilot currently restricts database connection profiles strictly to local loopback instances "
+            "(e.g. 'localhost\\SQLEXPRESS', '.\\SQLEXPRESS', '127.0.0.1', or '[::1]'). "
+            "Machine names, remote servers, LAN IP addresses, and non-loopback destinations are not permitted."
+        )
+
+    return clean_syntax
 
 
 class ConnectionProfile(BaseModel):
@@ -477,6 +695,7 @@ class ProfileStore:
         default_profile_id: Optional[str] = None,
     ):
         """Initialize with an optional mapping of profile_id -> ConnectionProfile and optional explicit default."""
+        self._lock = threading.RLock()
         self._profiles: Dict[str, ConnectionProfile] = dict(profiles or {})
         self._default_profile_id: Optional[str] = None
         if default_profile_id is not None:
@@ -485,36 +704,40 @@ class ProfileStore:
     @property
     def profiles(self) -> Dict[str, ConnectionProfile]:
         """Return a copy of the registered profiles mapping."""
-        return dict(self._profiles)
+        with self._lock:
+            return dict(self._profiles)
 
     @property
     def default_profile_id(self) -> Optional[str]:
         """Return the explicitly configured default profile_id, or None if none configured."""
-        return self._default_profile_id
+        with self._lock:
+            return self._default_profile_id
 
     def set_default_profile(self, profile_id: str) -> None:
         """Explicitly designate an existing registered profile as the default.
 
         Raises ProfileConfigurationError if profile_id is not already registered.
         """
-        if profile_id not in self._profiles:
-            raise ProfileConfigurationError(
-                f"Default profile '{profile_id}' is not present in registered profiles."
-            )
-        self._default_profile_id = profile_id
+        with self._lock:
+            if profile_id not in self._profiles:
+                raise ProfileConfigurationError(
+                    f"Default profile '{profile_id}' is not present in registered profiles."
+                )
+            self._default_profile_id = profile_id
 
     def get_default_profile(self) -> ConnectionProfile:
         """Retrieve the explicitly configured default profile.
 
         Raises UnknownProfileError if no default profile is configured.
         """
-        if self._default_profile_id is None:
-            raise UnknownProfileError(
-                "No default connection profile is configured in the trusted store. "
-                "Profile selection must be explicit.",
-                profile_id="None",
-            )
-        return self._profiles[self._default_profile_id]
+        with self._lock:
+            if self._default_profile_id is None:
+                raise UnknownProfileError(
+                    "No default connection profile is configured in the trusted store. "
+                    "Profile selection must be explicit.",
+                    profile_id="None",
+                )
+            return self._profiles[self._default_profile_id]
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> ProfileStore:
@@ -632,23 +855,40 @@ class ProfileStore:
             raise ProfileConfigurationError(
                 f"Expected ConnectionProfile, got {type(profile).__name__}."
             )
-        self._profiles[profile.profile_id] = profile
+        with self._lock:
+            new_profiles = dict(self._profiles)
+            new_profiles[profile.profile_id] = profile
+            self._profiles = new_profiles
 
     def has_profile(self, profile_id: str) -> bool:
         """Check if a profile_id is registered."""
-        return profile_id in self._profiles
+        with self._lock:
+            return profile_id in self._profiles
 
     def get_profile(self, profile_id: str) -> ConnectionProfile:
         """Retrieve a profile by ID or raise UnknownProfileError.
 
         Fails closed: an unknown profile_id NEVER falls back to default profile or GradeSense_Local.
         """
-        if not profile_id or not isinstance(profile_id, str) or profile_id not in self._profiles:
-            raise UnknownProfileError(
-                f"Unknown profile '{profile_id}'. Available profiles: {sorted(self._profiles.keys())}",
-                profile_id=str(profile_id) if profile_id is not None else "None",
-            )
-        return self._profiles[profile_id]
+        with self._lock:
+            if not profile_id or not isinstance(profile_id, str) or profile_id not in self._profiles:
+                raise UnknownProfileError(
+                    f"Unknown profile '{profile_id}'. Available profiles: {sorted(self._profiles.keys())}",
+                    profile_id=str(profile_id) if profile_id is not None else "None",
+                )
+            return self._profiles[profile_id]
+
+    def sync_from_store(self, other: ProfileStore) -> None:
+        """Atomically synchronize profiles and default profile from another ProfileStore instance."""
+        with self._lock:
+            other_lock = getattr(other, "_lock", None)
+            if other_lock is not None:
+                with other_lock:
+                    self._profiles = dict(other._profiles)
+                    self._default_profile_id = other._default_profile_id
+            else:
+                self._profiles = dict(other._profiles)
+                self._default_profile_id = other._default_profile_id
 
     def resolve(
         self,

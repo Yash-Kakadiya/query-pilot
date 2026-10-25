@@ -15,6 +15,8 @@ from typing import Callable, Optional
 import urllib.request
 import webbrowser
 
+from pydantic import ValidationError
+
 from query_pilot.agent.app import create_agent_app
 from query_pilot.agent.config import (
     AgentConfig,
@@ -26,6 +28,7 @@ from query_pilot.agent.config import (
     get_default_token_dir,
     is_loopback_host,
 )
+from query_pilot.agent.models import ValidateProfileConfigRequest
 from query_pilot.db.profile import (
     ConnectionProfile,
     ProfileConfigurationError,
@@ -144,6 +147,9 @@ def build_parser() -> argparse.ArgumentParser:
     add_parser.add_argument("--schema", "--schema-name", dest="schema_name", type=str, required=False, default="dbo", help="Default schema (default: dbo).")
     add_parser.add_argument("--timeout", "--timeout-seconds", dest="timeout_seconds", type=int, required=False, default=15, help="Query timeout seconds (1-15, default: 15).")
     add_parser.add_argument("--max-rows", "--max-row-limit", dest="max_row_limit", type=int, required=False, default=100, help="Max row limit (1-100, default: 100).")
+    add_parser.add_argument("--auth", "--auth-mode", dest="auth_mode", type=str, required=False, default="windows", help="Authentication mode (only 'windows' / Windows Integrated Authentication is supported).")
+    add_parser.add_argument("--allowed-tables", dest="allowed_tables", type=str, nargs="*", required=False, default=None, help="Optional permitted tables list.")
+    add_parser.add_argument("--sensitive-columns", dest="sensitive_columns", type=str, nargs="*", required=False, default=None, help="Optional custom sensitive columns denylist.")
     add_parser.add_argument("--profiles-file", type=Path, default=None, help="Path to profiles JSON file.")
     add_parser.add_argument("--yes", "-y", action="store_true", default=False, help="Confirm profile registration without interactive prompt.")
 
@@ -235,8 +241,6 @@ def handle_profile_add(args: argparse.Namespace) -> int:
     database_name = (args.database_name or "").strip()
     driver = (args.driver or "").strip() or "ODBC Driver 17 for SQL Server"
     schema_name = (args.schema_name or "dbo").strip() or "dbo"
-    timeout_seconds = min(max(int(args.timeout_seconds or 15), 1), 15)
-    max_row_limit = min(max(int(args.max_row_limit or 100), 1), 100)
 
     # Prompt interactively if missing required arguments in an interactive terminal
     if not profile_id:
@@ -256,22 +260,66 @@ def handle_profile_add(args: argparse.Namespace) -> int:
     if not display_name:
         display_name = f"SQL Server ({database_name})"
 
+    auth_mode = (getattr(args, "auth_mode", "windows") or "windows").strip().lower()
+    if auth_mode not in {"windows", "integrated"}:
+        sys.stderr.write(
+            "CONFIGURATION ERROR: Invalid profile parameters: SECURITY REJECTION: "
+            f"Unsupported authentication mode '{auth_mode}'. "
+            "QueryPilot currently requires Windows Integrated Authentication (use_trusted_connection=True).\n"
+        )
+        return 1
+
+    timeout_seconds = getattr(args, "timeout_seconds", 15)
+    if timeout_seconds is None:
+        timeout_seconds = 15
+
+    max_row_limit = getattr(args, "max_row_limit", 100)
+    if max_row_limit is None:
+        max_row_limit = 100
+
+    allowed_tables = getattr(args, "allowed_tables", None)
+    sensitive_columns = getattr(args, "sensitive_columns", None)
+
     try:
-        new_profile = ConnectionProfile(
+        validated_req = ValidateProfileConfigRequest(
             profile_id=profile_id,
             display_name=display_name,
-            engine_type="mssql",
             server=server,
             database_name=database_name,
+            schema_name=schema_name,
             driver=driver,
+            engine_type="mssql",
             use_trusted_connection=True,
             timeout_seconds=timeout_seconds,
             max_row_limit=max_row_limit,
-            schema_name=schema_name,
+            allowed_tables=allowed_tables,
+            sensitive_columns=sensitive_columns,
         )
+    except ValidationError as exc:
+        first_error = exc.errors()[0]
+        msg = first_error.get("msg", "Invalid configuration parameter.")
+        if msg.startswith("Value error, "):
+            msg = msg[len("Value error, "):]
+        sys.stderr.write(f"CONFIGURATION ERROR: Invalid profile parameters: {msg}\n")
+        return 1
     except Exception as exc:
         sys.stderr.write(f"CONFIGURATION ERROR: Invalid profile parameters: {exc}\n")
         return 1
+
+    new_profile = ConnectionProfile(
+        profile_id=validated_req.profile_id,
+        display_name=validated_req.display_name,
+        engine_type="mssql",
+        server=validated_req.server,
+        database_name=validated_req.database_name,
+        driver=validated_req.driver,
+        use_trusted_connection=True,
+        timeout_seconds=validated_req.timeout_seconds,
+        max_row_limit=validated_req.max_row_limit,
+        schema_name=validated_req.schema_name,
+        allowed_tables=tuple(validated_req.allowed_tables) if validated_req.allowed_tables is not None else None,
+        sensitive_columns=tuple(validated_req.sensitive_columns) if validated_req.sensitive_columns is not None else None,
+    )
 
     # Require explicit confirmation unless --yes is passed
     if not getattr(args, "yes", False):
@@ -311,6 +359,12 @@ def handle_profile_add(args: argparse.Namespace) -> int:
                     return 1
             else:
                 store = ProfileStore()
+
+            if store.has_profile(new_profile.profile_id):
+                sys.stderr.write(
+                    f"ERROR: Profile ID '{new_profile.profile_id}' already exists in '{profiles_path}'. Duplicate profile IDs are not permitted.\n"
+                )
+                return 1
 
             store.register_profile(new_profile)
             if store.default_profile_id is None:

@@ -31,6 +31,12 @@ from query_pilot.agent.models import (
     ProfileListResponse,
     ProfileSummary,
     RotateTokenResponse,
+    ValidateProfileConfigRequest,
+    ValidateProfileConfigResponse,
+    CreateProfileRequest,
+    CreateProfileResponse,
+    TestConnectionRequest,
+    TestConnectionResponse,
 )
 
 __all__ = [
@@ -41,6 +47,8 @@ __all__ = [
     "BootstrapResponse",
     "BootstrapTokenManager",
     "BootstrapTokenProvisioningError",
+    "CreateProfileRequest",
+    "CreateProfileResponse",
     "ExecuteQueryRequest",
     "ExecuteQueryResponse",
     "LogoutResponse",
@@ -50,6 +58,10 @@ __all__ = [
     "SESSION_COOKIE_NAME",
     "Session",
     "SessionManager",
+    "TestConnectionRequest",
+    "TestConnectionResponse",
+    "ValidateProfileConfigRequest",
+    "ValidateProfileConfigResponse",
     "api_router",
     "build_parser",
     "create_agent_app",

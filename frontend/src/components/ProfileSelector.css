@@ -280,3 +280,86 @@
 .schema-retry-btn:hover {
   background-color: #b91c1c;
 }
+
+/* =============================================================================
+   Profile Onboarding & Connection Testing Additions (B12-F8H)
+   ============================================================================= */
+
+.profile-add-header-btn {
+  padding: 0.35rem 0.75rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  background: #2563eb;
+  color: #ffffff;
+  border: 1px solid #1d4ed8;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.profile-add-header-btn:hover {
+  background: #1d4ed8;
+}
+
+.empty-alert-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+
+.profile-empty-add-btn {
+  margin-top: 0.25rem;
+}
+
+.profile-action-btn.profile-test-btn {
+  padding: 0.5rem 0.85rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  background: #475569;
+  color: #ffffff;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.profile-action-btn.profile-test-btn:hover:not(:disabled) {
+  background: #334155;
+}
+
+.profile-action-btn.profile-test-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.profile-conn-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.65rem 0.9rem;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  animation: modal-fade-in 0.15s ease-out;
+}
+
+.conn-banner-success {
+  background: #f0fdf4;
+  border: 1px solid #86efac;
+  color: #166534;
+}
+
+.conn-banner-failure {
+  background: #fff1f2;
+  border: 1px solid #fecdd3;
+  color: #9f1239;
+}
+
+.conn-banner-icon {
+  font-size: 1.05rem;
+}
+
+.conn-banner-text {
+  font-weight: 500;
+}

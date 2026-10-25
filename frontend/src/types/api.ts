@@ -182,6 +182,7 @@ export type AgentErrorKind =
   | 'authentication'
   | 'forbidden'
   | 'not_found'
+  | 'conflict'
   | 'timeout'
   | 'disconnected'
   | 'validation'
@@ -189,6 +190,61 @@ export type AgentErrorKind =
   | 'payload_limit'
   | 'server'
   | 'parse'
+
+// =============================================================================
+// Profile Onboarding & Explicit Connection Testing Contracts (B12-F8H)
+// =============================================================================
+
+export interface ValidateProfileConfigRequest {
+  profile_id: string
+  display_name: string
+  server: string
+  database_name: string
+  schema_name?: string
+  driver?: string
+  engine_type?: 'mssql'
+  use_trusted_connection?: boolean
+  timeout_seconds?: number
+  max_row_limit?: number
+  allowed_tables?: string[] | null
+  sensitive_columns?: string[] | null
+}
+
+export interface ValidateProfileConfigResponse {
+  valid: boolean
+  message: string
+}
+
+export interface CreateProfileRequest extends ValidateProfileConfigRequest {
+  set_as_default?: boolean
+}
+
+export interface CreateProfileResponse {
+  profile: ProfileSummary
+  is_default: boolean
+  message: string
+}
+
+export interface TestConnectionRequest {
+  // Deliberately empty object to reject arbitrary client connection parameters
+}
+
+export type ConnectionFailureCode =
+  | 'AUTH_FAILED'
+  | 'UNREACHABLE'
+  | 'TIMEOUT'
+  | 'DATABASE_MISMATCH'
+  | 'DRIVER_ERROR'
+  | 'CONNECTION_FAILED'
+
+export interface TestConnectionResponse {
+  connected: boolean
+  database_name?: string | null
+  latency_ms?: number | null
+  message: string
+  failure_code?: ConnectionFailureCode | null
+}
+
 
 export class AgentClientError extends Error {
   readonly kind: AgentErrorKind
