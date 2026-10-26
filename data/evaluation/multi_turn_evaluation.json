@@ -1,0 +1,230 @@
+{
+  "timestamp": "2026-10-26T06:17:48.010209+00:00",
+  "git_commit": "b0261aa",
+  "evaluation_type": "deterministic_multi_turn_benchmark",
+  "metrics": {
+    "total_scenarios": 10,
+    "passed_scenarios": 10,
+    "failed_scenarios": 0,
+    "pass_rate": 1.0,
+    "total_turns_executed": 13,
+    "context_violations_prevented": 22,
+    "fifo_evictions_verified": 2,
+    "data_leak_attempts_blocked": 14,
+    "category_counts": {
+      "dependent_follow_up": 1,
+      "fifo_eviction": 1,
+      "failure_preservation": 1,
+      "boundary_clearing": 1,
+      "prohibited_data_exclusion": 1,
+      "duplicate_execution": 1,
+      "stale_async_guard": 1,
+      "unapproved_candidate": 1,
+      "baseline_dataset_replay": 1,
+      "recovery_workflow_isolation": 1
+    },
+    "boundary_counts": {
+      "production_prompt_and_schema_boundary": 1,
+      "reference_simulator_fifo_boundary": 1,
+      "reference_simulator_state_boundary": 5,
+      "production_security_validator_boundary": 1,
+      "production_baseline_dataset_boundary": 1,
+      "production_recovery_harness_boundary": 1
+    }
+  },
+  "scenario_results": [
+    {
+      "scenario_id": "MT-01",
+      "name": "Dependent Follow-Up Context Grounding",
+      "category": "dependent_follow_up",
+      "system_boundary": "production_prompt_and_schema_boundary",
+      "passed": true,
+      "total_turns": 2,
+      "turns_evaluated": 2,
+      "turn_results": [],
+      "assertion_details": [
+        "Turn 1 successfully recorded: List all active students in the Computer Engineering department.",
+        "Turn 2 follow-up successfully received prior context and advanced context."
+      ],
+      "evidence_counts": {
+        "prompts_verified": 1
+      },
+      "failure_reason": null
+    },
+    {
+      "scenario_id": "MT-02",
+      "name": "FIFO Eviction on 4+ Sequential Turns",
+      "category": "fifo_eviction",
+      "system_boundary": "reference_simulator_fifo_boundary",
+      "passed": true,
+      "total_turns": 5,
+      "turns_evaluated": 5,
+      "turn_results": [],
+      "assertion_details": [
+        "Turn 1: recorded context length 1 (expected 1)",
+        "Turn 2: recorded context length 2 (expected 2)",
+        "Turn 3: recorded context length 3 (expected 3)",
+        "Turn 4: recorded context length 3 (expected 3)",
+        "Turn 5: recorded context length 3 (expected 3)",
+        "SQLGenerationRequest correctly rejected oversized context exceeding 3 turns."
+      ],
+      "evidence_counts": {
+        "fifo_evictions": 2,
+        "violations_prevented": 1
+      },
+      "failure_reason": null
+    },
+    {
+      "scenario_id": "MT-03",
+      "name": "Failure Context Preservation",
+      "category": "failure_preservation",
+      "system_boundary": "reference_simulator_state_boundary",
+      "passed": true,
+      "total_turns": 3,
+      "turns_evaluated": 3,
+      "turn_results": [],
+      "assertion_details": [
+        "Failed turn safely preserved Turn 1 context intact.",
+        "Turn 3 successfully chained to Turn 1."
+      ],
+      "evidence_counts": {
+        "violations_prevented": 1
+      },
+      "failure_reason": null
+    },
+    {
+      "scenario_id": "MT-04",
+      "name": "Context Clearing Boundaries (Topic & Profile)",
+      "category": "boundary_clearing",
+      "system_boundary": "reference_simulator_state_boundary",
+      "passed": true,
+      "total_turns": 3,
+      "turns_evaluated": 3,
+      "turn_results": [],
+      "assertion_details": [
+        "Topic reset successfully wiped context.",
+        "Profile switch to InventoryDB successfully wiped context."
+      ],
+      "evidence_counts": {
+        "violations_prevented": 2
+      },
+      "failure_reason": null
+    },
+    {
+      "scenario_id": "MT-05",
+      "name": "Prohibited Sensitive Data Exclusion",
+      "category": "prohibited_data_exclusion",
+      "system_boundary": "production_security_validator_boundary",
+      "passed": true,
+      "total_turns": 0,
+      "turns_evaluated": 0,
+      "turn_results": [],
+      "assertion_details": [
+        "Successfully blocked all 4 forbidden SQL fields.",
+        "Successfully blocked raw database row payload fields.",
+        "Successfully enforced role='user' requirement.",
+        "Successfully rejected whitespace question.",
+        "Successfully enforced 50-column ceiling on result_columns."
+      ],
+      "evidence_counts": {
+        "data_leaks_blocked": 14,
+        "violations_prevented": 14
+      },
+      "failure_reason": null
+    },
+    {
+      "scenario_id": "MT-06",
+      "name": "Duplicate Execution Idempotency",
+      "category": "duplicate_execution",
+      "system_boundary": "reference_simulator_state_boundary",
+      "passed": true,
+      "total_turns": 0,
+      "turns_evaluated": 0,
+      "turn_results": [],
+      "assertion_details": [
+        "Duplicate candidate execution was successfully ignored (context count=1).",
+        "Distinct candidate execution successfully advanced context to 2."
+      ],
+      "evidence_counts": {
+        "violations_prevented": 1
+      },
+      "failure_reason": null
+    },
+    {
+      "scenario_id": "MT-07",
+      "name": "Stale Asynchronous Operation Guard",
+      "category": "stale_async_guard",
+      "system_boundary": "reference_simulator_state_boundary",
+      "passed": true,
+      "total_turns": 0,
+      "turns_evaluated": 0,
+      "turn_results": [],
+      "assertion_details": [
+        "Started async operation with token 1",
+        "User cleared topic and aborted in-flight token.",
+        "Stale async response was safely discarded; context remains 0."
+      ],
+      "evidence_counts": {
+        "violations_prevented": 1
+      },
+      "failure_reason": null
+    },
+    {
+      "scenario_id": "MT-08",
+      "name": "Unapproved Candidate Non-Inclusion",
+      "category": "unapproved_candidate",
+      "system_boundary": "reference_simulator_state_boundary",
+      "passed": true,
+      "total_turns": 0,
+      "turns_evaluated": 0,
+      "turn_results": [],
+      "assertion_details": [
+        "Turn 1 candidate generated but not approved/executed.",
+        "Turn 2 correctly received empty context (unapproved candidate excluded).",
+        "Only approved and executed Turn 2 entered conversation context."
+      ],
+      "evidence_counts": {
+        "violations_prevented": 1
+      },
+      "failure_reason": null
+    },
+    {
+      "scenario_id": "MT-09",
+      "name": "Baseline Dataset Replay (Case C002)",
+      "category": "baseline_dataset_replay",
+      "system_boundary": "production_baseline_dataset_boundary",
+      "passed": true,
+      "total_turns": 0,
+      "turns_evaluated": 0,
+      "turn_results": [],
+      "assertion_details": [
+        "C002 prior turn validated: List all active students in the Computer Engineering department.",
+        "Baseline case C002 successfully integrated, validated, and formatted."
+      ],
+      "evidence_counts": {
+        "baseline_replays_verified": 1
+      },
+      "failure_reason": null
+    },
+    {
+      "scenario_id": "MT-10",
+      "name": "Recovery Workflow Context Isolation",
+      "category": "recovery_workflow_isolation",
+      "system_boundary": "production_recovery_harness_boundary",
+      "passed": true,
+      "total_turns": 0,
+      "turns_evaluated": 0,
+      "turn_results": [],
+      "assertion_details": [
+        "Genuinely executed recovery scenario REC-01 (attempts=2, status=SUCCESS)",
+        "Verified that intermediate recovery retry artifacts are strictly rejected from ConversationTurnContext.",
+        "Follow-up prompt cleanly grounded in recovered question with zero retry SQL artifacts."
+      ],
+      "evidence_counts": {
+        "recovery_executions_verified": 1,
+        "violations_prevented": 1
+      },
+      "failure_reason": null
+    }
+  ]
+}
