@@ -810,17 +810,37 @@ All contracts enforce `model_config = {"extra": "forbid"}` to reject unrecognize
   - `max_identifier_length`: 128 characters for table, column, and data type names (must match regex `^[a-zA-Z0-9_#$]+$`).
   - `max_description_length`: 250 characters for table and column comments/descriptions.
   - `max_schema_bytes`: Total schema context payload capped at 48 KB (strictly within the 64 KB total request body ceiling).
-  - `max_conversation_turns`: At most 3 turns (question max 1000 chars, SQL max 10000 chars).
+  - `max_conversation_turns`: At most 3 turns (`MAX_CONVERSATION_TURNS = 3`) with automatic FIFO sliding-window eviction. Each turn contains only semantic metadata (`user_question` max 1000 chars, `result_columns` max 50 items, and optional `resolved_intent` max 1000 chars). All SQL query strings, database rows, cell records, and credentials are strictly prohibited and rejected.
 - **Prompt Injection Reality:** Database metadata and conversation turns are treated strictly as data items enclosed in unambiguous, escaped delimiters. However, prompt injection against LLMs cannot be eliminated completely; therefore, the hosted service does *not* verify that submitted metadata matches any live database. The local agent remains solely authoritative for validating candidate SQL against the live active profile and schema.
 
-- **Request Model (`GenerateSQLRequest`, proposed):**
+- **Request Model (`GenerateSQLRequest`, implemented):**
 
 | Field Name | Type | Purpose | Trust Level | Sensitivity | Contains DB Values? |
 | :--- | :--- | :--- | :---: | :---: | :---: |
 | `question` | `str` (1–1000 chars) | Natural-language query asked by user. | Untrusted User Input | Medium | No |
 | `schema_context` | `ModelFacingSchemaContext` | Model-facing table/column metadata (strictly bounded). | Untrusted Client Data | Medium (Schema DDL) | **No** (Zero cell values) |
-| `conversation_context` | `Optional[List[ConversationTurn]]` | Optional prior query context (max 3 turns). | Untrusted User Input | Medium | No |
+| `conversation_context` | `Optional[List[ConversationTurnContext]]` | Optional prior user query context (max 3 turns). Detailed below. | Untrusted User Input | Medium | No |
 | `request_id` | `Optional[str]` (max 128 chars) | Client correlation ID for tracing. | Non-Secret Client Identifier | Low | No |
+
+##### Implemented Turn Context Model (`ConversationTurnContext` — `extra = "forbid"`)
+
+| Field Name | Type | Required | Constraints & Security Invariants |
+| :--- | :--- | :---: | :--- |
+| `role` | `str` | No | Must be `"user"` (default: `"user"`). Role `"assistant"` is strictly rejected with a descriptive error. |
+| `user_question` | `str` (1–1000 chars) | **Yes** | Prior user question text (trimmed, non-empty). Accepts legacy key `content`. |
+| `result_columns` | `List[str]` (0–50 items) | No | Column names returned by that turn's execution (default: `[]`). Each item must be a non-empty string identifier. |
+| `resolved_intent` | `Optional[str]` (max 1000 chars) | No | Brief summary of the resolved domain intent (trimmed, non-empty if present; default: `None`). |
+
+- **Security & Data Isolation Invariants:**
+  1. **Strict SQL Exclusion**: Fields named `executed_sql`, `sql`, `query`, or `candidate_sql` are explicitly forbidden and trigger validation failure (`FORBIDDEN_SQL_FIELDS`).
+  2. **Zero Row/Cell Records**: Raw database rows, cell values, and credentials are prohibited and rejected under `extra = "forbid"`.
+  3. **Volatile In-Memory Lifecycle**: Conversation history is maintained solely in client volatile memory (`sqlGenCoordinator`). It is never persisted to `localStorage` or `sessionStorage`.
+  4. **Lifecycle Eviction & Clearing**:
+     - *FIFO Eviction*: At turn 4, turn 1 is automatically evicted from the sliding window.
+     - *Topic Reset*: Clicking **New Topic** clears conversation context, candidate SQL, and execution results.
+     - *Profile Switching*: Changing or deselecting the connection profile clears conversation context immediately.
+     - *Session Logout*: Session termination or invalidation wipes conversation context.
+  5. **Decoupled Execution Boundary**: The generation service (`querypilot-api`) never connects to databases or executes queries. The local agent displays candidate SQL for user review, and execution occurs only when the user explicitly clicks **Execute Query on Database**.
 
 - **Response Model (`GenerateSQLResponse`, proposed):**
 

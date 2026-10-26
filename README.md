@@ -80,6 +80,7 @@ flowchart TD
 7. **Strict Database Execution Ceilings**: Local SQL execution is hard-clamped to a **15-second statement timeout** (`GLOBAL_MAX_TIMEOUT_SECONDS = 15`) and a **100-row result limit** (`GLOBAL_MAX_ROW_LIMIT = 100`). Profile configurations or queries requesting higher limits are strictly clamped down.
 8. **Bounded Request Payloads**: The local agent daemon enforces a default request body limit of **65,536 bytes (64 KB)** with a configurable ceiling of **1 MiB (1,048,576 bytes)** (`AgentConfig.max_request_bytes`). The hosted API enforces a hard streaming ceiling of **1 MiB**.
 9. **Distinct Proxy vs. SQL Timeouts**: The agent's `upstream_timeout_seconds` (default **30.0 seconds**) governs the HTTP reverse proxy to the generation API, completely distinct from the database query execution timeout (hard maximum 15 seconds).
+10. **Bounded In-Memory Multi-Turn Context**: Multi-turn conversational SQL is bounded to a maximum of **3 prior turns** with automatic FIFO sliding-window eviction. Conversation context is held strictly in volatile client memory and contains only semantic metadata (`user_question`, `result_columns`, and optional `resolved_intent`). All SQL query text (`sql`, `executed_sql`, `candidate_sql`, `query`), database rows, cell records, and credentials are strictly prohibited and rejected by Pydantic schema validation. Context is wiped immediately upon clicking **New Topic**, switching connection profiles, session invalidation, or logout. Every turn requires explicit human review and authorization before local database execution.
 
 ---
 
@@ -176,6 +177,7 @@ The daemon starts on `http://127.0.0.1:8001` and opens your default browser to:
 3. **Ask a Question**: Enter a natural-language question (e.g. *"Show top 5 records by date"*).
 4. **Review Candidate SQL**: The agent fetches your schema locally, requests candidate SQL from the API, and renders the unexecuted SQL in the review editor.
 5. **Explicit Execution**: Click **Execute Query on Database** in the candidate review card. The agent executes the SQL locally against your SQL Server database and displays the tabular results and execution metrics.
+6. **Multi-Turn Follow-Up & Topic Reset**: You can ask sequential follow-up queries within the same active profile. QueryPilot retains at most 3 prior turns in volatile browser memory (question and result columns only; zero SQL or raw rows) to contextualize generation. To start a fresh conversation, click **New Topic** to clear volatile conversation history immediately.
 
 ---
 
@@ -252,6 +254,9 @@ npm test
 npm run lint
 npm run build
 cd ..
+
+# Run the deterministic multi-turn conversational benchmark
+python scripts/run_multi_turn_evaluation.py
 ```
 
 ---
@@ -267,8 +272,8 @@ QueryPilot is currently authorized strictly as a **Controlled Preview** (for loc
 - **Live Gemini Synthetic Verification (Milestone B12-F5D)**: Completed four bounded live Gemini requests (`gemini-3.5-flash-lite`, one attempt per request) using synthetic inputs: answerable read-only SQL generation, refusal of an unsupported/mutating request, clarification prompting for an ambiguous request, and metadata-only answer synthesis.
 - **Controlled End-to-End Browser Journey (Milestone B12-F5E2)**: Verified the complete browser workflow against the dedicated `QueryPilot_TestDB`: live schema introspection and type normalization (`NVARCHAR(100)`), sensitive-column redaction (`password_hash` omitted), exactly one live Gemini candidate generation call, explicit human-in-the-loop authorization, and execution of a read-only query returning two records (`record_count: 2`).
 - **Generation vs. Synthesis Execution Boundaries**: In Milestone B12-F5E2, zero database execution calls occurred during candidate SQL generation, and the browser UI workflow rendered a deterministic local answer directly from client memory without invoking Gemini for synthesis.
-- **Dedicated SQL Server Integration Suite (Milestone B12-F5C)**: Reported 32 passing live integration tests against the dedicated test database.
-- **Offline Test Reconciled Baseline (Milestone B12-F5G)**: The latest reconciled offline test suite execution reported **1,217 passed, 62 deselected, 5 warnings** (the 62 deselected tests are live integration tests excluded by the `-m 'not integration'` filter). This count represents milestone-specific evidence rather than a permanent guarantee.
+- **Offline Test Reconciled Baseline (Milestone B13-M1)**: In the historical test run for Milestone B13-M1, the offline Python test suite reported **1,240 passed, 62 deselected, 35 warnings** when executing `pytest -o pythonpath=. -m "not integration"` (the 62 deselected tests are live database integration tests excluded by the filter). The frontend test suite (`npm test --prefix frontend`) reported **328 passed**. These counts represent milestone-specific historical evidence rather than permanent guarantees. Run test commands directly to establish current repository state.
+- **Deterministic Multi-Turn Evaluation Benchmark**: The offline multi-turn benchmark runner (`python scripts/run_multi_turn_evaluation.py`) executes 10 canonical multi-turn conversational scenarios (`MT-01`–`MT-10`), verifying prompt grounding, FIFO sliding-window eviction, topic/profile reset boundaries, sensitive data exclusion, and offline recovery harness isolation. The full benchmark report is available in [Multi-Turn Evaluation Benchmark Report](data/evaluation/multi_turn_evaluation_report.md).
 
 ### 3. Packaging & Distribution Verification
 - **Verified Wheel Smoke Test**: The distribution orchestration script (`python scripts/build_distribution.py`) compiles the React frontend into `frontend/dist/`, stages assets into `src/query_pilot/agent/static/`, and builds `dist/query_pilot-0.1.0-py3-none-any.whl`. When rebuilding packages after frontend modifications, use `python scripts/build_distribution.py --rebuild-frontend`. Wheel asset serving has been verified using `pip install --no-deps` in an environment where runtime dependencies were already satisfied.
@@ -300,4 +305,5 @@ QueryPilot is currently authorized strictly as a **Controlled Preview** (for loc
 - [API Reference (Legacy Prototype)](docs/api.md)
 - [Deployment Guide (Legacy Render Prototype)](docs/deployment.md)
 - [Evaluation Benchmark Harness](data/evaluation/README.md)
+- [Multi-Turn Evaluation Benchmark Report](data/evaluation/multi_turn_evaluation_report.md)
 

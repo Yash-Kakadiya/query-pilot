@@ -31,8 +31,22 @@ Translates a natural-language question and model-facing schema context into a re
 | :--- | :--- | :---: | :--- |
 | `question` | `string` | **Yes** | Natural-language query question (1–1,000 characters). Transmitted to Google Gemini. |
 | `schema_context` | `object` | **Yes** | Model-facing database schema (`database_name`, list of `tables` with normalized `columns`). Transmitted to Google Gemini. |
-| `conversation_context` | `array[object]` | No | Optional list of prior conversation turns (maximum 3 turns). |
+| `conversation_context` | `array[ConversationTurnContext]` | No | Optional list of prior user conversation turns (maximum 3 turns). Sub-model detailed below. |
 | `request_id` | `string` | No | Optional client tracking correlation ID (maximum 128 characters). |
+
+##### Turn Context Object (`ConversationTurnContext` — `extra = "forbid"`)
+
+| Field | Type | Required | Constraints & Description |
+| :--- | :--- | :---: | :--- |
+| `role` | `string` | No | Must be `"user"` (default: `"user"`). Role `"assistant"` is strictly rejected with HTTP 422. |
+| `user_question` | `string` | **Yes** | Prior user question text (1–1,000 characters). Automatically trimmed. Rejects empty or whitespace-only strings. Accepts legacy key `content`. |
+| `result_columns` | `array[string]` | No | Optional list of column names returned by that turn's execution (maximum 50 columns, default: `[]`). Each item must be a non-empty string identifier. |
+| `resolved_intent` | `string \| null` | No | Optional brief summary of the resolved domain intent (maximum 1,000 characters). Automatically trimmed; empty string normalized to `null`. |
+
+> **Security & Validation Invariants:**
+> - **Forbidden SQL Fields:** Fields named `executed_sql`, `sql`, `query`, or `candidate_sql` are strictly forbidden inside `ConversationTurnContext` and will cause validation rejection (HTTP 422).
+> - **Zero Row/Cell Records:** Raw database rows, cell dictionaries, and database credentials are prohibited and rejected under `extra = "forbid"`.
+> - **Turn Limit:** At most 3 turns (`MAX_CONVERSATION_TURNS = 3`). Exceeding 3 turns triggers HTTP 422.
 
 #### Response Model (`GenerateSQLResponse` — `extra = "forbid"`)
 
@@ -358,11 +372,11 @@ Executes a natural-language query through the autonomous QueryPilot workflow.
 | Field | Type | Required | Constraints & Description |
 | :--- | :--- | :---: | :--- |
 | `role` | `string` | No | Must be `"user"` (default: `"user"`). Role `"assistant"` is strictly rejected. |
-| `user_question` | `string` | **Yes** | Prior user question text (1–1,000 characters). Accepts legacy key `content`. |
-| `resolved_intent` | `string \| null` | No | Optional summary of the resolved domain intent (max 1,000 characters). |
-| `result_columns` | `array[string]` | No | Optional list of column names returned by that turn's query (default: `[]`). |
+| `user_question` | `string` | **Yes** | Prior user question text (1–1,000 characters). Automatically trimmed. Accepts legacy key `content`. |
+| `resolved_intent` | `string \| null` | No | Optional summary of the resolved domain intent (max 1,000 characters). Automatically trimmed. |
+| `result_columns` | `array[string]` | No | Optional list of column names returned by that turn's query (maximum 50 columns, default: `[]`). Each item must be a non-empty string identifier. |
 
-> **Security Rule:** Fields named `sql`, `executed_sql`, `candidate_sql`, or `query` are strictly forbidden inside `ConversationTurnContext` and will cause validation rejection.
+> **Security Rule:** Fields named `sql`, `executed_sql`, `candidate_sql`, or `query` are strictly forbidden inside `ConversationTurnContext` and trigger validation rejection (HTTP 422). Raw database rows, cell dictionaries, and database credentials are prohibited and rejected under `extra = "forbid"`.
 
 #### Response Model (`QueryResponse`)
 `extra = "forbid"`

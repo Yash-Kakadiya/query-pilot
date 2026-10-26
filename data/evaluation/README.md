@@ -68,7 +68,53 @@ The baseline dataset evaluates clarification handling as a first-class outcome v
 
 ### Capability Definition and Scope Boundary
 - **Clarification-Aware Evaluation with Bounded Context Forwarding**: Evaluates whether the generation subsystem correctly identifies queries requiring clarification instead of generating SQL, and whether callers can supply bounded conversation context ($\le 3$ prior turns, restricted to user questions, intent summaries, and column lists with zero raw SQL, rows, or credentials) to inform generation or clarification decisions.
-- **Explicit Scope Limitation**: This evaluation capability tests single-request generation boundaries with forwarded turn context. It does **not** yet provide an end-to-end interactive, stateful multi-turn dialogue evaluation loop (i.e., multi-turn back-and-forth session simulation or dynamic agent dialogue).
+- **Single-Request vs. Multi-Turn Harness Scope**: The 34-case dataset evaluates single-request generation boundaries with forwarded turn context. Multi-turn sequential state transitions and sliding-window invariants are evaluated separately by the dedicated 10-scenario offline benchmark harness documented below.
+
+---
+
+## Deterministic Multi-Turn Conversational Benchmark Harness (MT-01 to MT-10)
+
+Milestone B13-M1 introduced a dedicated offline evaluation suite ([`tests/eval_multi_turn.py`](../../tests/eval_multi_turn.py)) designed to evaluate multi-turn conversational SQL workflows, context grounding, security isolation, and client state machine invariants under 100% deterministic, offline conditions.
+
+### Benchmark Runner & Artifacts
+
+Run the evaluation benchmark directly via the standalone CLI runner or the pytest regression test suite:
+
+```powershell
+# Run the standalone CLI evaluation runner
+python scripts/run_multi_turn_evaluation.py
+
+# Or run the comprehensive unit and scenario test suite
+pytest -o pythonpath=. -v tests/test_multi_turn_evaluation.py
+```
+
+The runner executes all 10 scenarios and writes two persistent evaluation artifacts:
+- **JSON Evidence Artifact**: [`data/evaluation/multi_turn_evaluation.json`](multi_turn_evaluation.json) — Structured scenario results, turn execution traces, and dynamically derived secondary metrics.
+- **Auditable Markdown Report**: [`data/evaluation/multi_turn_evaluation_report.md`](multi_turn_evaluation_report.md) — Comprehensive scenario breakdown, boundary classifications, and execution evidence.
+
+### Scenario Distribution & System Boundaries
+
+The 10 benchmark scenarios evaluate both production backend contracts and reference-simulator client state transitions:
+
+| Scenario ID | Category | System Boundary | Objective & Verified Invariant |
+|---|---|---|---|
+| **MT-01** | `dependent_follow_up` | Production Backend | Follow-up context grounding in `build_sql_generation_prompt`. |
+| **MT-02** | `fifo_eviction` | Reference Simulator | FIFO sliding-window eviction strictly capping history to 3 turns across 5 sequential turns. |
+| **MT-03** | `failure_preservation` | Reference Simulator | Preserving prior turn context across query execution failures. |
+| **MT-04** | `boundary_clearing` | Reference Simulator | Context clearing boundaries across topic resets (`New Topic`) and profile switches. |
+| **MT-05** | `prohibited_data_exclusion` | Production Backend | Pydantic schema rejection of 14 forbidden SQL fields, raw rows, and invalid roles. |
+| **MT-06** | `duplicate_execution` | Reference Simulator | Idempotent execution preventing duplicate turn recording for the same query. |
+| **MT-07** | `stale_async_guard` | Reference Simulator | Discarding stale or out-of-order asynchronous query responses. |
+| **MT-08** | `unapproved_candidate` | Reference Simulator | Ensuring unexecuted candidate SQL is never recorded as an executed turn. |
+| **MT-09** | `baseline_dataset_replay` | Production Backend | Validating baseline dataset clarification case `C002` through prompt assembly. |
+| **MT-10** | `recovery_workflow_isolation` | Production Backend | Offline execution of recovery scenario `REC-01` and verifying recovery retry fields do not leak into turn context. |
+
+### Known Metric Limitations & Methodology Notes
+
+1. **`total_turns_executed` (13 turns)**: Counts declarative turns defined in `scenario.turns` across scenarios `MT-01` through `MT-04`. It does not include turns evaluated procedurally within custom scenario evaluators (`MT-06`, `MT-08`, `MT-09`, `MT-10`).
+2. **`context_violations_prevented` (22) vs `data_leak_attempts_blocked` (14)**: `context_violations_prevented` functions as an aggregate umbrella metric that includes all 14 Pydantic schema validation rejections from `MT-05` plus 8 lifecycle and state boundary violations (1 from MT-02, 1 from MT-03, 2 from MT-04, 1 from MT-06, 1 from MT-07, 1 from MT-08, and 1 from MT-10).
+3. **Recovery Workflow Isolation (`MT-10`)**: Genuinely executes recovery scenario `REC-01` to verify autonomous repair and separately verifies schema rejection of retry metadata; it does not evaluate an automated server-side adapter connecting recovery outputs to conversation turns, because in QueryPilot's decoupled architecture, turn recording is managed on the client upon successful execution.
+4. **Offline Deterministic Scope**: The benchmark evaluates mechanical contracts, Pydantic schemas, prompt formatting, and state invariants offline with mocked dependencies. It does not measure live LLM semantic accuracy on follow-up questions or live database execution correctness.
 
 ---
 
