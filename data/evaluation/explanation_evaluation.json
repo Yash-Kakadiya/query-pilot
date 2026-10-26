@@ -1,0 +1,304 @@
+{
+  "metadata": {
+    "benchmark": "QueryPilot Deterministic Explanation Evaluation",
+    "task_version": "B13-EVAL2",
+    "git_commit": "6c0bb2f",
+    "timestamp_utc": "2026-10-26T13:19:11.225561+00:00",
+    "environment": "100% Offline (Mocked Gemini & Zero Database Calls)",
+    "total_scenarios": 12,
+    "target_module": "src/query_pilot/presentation/synthesizer.py"
+  },
+  "metrics": {
+    "total_scenarios": 12,
+    "passed_scenarios": 12,
+    "failed_scenarios": 0,
+    "pass_rate": 1.0,
+    "scalar_templates_verified": 3,
+    "hallucination_checks_verified": 2,
+    "privacy_boundaries_verified": 3,
+    "failure_fallbacks_verified": 2,
+    "category_counts": {
+      "scalar_formatting": 3,
+      "empty_result": 1,
+      "hallucination_detection": 2,
+      "narrative_classification": 1,
+      "privacy_boundary": 2,
+      "sql_literal_masking": 1,
+      "truncation_disclosure": 1,
+      "failure_fallback": 1
+    },
+    "boundary_counts": {
+      "production_scalar_template": 3,
+      "production_synthesizer_service": 4,
+      "production_hallucination_heuristic": 2,
+      "production_metadata_synthesis": 2,
+      "production_sql_literal_masking": 1
+    }
+  },
+  "scenario_results": [
+    {
+      "scenario_id": "EXP-01",
+      "name": "Unambiguous Count Scalar Template",
+      "category": "scalar_formatting",
+      "system_boundary": "production_scalar_template",
+      "passed": true,
+      "production_functions": [
+        "format_scalar_template",
+        "AnswerSynthesisService.synthesize"
+      ],
+      "assertion_details": [
+        "format_scalar_template('StudentCount', 42) == 'Count: 42' [got 'Count: 42']",
+        "AnswerSynthesisService produced TEMPLATE_DETERMINISTIC with is_mechanically_verified=True"
+      ],
+      "evidence_data": {
+        "formatted": "Count: 42",
+        "answer_text": "Count: 108",
+        "status": "TEMPLATE_DETERMINISTIC",
+        "mechanically_verified": true
+      },
+      "failure_reason": null,
+      "limitation_note": "Token-based template heuristic formats unambiguous aggregate column names; does not inspect query AST."
+    },
+    {
+      "scenario_id": "EXP-02",
+      "name": "Unambiguous Average, Min, and Max Templates",
+      "category": "scalar_formatting",
+      "system_boundary": "production_scalar_template",
+      "passed": true,
+      "production_functions": [
+        "format_scalar_template"
+      ],
+      "assertion_details": [
+        "Verified unambiguous average prefix ('Average: 87.5')",
+        "Verified unambiguous minimum prefix ('Minimum: 35')",
+        "Verified unambiguous maximum prefix ('Maximum: 3.95')"
+      ],
+      "evidence_data": {
+        "avg": "Average: 87.5",
+        "min": "Minimum: 35",
+        "max": "Maximum: 3.95"
+      },
+      "failure_reason": null,
+      "limitation_note": "Recognizes tokens 'avg', 'average', 'mean', 'min', 'lowest', 'max', 'highest'; relies on non-conflicting naming."
+    },
+    {
+      "scenario_id": "EXP-03",
+      "name": "Neutral Formatting for Ambiguous / Non-Count Columns",
+      "category": "scalar_formatting",
+      "system_boundary": "production_scalar_template",
+      "passed": true,
+      "production_functions": [
+        "format_scalar_template",
+        "AnswerSynthesisService.synthesize"
+      ],
+      "assertion_details": [
+        "Column 'total_revenue' formatted neutrally without assuming Count",
+        "Column 'discount_pct' formatted neutrally",
+        "Conflicting aggregate column 'min_max_spread' fell back neutrally",
+        "Synthesizer appended neutral-formatting disclosure note"
+      ],
+      "evidence_data": {
+        "revenue": "total_revenue: 125000",
+        "percentage": "discount_pct: 15",
+        "competing": "min_max_spread: 10",
+        "notes": [
+          "Scalar column does not match standard aggregate naming; formatted neutrally."
+        ]
+      },
+      "failure_reason": null,
+      "limitation_note": "Does not guess semantic meaning when column names contain ambiguous or non-count keywords."
+    },
+    {
+      "scenario_id": "EXP-04",
+      "name": "Deterministic Empty Result Set Handling",
+      "category": "empty_result",
+      "system_boundary": "production_synthesizer_service",
+      "passed": true,
+      "production_functions": [
+        "AnswerSynthesisService.synthesize",
+        "AnswerSynthesisService.synthesize_from_metadata"
+      ],
+      "assertion_details": [
+        "synthesize() returns EMPTY_RESULT with is_mechanically_verified=True on 0 rows",
+        "synthesize_from_metadata() grounds 0-row outcome directly from metadata"
+      ],
+      "evidence_data": {
+        "status": "EMPTY_RESULT",
+        "mechanically_verified": true,
+        "metadata_status": "grounded_from_metadata"
+      },
+      "failure_reason": null,
+      "limitation_note": "Verifies empty-result deterministic short-circuit; assumes upstream execution correctly reported 0 rows."
+    },
+    {
+      "scenario_id": "EXP-05",
+      "name": "Heuristic Detection of Fabricated Currency Claims",
+      "category": "hallucination_detection",
+      "system_boundary": "production_hallucination_heuristic",
+      "passed": true,
+      "production_functions": [
+        "_detect_hallucinated_values",
+        "AnswerSynthesisService.synthesize_from_metadata"
+      ],
+      "assertion_details": [
+        "Detected fabricated dollar symbol '$' in text",
+        "Detected euro (\u20ac), pound (\u00a3), rupee (\u20b9), and yen (\u00a5) symbols",
+        "synthesize_from_metadata safely downgraded currency hallucination to REQUIRES_ROW_DISCLOSURE"
+      ],
+      "evidence_data": {
+        "detected_dollar": true,
+        "downgraded_status": "requires_row_disclosure"
+      },
+      "failure_reason": null,
+      "limitation_note": "Heuristic regex check flags currency symbols; cannot detect non-currency financial claims (e.g. '500 dollars')."
+    },
+    {
+      "scenario_id": "EXP-06",
+      "name": "Heuristic Detection of Unsupported Numeric Constants",
+      "category": "hallucination_detection",
+      "system_boundary": "production_hallucination_heuristic",
+      "passed": true,
+      "production_functions": [
+        "_detect_hallucinated_values"
+      ],
+      "assertion_details": [
+        "Detected ungrounded numeric constant '99.5' outside allowed metadata bounds",
+        "Permitted grounded numbers matching metadata, SQL, and latency without false alarm"
+      ],
+      "evidence_data": {
+        "detected_unsupported": true,
+        "permitted_grounded": true
+      },
+      "failure_reason": null,
+      "limitation_note": "Bounds check checks whether numbers exist in {row_count, column count, latency, question, SQL}; does not verify semantic truth."
+    },
+    {
+      "scenario_id": "EXP-07",
+      "name": "Faithful Multi-Row Narrative Classification as Unverified",
+      "category": "narrative_classification",
+      "system_boundary": "production_synthesizer_service",
+      "passed": true,
+      "production_functions": [
+        "AnswerSynthesisService.synthesize"
+      ],
+      "assertion_details": [
+        "Multi-row LLM output classified strictly as UNVERIFIED_NARRATIVE with is_mechanically_verified=False"
+      ],
+      "evidence_data": {
+        "status": "UNVERIFIED_NARRATIVE",
+        "mechanically_verified": false,
+        "narrative_length": 84
+      },
+      "failure_reason": null,
+      "limitation_note": "Enforces the policy that LLM prose is never marked mechanically verified; does not verify semantic completeness."
+    },
+    {
+      "scenario_id": "EXP-08",
+      "name": "Entity Query Pre-screening for Required Row Disclosure",
+      "category": "privacy_boundary",
+      "system_boundary": "production_metadata_synthesis",
+      "passed": true,
+      "production_functions": [
+        "_question_requires_row_disclosure",
+        "AnswerSynthesisService.synthesize_from_metadata"
+      ],
+      "assertion_details": [
+        "Correctly flagged all 5 entity queries as requiring row disclosure",
+        "synthesize_from_metadata safely refused cloud synthesis under zero-disclosure policy"
+      ],
+      "evidence_data": {
+        "questions_tested": 5,
+        "status": "requires_row_disclosure"
+      },
+      "failure_reason": null,
+      "limitation_note": "Pattern-based heuristic looks for question phrasing (who, which, what is, list); may not catch novel paraphrases."
+    },
+    {
+      "scenario_id": "EXP-09",
+      "name": "Metadata-Answerable Query Classification",
+      "category": "privacy_boundary",
+      "system_boundary": "production_metadata_synthesis",
+      "passed": true,
+      "production_functions": [
+        "_question_requires_row_disclosure",
+        "AnswerSynthesisService.synthesize_from_metadata"
+      ],
+      "assertion_details": [
+        "Non-entity question passed pre-screening without requiring row disclosure",
+        "Produced GROUNDED_FROM_METADATA response for metadata-only query"
+      ],
+      "evidence_data": {
+        "status": "grounded_from_metadata",
+        "summary": "The query processed 15 rows in 8.5 ms."
+      },
+      "failure_reason": null,
+      "limitation_note": "Demonstrates that metadata-only queries can proceed when no cell disclosure is required."
+    },
+    {
+      "scenario_id": "EXP-10",
+      "name": "AST SQL Literal Masking & Fail-Closed Protection",
+      "category": "sql_literal_masking",
+      "system_boundary": "production_sql_literal_masking",
+      "passed": true,
+      "production_functions": [
+        "mask_sql_literals",
+        "AnswerSynthesisService.synthesize_from_metadata"
+      ],
+      "assertion_details": [
+        "AST parser masked string and numeric literals while preserving tables, columns, and operators",
+        "mask_sql_literals returned None on unparseable SQL AST (fail-closed)"
+      ],
+      "evidence_data": {
+        "masked_sql": "SELECT * FROM Students WHERE Email = '[REDACTED_VALUE]' AND Age >= '[REDACTED_NUMBER]' AND Score > '[REDACTED_NUMBER]'",
+        "fail_closed_result": null
+      },
+      "failure_reason": null,
+      "limitation_note": "Relies on sqlglot AST parsing; dialect-specific syntax errors fall back closed to None."
+    },
+    {
+      "scenario_id": "EXP-11",
+      "name": "Truncation Disclosures on Sampled Results",
+      "category": "truncation_disclosure",
+      "system_boundary": "production_synthesizer_service",
+      "passed": true,
+      "production_functions": [
+        "AnswerSynthesisService.synthesize",
+        "AnswerSynthesisService.synthesize_from_metadata"
+      ],
+      "assertion_details": [
+        "synthesize() attached truncation disclosure note to GroundedAnswer",
+        "synthesize_from_metadata attached truncation caveat note"
+      ],
+      "evidence_data": {
+        "notes": [
+          "Results were truncated at the system limit; narrative reflects only retrieved sample."
+        ],
+        "metadata_note": "Results were truncated at the system limit; narrative reflects only retrieved count."
+      },
+      "failure_reason": null,
+      "limitation_note": "Verifies that truncation metadata is attached; does not evaluate whether prose itself discusses truncation."
+    },
+    {
+      "scenario_id": "EXP-12",
+      "name": "Provider Failure and Timeout Safe Fallback",
+      "category": "failure_fallback",
+      "system_boundary": "production_synthesizer_service",
+      "passed": true,
+      "production_functions": [
+        "AnswerSynthesisService.synthesize",
+        "AnswerSynthesisService.synthesize_from_metadata"
+      ],
+      "assertion_details": [
+        "synthesize() caught TimeoutError and safely fell back to SYNTHESIS_FAILED",
+        "synthesize_from_metadata caught provider error and returned UNAVAILABLE"
+      ],
+      "evidence_data": {
+        "status": "SYNTHESIS_FAILED",
+        "fallback_text": "Query executed successfully. Refer to the data table for results.",
+        "metadata_status": "unavailable"
+      },
+      "failure_reason": null,
+      "limitation_note": "Tests safe error handling and graceful degradation; does not retry transient provider failures."
+    }
+  ]
+}

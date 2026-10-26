@@ -118,6 +118,51 @@ The 10 benchmark scenarios evaluate both production backend contracts and refere
 
 ---
 
+## Result Explanation & Faithfulness Benchmark (Milestone B13-EVAL2)
+
+The explanation evaluation harness ([`tests/eval_explanation.py`](file:///d:/01.%20Github/query-pilot/tests/eval_explanation.py)) provides a 100% offline, deterministic benchmark for QueryPilot's result presentation and answer synthesis layer ([`src/query_pilot/presentation/synthesizer.py`](file:///d:/01.%20Github/query-pilot/src/query_pilot/presentation/synthesizer.py)).
+
+### Benchmark Invocation
+
+Run the evaluation benchmark directly via the standalone CLI runner or the pytest test suite:
+
+```powershell
+# Run the standalone CLI evaluation runner
+python scripts/run_explanation_evaluation.py
+
+# Or run the automated test suite
+pytest -o pythonpath=. -v tests/test_explanation_evaluation.py
+```
+
+The runner executes all 12 scenarios and generates two persistent evaluation artifacts:
+- **JSON Evidence Artifact**: [`data/evaluation/explanation_evaluation.json`](explanation_evaluation.json) — Structured scenario results, evidence payloads, and dynamic metrics.
+- **Auditable Markdown Report**: [`data/evaluation/explanation_evaluation_report.md`](explanation_evaluation_report.md) — Comprehensive scenario breakdown, production functions exercised, and heuristic boundary disclosures.
+
+### Scenario Distribution & System Boundaries (12 Scenarios)
+
+| Scenario ID | Category | System Boundary | Objective & Verified Invariant |
+|---|---|---|---|
+| **EXP-01** | `scalar_formatting` | Production Scalar Template | Unambiguous count projection formatted strictly as `Count: <val>` (`TEMPLATE_DETERMINISTIC`). |
+| **EXP-02** | `scalar_formatting` | Production Scalar Template | Unambiguous average, min, and max projections mapped to exact aggregate prefixes. |
+| **EXP-03** | `scalar_formatting` | Production Scalar Template | Ambiguous/competing scalar columns (`revenue`, `discount_pct`) falling back neutrally to `<Column>: <val>`. |
+| **EXP-04** | `empty_result` | Production Synthesizer Service | 0-row results deterministically producing `EMPTY_RESULT` with `is_mechanically_verified=True` without LLM calls. |
+| **EXP-05** | `hallucination_detection` | Production Hallucination Heuristic | Heuristic regex detection flagging unsupported currency symbols (`$`, `€`, `£`, `₹`, `¥`). |
+| **EXP-06** | `hallucination_detection` | Production Hallucination Heuristic | Heuristic out-of-bounds detection flagging numeric values not present in metadata, SQL, or latency. |
+| **EXP-07** | `narrative_classification` | Production Synthesizer Service | Multi-row LLM summaries strictly classified as `UNVERIFIED_NARRATIVE` with `is_mechanically_verified=False`. |
+| **EXP-08** | `privacy_boundary` | Production Metadata Synthesis | Entity queries (`who`, `which`, `list`) safely identified as `REQUIRES_ROW_DISCLOSURE` under zero-disclosure policy. |
+| **EXP-09** | `privacy_boundary` | Production Metadata Synthesis | Non-entity execution queries proceeding to `GROUNDED_FROM_METADATA` without disclosing cell records. |
+| **EXP-10** | `sql_literal_masking` | Production SQL Literal Masking | AST parser masking string and numeric literals while preserving structure, with fail-closed protection. |
+| **EXP-11** | `truncation_disclosure` | Production Synthesizer Service | Truncated result sets attaching explicit truncation caveats in verification notes and prompt notices. |
+| **EXP-12** | `failure_fallback` | Production Synthesizer Service | Provider exceptions (e.g. `TimeoutError`) safely caught and degraded to `SYNTHESIS_FAILED` without crashing. |
+
+### Crucial Methodology Distinction: Heuristic Screening vs. Semantic Faithfulness
+
+1. **Heuristic Detection vs. Semantic Fact-Checking**: The production detection function (`_detect_hallucinated_values`) is a bounded heuristic checking for unsupported currency symbols and numbers outside metadata boundaries. It does **not** evaluate qualitative claims, entity name hallucination, or historical facts.
+2. **`UNVERIFIED_NARRATIVE` Classification**: A passing status on `EXP-07` confirms that output is classified as unverified prose; it does **not** prove semantic alignment between prose and underlying data rows.
+3. **Offline Deterministic Scope**: Evaluates presentation decision trees, formatting templates, AST masking, and fallback degradation offline with zero live model calls or database connections.
+
+---
+
 ## Dataset Versioning and Historical Benchmark Compatibility
 
 - **Dataset Evolution**: The baseline question suite originally contained 32 cases (`Q001`–`Q032`). The active suite was expanded to 34 cases with the addition of `C001` and `C002`.
