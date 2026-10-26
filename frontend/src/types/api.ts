@@ -383,6 +383,7 @@ export interface GenerateSQLResponse {
   candidate_sql: string | null
   status: GenerationStatus
   clarification_prompt?: string | null
+  clarification_options?: ClarificationOption[]
   unsupported_reason?: string | null
   execution_disclaimer: string
   request_id: string

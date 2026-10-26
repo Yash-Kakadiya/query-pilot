@@ -21,12 +21,46 @@
 import { useSyncExternalStore, useMemo } from 'react'
 import { generateSql } from './v1ApiClient.ts'
 import type {
+  ClarificationOption,
   ConversationTurnContext,
   GenerateSQLRequest,
   GenerateSQLResponse,
   ModelFacingSchemaContext,
 } from '../types/api.ts'
 import type { RequestOptions } from './apiClient.ts'
+
+/**
+ * Derives a clarified, reviewable natural language question from the original base question
+ * and a user-selected clarification option.
+ *
+ * Guarantees:
+ * - If `suggested_question` is present as a non-empty string, returns its trimmed value.
+ * - If `suggested_question` is missing, null, empty, or whitespace-only, returns the original
+ *   question intact (does NOT append the option description or invent intent).
+ * - Defensively handles missing, null, or malformed inputs without throwing.
+ */
+export function deriveClarifiedQuestion(
+  originalQuestion: string | null | undefined,
+  option: ClarificationOption | null | undefined
+): string {
+  const safeOriginal = typeof originalQuestion === 'string' ? originalQuestion.trim() : ''
+
+  if (!option) {
+    return safeOriginal
+  }
+
+  const suggested =
+    typeof option.suggested_question === 'string'
+      ? option.suggested_question.trim()
+      : ''
+
+  if (suggested.length > 0) {
+    return suggested
+  }
+
+  // When suggested_question is absent or empty, preserve the original question intact
+  return safeOriginal
+}
 
 export interface SqlGenerationState {
   question: string

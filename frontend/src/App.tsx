@@ -477,6 +477,9 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator }: 
                   canExecute={agentSession.status === 'authenticated' && agentSession.schemaStatus === 'loaded'}
                   conversationContext={sqlGenState.conversationContext}
                   onResetConversation={handleResetConversation}
+                  onSelectClarificationOption={(_opt, _clarified) => {
+                    execCoordinator.clearResult()
+                  }}
                 />
 
                 <LocalExecutionResults

@@ -385,6 +385,213 @@
   .candidate-outcome-failed { background: rgba(239, 68, 68, 0.15); border-color: rgba(239, 68, 68, 0.3); color: #fca5a5; }
 }
 
+/* Clarification Request Header & Prompt */
+.candidate-clarification-header {
+  margin-bottom: 0.75rem;
+}
+
+.candidate-clarification-prompt {
+  margin: 0.35rem 0 0;
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: inherit;
+}
+
+/* Clarification Options Section */
+.candidate-clarification-options-section {
+  margin-top: 0.85rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(245, 158, 11, 0.25);
+}
+
+.candidate-clarification-options-title {
+  margin: 0 0 0.6rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #92400e;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.candidate-clarification-options-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/* Native Accessible Option Button */
+.candidate-clarification-option-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.85rem;
+  width: 100%;
+  padding: 0.75rem 1rem;
+  background: var(--card-bg, #ffffff);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: all 0.15s ease-in-out;
+  color: var(--text-color, #1e293b);
+}
+
+.candidate-clarification-option-btn:hover:not(:disabled) {
+  border-color: #d97706;
+  background: #fffdf5;
+  transform: translateY(-1px);
+  box-shadow: 0 3px 10px rgba(245, 158, 11, 0.12);
+}
+
+.candidate-clarification-option-btn:focus-visible {
+  outline: 2px solid #d97706;
+  outline-offset: 2px;
+}
+
+.candidate-clarification-option-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.candidate-clarification-option-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  border-radius: 4px;
+  background: rgba(245, 158, 11, 0.2);
+  color: #b45309;
+  font-family: var(--font-mono, monospace);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.candidate-clarification-option-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.candidate-clarification-option-desc {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-heading, #0f172a);
+  word-break: break-word;
+}
+
+.candidate-clarification-option-suggested {
+  font-size: 0.82rem;
+  color: var(--text-muted, #64748b);
+  word-break: break-word;
+  line-height: 1.4;
+}
+
+.candidate-clarification-option-suggested em {
+  font-style: normal;
+  color: var(--text-color, #334155);
+  font-weight: 500;
+}
+
+.candidate-clarification-option-btn.candidate-clarification-option-selected {
+  border-color: #d97706;
+  background: #fffdf5;
+  box-shadow: 0 0 0 2px rgba(217, 119, 6, 0.25);
+}
+
+.candidate-clarification-guidance-note {
+  font-size: 0.8rem;
+  color: #b45309;
+  font-style: italic;
+  line-height: 1.35;
+}
+
+.candidate-clarification-option-arrow {
+  font-size: 1.15rem;
+  color: #d97706;
+  font-weight: bold;
+  flex-shrink: 0;
+  transition: transform 0.15s ease-in-out;
+}
+
+.candidate-clarification-option-btn:hover:not(:disabled) .candidate-clarification-option-arrow {
+  transform: translateX(4px);
+}
+
+.candidate-clarification-help-text {
+  margin: 0.65rem 0 0;
+  font-size: 0.8rem;
+  color: #b45309;
+  font-style: italic;
+  line-height: 1.4;
+}
+
+@media (prefers-color-scheme: dark) {
+  .candidate-clarification-options-section {
+    border-top-color: rgba(245, 158, 11, 0.3);
+  }
+
+  .candidate-clarification-options-title {
+    color: #fbbf24;
+  }
+
+  .candidate-clarification-option-btn {
+    background: rgba(30, 41, 59, 0.75);
+    border-color: rgba(245, 158, 11, 0.3);
+    color: #f1f5f9;
+  }
+
+  .candidate-clarification-option-btn:hover:not(:disabled) {
+    background: rgba(40, 53, 75, 0.9);
+    border-color: #fbbf24;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.25);
+  }
+
+  .candidate-clarification-option-btn:focus-visible {
+    outline-color: #fbbf24;
+  }
+
+  .candidate-clarification-option-badge {
+    background: rgba(245, 158, 11, 0.25);
+    color: #fde68a;
+  }
+
+  .candidate-clarification-option-desc {
+    color: #f8fafc;
+  }
+
+  .candidate-clarification-option-suggested {
+    color: #94a3b8;
+  }
+
+  .candidate-clarification-option-suggested em {
+    color: #cbd5e1;
+  }
+
+  .candidate-clarification-option-btn.candidate-clarification-option-selected {
+    border-color: #fbbf24;
+    background: rgba(245, 158, 11, 0.2);
+    box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.3);
+  }
+
+  .candidate-clarification-guidance-note {
+    color: #fde68a;
+  }
+
+  .candidate-clarification-option-arrow {
+    color: #fbbf24;
+  }
+
+  .candidate-clarification-help-text {
+    color: #fde68a;
+  }
+}
+
 .candidate-footer-disclaimer {
   font-size: 0.78rem;
   color: var(--text-muted, #64748b);
