@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { GenerateSQLResponse } from '../types/api.ts'
+import type { ConversationTurnContext, GenerateSQLResponse } from '../types/api.ts'
 import './CandidateSqlReview.css'
 
 export interface CandidateSqlReviewProps {
@@ -21,6 +21,10 @@ export interface CandidateSqlReviewProps {
   onCancelExecute?: () => void
   isExecuting?: boolean
   canExecute?: boolean
+
+  // Multi-turn additions (Milestone B12-F12B)
+  conversationContext?: ConversationTurnContext[]
+  onResetConversation?: () => void
 }
 
 /**
@@ -50,6 +54,8 @@ export function CandidateSqlReview({
   onCancelExecute,
   isExecuting = false,
   canExecute = true,
+  conversationContext = [],
+  onResetConversation,
 }: CandidateSqlReviewProps) {
   const [copied, setCopied] = useState<boolean>(false)
   const [isEditing, setIsEditing] = useState<boolean>(false)
@@ -137,6 +143,29 @@ export function CandidateSqlReview({
         </div>
       </div>
 
+      {/* Active Conversation Context Notice */}
+      {conversationContext && conversationContext.length > 0 && (
+        <div className="candidate-conversation-banner" role="status" aria-label="Conversation Context">
+          <div className="candidate-conversation-info">
+            <span className="candidate-conversation-icon" aria-hidden="true">💬</span>
+            <span className="candidate-conversation-text">
+              Follow-up mode: <strong>{conversationContext.length}</strong> prior turn{conversationContext.length === 1 ? '' : 's'} in memory
+            </span>
+          </div>
+          {onResetConversation && (
+            <button
+              type="button"
+              className="candidate-reset-conversation-btn"
+              onClick={onResetConversation}
+              disabled={isLoading || isExecuting}
+              aria-label="Start a new conversation and clear prior turn memory"
+            >
+              New Topic
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Natural Language Question Form */}
       <form className="candidate-question-form" onSubmit={handleFormSubmit}>
         <div className="candidate-textarea-wrapper">
@@ -156,7 +185,11 @@ export function CandidateSqlReview({
           <textarea
             id="candidate-question-input"
             className="candidate-textarea"
-            placeholder="Ask a question about your database (e.g. 'Show total courses offered by department')..."
+            placeholder={
+              conversationContext && conversationContext.length > 0
+                ? "Ask a follow-up question (e.g. 'Now show only 2024') or continue query thread..."
+                : "Ask a question about your database (e.g. 'Show total courses offered by department')..."
+            }
             value={question}
             onChange={(e) => onQuestionChange(e.target.value)}
             disabled={isLoading || isExecuting}

@@ -21,6 +21,7 @@
 import { useSyncExternalStore, useMemo } from 'react'
 import { generateSql } from './v1ApiClient.ts'
 import type {
+  ConversationTurnContext,
   GenerateSQLRequest,
   GenerateSQLResponse,
   ModelFacingSchemaContext,
@@ -34,10 +35,15 @@ export interface SqlGenerationState {
   error: Error | null
   lastGeneratedQuestion: string | null
   lastGeneratedProfileId: string | null
+  candidateId: string | null
   isStale: boolean
+  conversationContext: ConversationTurnContext[]
+  lastRecordedCandidateId: string | null
 }
 
 export class SqlGenerationCoordinator {
+  static readonly MAX_CONVERSATION_TURNS = 3
+
   private state: SqlGenerationState
   private listeners: Set<(state: SqlGenerationState) => void> = new Set()
   private generation: number = 0
@@ -51,7 +57,10 @@ export class SqlGenerationCoordinator {
       error: null,
       lastGeneratedQuestion: null,
       lastGeneratedProfileId: null,
+      candidateId: null,
       isStale: false,
+      conversationContext: [],
+      lastRecordedCandidateId: null,
       ...initialState,
     }
   }
@@ -164,6 +173,9 @@ export class SqlGenerationCoordinator {
       const request: GenerateSQLRequest = {
         question: trimmedQuestion,
         schema_context: schemaContext,
+        ...(this.state.conversationContext.length > 0
+          ? { conversation_context: this.state.conversationContext }
+          : {}),
       }
 
       const res = await generateSql(request, {
@@ -176,12 +188,15 @@ export class SqlGenerationCoordinator {
         return null
       }
 
+      const candidateId = `${currentGen}:${res.request_id || 'candidate'}`
+
       this.setState({
         isLoading: false,
         response: res,
         error: null,
         lastGeneratedQuestion: trimmedQuestion,
         lastGeneratedProfileId: profileId,
+        candidateId,
         isStale: false,
       })
 
@@ -225,8 +240,82 @@ export class SqlGenerationCoordinator {
   }
 
   /**
+   * Records a completed, executed conversation turn into the sliding context window.
+   *
+   * Security & Semantic Guarantees:
+   * - Records strictly after successful local execution.
+   * - Stores only user question, role 'user', returned column names, and optional resolved intent.
+   * - Never stores raw SQL, result rows, cell values, or secrets.
+   * - Bounded to at most 3 turns (oldest turns drop off).
+   * - Completion guard: avoids duplicate turns from repeated execution of the exact same candidate.
+   */
+  recordCompletedTurn(
+    question: string,
+    resultColumns: string[],
+    optionsOrIntent?: string | null | { candidateId?: string | null; resolvedIntent?: string | null },
+    candidateId?: string | null
+  ): void {
+    let resolvedIntentStr: string | null = null
+    let candidateIdStr: string | null = null
+
+    if (optionsOrIntent && typeof optionsOrIntent === 'object') {
+      resolvedIntentStr = optionsOrIntent.resolvedIntent ?? null
+      candidateIdStr = optionsOrIntent.candidateId ?? null
+    } else {
+      resolvedIntentStr = optionsOrIntent ?? null
+      candidateIdStr = candidateId ?? null
+    }
+
+    // Completion guard: avoid duplicate turns from repeated execution of the exact same candidate
+    if (candidateIdStr && candidateIdStr === this.state.lastRecordedCandidateId) {
+      return
+    }
+
+    const trimmedQuestion = question ? question.trim() : ''
+    if (!trimmedQuestion) {
+      return
+    }
+
+    const safeColumns = Array.isArray(resultColumns)
+      ? resultColumns
+          .map((col) => (typeof col === 'string' ? col.trim() : ''))
+          .filter(Boolean)
+          .slice(0, 50)
+      : []
+
+    const turn: ConversationTurnContext = {
+      role: 'user',
+      user_question: trimmedQuestion.slice(0, 1000),
+      result_columns: safeColumns,
+      ...(resolvedIntentStr && typeof resolvedIntentStr === 'string' && resolvedIntentStr.trim()
+        ? { resolved_intent: resolvedIntentStr.trim().slice(0, 1000) }
+        : {}),
+    }
+
+    const updated = [...this.state.conversationContext, turn].slice(
+      -SqlGenerationCoordinator.MAX_CONVERSATION_TURNS
+    )
+
+    this.setState({
+      conversationContext: updated,
+      lastRecordedCandidateId: candidateIdStr || this.state.lastRecordedCandidateId,
+    })
+  }
+
+  /**
+   * Explicitly clears all prior conversation context.
+   */
+  clearConversationContext(): void {
+    this.setState({
+      conversationContext: [],
+      lastRecordedCandidateId: null,
+    })
+  }
+
+  /**
    * Clears candidate SQL response, error, and associated metadata.
    * Advances generation counter to discard any pending responses.
+   * Note: conversationContext is preserved for subsequent follow-up queries.
    */
   clearCandidate(): void {
     this.generation++
@@ -239,13 +328,14 @@ export class SqlGenerationCoordinator {
       error: null,
       lastGeneratedQuestion: null,
       lastGeneratedProfileId: null,
+      candidateId: null,
       isStale: false,
       isLoading: false,
     })
   }
 
   /**
-   * Resets both question input and candidate state completely.
+   * Resets question input, candidate state, and conversation context completely.
    */
   resetAll(): void {
     this.generation++
@@ -259,8 +349,11 @@ export class SqlGenerationCoordinator {
       error: null,
       lastGeneratedQuestion: null,
       lastGeneratedProfileId: null,
+      candidateId: null,
       isStale: false,
       isLoading: false,
+      conversationContext: [],
+      lastRecordedCandidateId: null,
     })
   }
 }

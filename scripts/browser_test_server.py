@@ -255,6 +255,7 @@ class BrowserTestServer:
         self.profiles_file = self.temp_dir / "profiles.json"
 
         self.audit_log: List[AuditRecord] = []
+        self.received_generate_requests: List[GenerateSQLRequest] = []
         self._server: Optional[uvicorn.Server] = None
         self._thread: Optional[threading.Thread] = None
 
@@ -305,6 +306,7 @@ class BrowserTestServer:
                 except Exception as exc:
                     return httpx.Response(422, json={"detail": f"Request validation failed: {exc}"})
 
+                self.received_generate_requests.append(gen_req)
                 req_id = gen_req.request_id or request.headers.get("x-request-id") or "req-test-mock-gen"
                 q_lower = gen_req.question.lower()
 

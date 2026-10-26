@@ -74,7 +74,7 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator }: 
     coordinator.probeSession()
   }, [coordinator])
 
-  // Clear candidate SQL and query execution results when profile changes or session is invalidated
+  // Clear candidate SQL, query execution results, and conversation context when profile changes or session is invalidated
   useEffect(() => {
     if (
       agentSession.status !== 'authenticated' ||
@@ -82,12 +82,14 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator }: 
       agentSession.schemaStatus !== 'loaded'
     ) {
       sqlGenCoordinator.clearCandidate()
+      sqlGenCoordinator.clearConversationContext()
       execCoordinator.clearResult()
     } else if (
       sqlGenState.lastGeneratedProfileId &&
       sqlGenState.lastGeneratedProfileId !== agentSession.selectedProfileId
     ) {
       sqlGenCoordinator.clearCandidate()
+      sqlGenCoordinator.clearConversationContext()
       execCoordinator.clearResult()
     }
   }, [
@@ -216,7 +218,14 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator }: 
   }
 
   const handleAgentLogout = async () => {
+    sqlGenCoordinator.clearConversationContext()
     await coordinator.logout()
+  }
+
+  const handleResetConversation = () => {
+    sqlGenCoordinator.resetAll()
+    execCoordinator.clearResult()
+    setReviewedSql('')
   }
 
   const handleGenerateCandidateSql = async () => {
@@ -241,12 +250,31 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator }: 
   }
 
   const handleExecuteCandidateSql = async (sqlToExecute: string) => {
+    // Capture exact candidate metadata prior to async execution dispatch
+    const questionForThisCandidate = sqlGenState.lastGeneratedQuestion
+    const profileForThisCandidate = sqlGenState.lastGeneratedProfileId
+    const candidateIdForThisCandidate = sqlGenState.candidateId
+
     try {
-      await execCoordinator.executeQuery(
+      const result = await execCoordinator.executeQuery(
         agentSession.selectedProfileId,
         sqlToExecute,
         sqlGenState.response?.request_id
       )
+
+      // Record completed turn only when execution succeeded and active profile remains matched
+      if (
+        result &&
+        questionForThisCandidate &&
+        profileForThisCandidate === agentSession.selectedProfileId &&
+        agentSession.status === 'authenticated'
+      ) {
+        sqlGenCoordinator.recordCompletedTurn(
+          questionForThisCandidate,
+          result.columns || [],
+          { candidateId: candidateIdForThisCandidate }
+        )
+      }
     } catch {
       // Error handled in queryExecState.error
     }
@@ -447,6 +475,8 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator }: 
                   onCancelExecute={() => execCoordinator.cancelExecution()}
                   isExecuting={queryExecState.isLoading}
                   canExecute={agentSession.status === 'authenticated' && agentSession.schemaStatus === 'loaded'}
+                  conversationContext={sqlGenState.conversationContext}
+                  onResetConversation={handleResetConversation}
                 />
 
                 <LocalExecutionResults
