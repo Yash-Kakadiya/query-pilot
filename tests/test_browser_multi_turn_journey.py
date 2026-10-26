@@ -34,7 +34,7 @@ from tests.test_browser_query_journey import HeadlessChromeClient
 
 def test_multi_turn_browser_query_journey():
     """Execute complete multi-turn QueryPilot journey with context accumulation and reset in headless Chrome."""
-    server = BrowserTestServer(port=8011)
+    server = BrowserTestServer()
 
     # Pre-seed approved test profile into server store
     test_profile = ConnectionProfile(
@@ -50,11 +50,12 @@ def test_multi_turn_browser_query_journey():
         max_row_limit=100,
     )
     server.store.register_profile(test_profile)
-    server.start(timeout_seconds=5.0)
 
-    browser = HeadlessChromeClient(cdp_port=9228, headless=True)
-
+    browser = None
     try:
+        server.start(timeout_seconds=5.0)
+        browser = HeadlessChromeClient(headless=True)
+
         # Step 1: Navigate to SPA
         browser.navigate(server.app_url)
 
@@ -71,7 +72,7 @@ def test_multi_turn_browser_query_journey():
         browser.evaluate("document.querySelector('form.agent-auth-form').requestSubmit()")
 
         # Wait for profile select to become available
-        browser.wait_for_selector("#database-profile-select", timeout=5.0)
+        browser.wait_for_selector("#database-profile-select", timeout=10.0)
         assert "Connected" in browser.get_text(".agent-session-text")
 
         # Select database profile and confirm schema
@@ -245,5 +246,6 @@ def test_multi_turn_browser_query_journey():
         assert not req3.conversation_context
 
     finally:
-        browser.close()
+        if browser:
+            browser.close()
         server.stop()

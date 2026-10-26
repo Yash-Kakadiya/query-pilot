@@ -24,12 +24,16 @@ from query_pilot.api.models import (
     GenerationStatus,
     SynthesizeAnswerResponse,
 )
-from scripts.browser_test_server import BrowserTestServer, TEST_BOOTSTRAP_TOKEN
+from scripts.browser_test_server import (
+    AuditRecord,
+    BrowserTestServer,
+    TEST_BOOTSTRAP_TOKEN,
+)
 
 
 def test_browser_test_server_lifecycle_and_mock_behavior():
     """Verify complete lifecycle and deterministic mocking of BrowserTestServer."""
-    server = BrowserTestServer(port=8006)
+    server = BrowserTestServer()
     server.start(timeout_seconds=5.0)
 
     try:
@@ -198,7 +202,7 @@ def test_browser_test_server_lifecycle_and_mock_behavior():
 
 def test_mock_sql_generation_and_execution_offline():
     """Verify deterministic candidate SQL generation and profile execution mocks (Milestone B12-F11B)."""
-    server = BrowserTestServer(port=8007)
+    server = BrowserTestServer()
     server.start(timeout_seconds=5.0)
 
     try:
@@ -378,6 +382,7 @@ def test_mock_sql_generation_and_execution_offline():
         assert exc_info.value.code == 400
 
         # 9. Verify rejection without CSRF header
+        audit_len_before_csrf = len(server.audit_log)
         req_no_csrf = urllib.request.Request(
             f"{server.base_url}/agent/v1/profiles/test_e2e_db/execute",
             data=exec_payload,
@@ -387,13 +392,27 @@ def test_mock_sql_generation_and_execution_offline():
             },
             method="POST",
         )
-        with pytest.raises(urllib.error.HTTPError) as exc_info:
-            urllib.request.urlopen(req_no_csrf, timeout=2.0)
-        assert exc_info.value.code == 400
-        csrf_err = json.loads(exc_info.value.read().decode("utf-8"))
-        assert csrf_err.get("error") == "MISSING_CUSTOM_HEADER"
+        try:
+            with urllib.request.urlopen(req_no_csrf, timeout=2.0) as resp:
+                pytest.fail(f"Expected HTTP 400 rejection without CSRF header, got status {resp.status}")
+        except urllib.error.HTTPError as exc_info:
+            assert exc_info.code == 400
+            csrf_err = json.loads(exc_info.read().decode("utf-8"))
+            assert csrf_err.get("error") == "MISSING_CUSTOM_HEADER"
+        except (ConnectionAbortedError, ConnectionResetError):
+            # On Windows, when ASGI middleware rejects before consuming the request body stream,
+            # Winsock raises ConnectionAbortedError (WinError 10053) or ConnectionResetError (WinError 10054).
+            # Verify via server audit log that a NEW record was appended with HTTP 400.
+            new_records = server.audit_log[audit_len_before_csrf:]
+            assert any(
+                r.method == "POST"
+                and r.path == "/agent/v1/profiles/test_e2e_db/execute"
+                and r.status_code == 400
+                for r in new_records
+            ), "Expected server to log new HTTP 400 rejection for missing CSRF request despite socket reset"
 
         # 10. Verify rejection when unauthenticated
+        audit_len_before_auth = len(server.audit_log)
         req_no_auth = urllib.request.Request(
             f"{server.base_url}/agent/v1/profiles/test_e2e_db/execute",
             data=exec_payload,
@@ -404,9 +423,20 @@ def test_mock_sql_generation_and_execution_offline():
             },
             method="POST",
         )
-        with pytest.raises(urllib.error.HTTPError) as exc_info:
-            urllib.request.urlopen(req_no_auth, timeout=2.0)
-        assert exc_info.value.code == 401
+        try:
+            with urllib.request.urlopen(req_no_auth, timeout=2.0) as resp:
+                pytest.fail(f"Expected HTTP 401 for unauthenticated request, got status {resp.status}")
+        except urllib.error.HTTPError as exc_info:
+            assert exc_info.code == 401
+        except (ConnectionAbortedError, ConnectionResetError):
+            # On Windows, early 401 rejection on unconsumed POST streams can trigger socket abort.
+            new_records = server.audit_log[audit_len_before_auth:]
+            assert any(
+                r.method == "POST"
+                and r.path == "/agent/v1/profiles/test_e2e_db/execute"
+                and r.status_code == 401
+                for r in new_records
+            ), "Expected server to log new HTTP 401 rejection for unauthenticated request despite socket reset"
 
         # 11. Verify query timeout simulation
         create_timeout_payload = json.dumps({
@@ -503,15 +533,27 @@ def test_mock_sql_generation_and_execution_offline():
             assert "3 matching records" in validated_synth.summary
 
         # 14. Verify unknown upstream route returns 404 and does not make outbound network calls
+        audit_len_before_unknown = len(server.audit_log)
         req_unknown = urllib.request.Request(
             f"{server.base_url}/api/v1/unknown-external-route",
             data=b"{}",
             headers=state_headers,
             method="POST",
         )
-        with pytest.raises(urllib.error.HTTPError) as exc_info:
-            urllib.request.urlopen(req_unknown, timeout=2.0)
-        assert exc_info.value.code == 404
+        try:
+            with urllib.request.urlopen(req_unknown, timeout=2.0) as resp:
+                pytest.fail(f"Expected HTTP 404 for unknown route, got status {resp.status}")
+        except urllib.error.HTTPError as exc_info:
+            assert exc_info.code == 404
+        except (ConnectionAbortedError, ConnectionResetError):
+            # On Windows, early 404 rejection on unconsumed POST streams can trigger socket abort.
+            new_records = server.audit_log[audit_len_before_unknown:]
+            assert any(
+                r.method == "POST"
+                and r.path == "/api/v1/unknown-external-route"
+                and r.status_code == 404
+                for r in new_records
+            ), "Expected server to log new HTTP 404 rejection for unknown external route despite socket reset"
 
         # 15. Verify audit log captures request sequence
         audit_paths = [r.path for r in server.audit_log]
@@ -521,3 +563,60 @@ def test_mock_sql_generation_and_execution_offline():
 
     finally:
         server.stop()
+
+
+def test_socket_reset_fallback_ignores_preexisting_audit_records():
+    """Verify that socket-reset audit log verification strictly rejects pre-existing matching records.
+
+    Demonstrates that F-01/F-02 false-positive vulnerability is resolved:
+    If a matching record (e.g. status 400 for execute endpoint) exists prior to request dispatch,
+    and a simulated socket reset occurs without a new record being appended, the sliced assertion
+    must fail. When a matching new record is appended, the sliced assertion must pass.
+    """
+    server = BrowserTestServer()
+    # Pre-seed a historical record matching the target endpoint and status (simulating Steps 7 and 8)
+    server.audit_log.append(
+        AuditRecord(
+            timestamp=1000.0,
+            method="POST",
+            path="/agent/v1/profiles/test_e2e_db/execute",
+            status_code=400,
+        )
+    )
+
+    # Capture log position prior to the attempted request
+    audit_len_before = len(server.audit_log)
+    assert audit_len_before == 1
+
+    # Contrast 1: The old unsliced check would have falsely passed on historical entries alone
+    old_unsliced_check = any(
+        r.path == "/agent/v1/profiles/test_e2e_db/execute" and r.status_code == 400
+        for r in server.audit_log
+    )
+    assert old_unsliced_check is True, "Old unsliced check suffers from historical contamination"
+
+    # Contrast 2: The repaired sliced check correctly rejects when no new record was appended
+    new_records_without_dispatch = server.audit_log[audit_len_before:]
+    assert not any(
+        r.method == "POST"
+        and r.path == "/agent/v1/profiles/test_e2e_db/execute"
+        and r.status_code == 400
+        for r in new_records_without_dispatch
+    ), "Repaired sliced check must fail if no new matching record was appended by the request"
+
+    # Contrast 3: The repaired sliced check correctly passes when a matching new record is appended
+    server.audit_log.append(
+        AuditRecord(
+            timestamp=1001.0,
+            method="POST",
+            path="/agent/v1/profiles/test_e2e_db/execute",
+            status_code=400,
+        )
+    )
+    new_records_with_dispatch = server.audit_log[audit_len_before:]
+    assert any(
+        r.method == "POST"
+        and r.path == "/agent/v1/profiles/test_e2e_db/execute"
+        and r.status_code == 400
+        for r in new_records_with_dispatch
+    ), "Repaired sliced check must pass when a matching new record is appended by the request"

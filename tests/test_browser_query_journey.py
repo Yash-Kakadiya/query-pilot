@@ -33,14 +33,14 @@ from websockets.sync.client import ClientConnection, connect
 from query_pilot.agent.models import ExecuteQueryResponse
 from query_pilot.api.models import GenerateSQLResponse, GenerationStatus
 from query_pilot.db.profile import ConnectionProfile
-from scripts.browser_test_server import BrowserTestServer
+from scripts.browser_test_server import BrowserTestServer, find_free_port
 
 
 class HeadlessChromeClient:
     """Minimal, synchronous CDP client for headless Chrome acceptance testing."""
 
-    def __init__(self, cdp_port: int = 9225, headless: bool = True):
-        self.cdp_port = cdp_port
+    def __init__(self, cdp_port: Optional[int] = None, headless: bool = True):
+        self.cdp_port = cdp_port if cdp_port and cdp_port > 0 else find_free_port("127.0.0.1")
         self.headless = headless
         self._temp_dir = tempfile.TemporaryDirectory(prefix="qp_chrome_test_")
 
@@ -197,6 +197,12 @@ class HeadlessChromeClient:
         }})()"""
         return bool(self.evaluate(js))
 
+    def __enter__(self) -> HeadlessChromeClient:
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self.close()
+
     def close(self) -> None:
         if self._ws:
             try:
@@ -206,8 +212,16 @@ class HeadlessChromeClient:
             self._ws = None
         if hasattr(self, "_proc") and self._proc:
             try:
-                self._proc.terminate()
-                self._proc.wait(timeout=2.0)
+                if sys.platform == "win32":
+                    subprocess.run(
+                        ["taskkill", "/F", "/T", "/PID", str(self._proc.pid)],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        check=False,
+                    )
+                else:
+                    self._proc.terminate()
+                    self._proc.wait(timeout=2.0)
             except Exception:
                 try:
                     self._proc.kill()
@@ -219,11 +233,12 @@ class HeadlessChromeClient:
                 self._temp_dir.cleanup()
             except Exception:
                 pass
+            self._temp_dir = None
 
 
 def test_single_turn_browser_query_journey():
     """Execute complete single-turn QueryPilot journey in headless Chrome."""
-    server = BrowserTestServer(port=8009)
+    server = BrowserTestServer()
 
     # Pre-seed approved test profile into server store
     test_profile = ConnectionProfile(
@@ -239,11 +254,11 @@ def test_single_turn_browser_query_journey():
         max_row_limit=100,
     )
     server.store.register_profile(test_profile)
-    server.start(timeout_seconds=5.0)
 
-    browser = HeadlessChromeClient(cdp_port=9226, headless=True)
-
+    browser = None
     try:
+        server.start(timeout_seconds=5.0)
+        browser = HeadlessChromeClient(headless=True)
         # Step 1: Navigate to SPA
         browser.navigate(server.app_url)
 
@@ -367,5 +382,6 @@ def test_single_turn_browser_query_journey():
         assert not browser.element_exists("table.local-data-table")
 
     finally:
-        browser.close()
+        if browser:
+            browser.close()
         server.stop()

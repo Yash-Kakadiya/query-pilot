@@ -18,6 +18,7 @@ from dataclasses import asdict, dataclass
 import json
 import logging
 from pathlib import Path
+import socket
 import sys
 import tempfile
 import threading
@@ -229,17 +230,24 @@ def build_sample_schema(database_name: str) -> DatabaseSchema:
     )
 
 
+def find_free_port(bind_host: str = "127.0.0.1") -> int:
+    """Allocate an available ephemeral port on the specified loopback host."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind((bind_host, 0))
+        return int(s.getsockname()[1])
+
+
 class BrowserTestServer:
     """Encapsulates a managed loopback uvicorn test server for browser runs."""
 
     def __init__(
         self,
-        port: int = 8005,
+        port: Optional[int] = None,
         bind_host: str = "127.0.0.1",
         dist_dir: Optional[Path] = None,
         temp_dir: Optional[Path] = None,
     ):
-        self.port = port
+        self.port = port if port is not None and port > 0 else find_free_port(bind_host)
         self.bind_host = bind_host
         self.dist_dir = dist_dir or DEFAULT_DIST_DIR
         self._temp_dir_obj: Optional[tempfile.TemporaryDirectory] = None
@@ -461,6 +469,13 @@ class BrowserTestServer:
             self.stop()
             raise RuntimeError(f"Server on {self.app_url} failed to start within {timeout_seconds}s.")
 
+    def __enter__(self) -> BrowserTestServer:
+        self.start()
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self.stop()
+
     def stop(self) -> None:
         """Signal uvicorn to exit and join thread cleanly."""
         if hasattr(self, "_patcher") and self._patcher:
@@ -472,12 +487,17 @@ class BrowserTestServer:
         if self._server:
             self._server.should_exit = True
         if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=3.0)
+            self._thread.join(timeout=2.0)
+            if self._thread.is_alive() and self._server:
+                self._server.force_exit = True
+                self._thread.join(timeout=2.0)
+        self._thread = None
         if self._temp_dir_obj:
             try:
                 self._temp_dir_obj.cleanup()
             except Exception:
                 pass
+            self._temp_dir_obj = None
 
 
 def main():
