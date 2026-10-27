@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { AccessKeyBar } from './components/AccessKeyBar'
 import { AgentAuthModal } from './components/AgentAuthModal'
 import { CandidateSqlReview } from './components/CandidateSqlReview'
@@ -20,6 +20,7 @@ import {
   useQueryExecution,
 } from './services/queryExecution'
 import { LocalExecutionResults } from './components/LocalExecutionResults'
+import { classifyExecutionError, canAttemptRepair } from './services/errorClassification'
 import { getHealth, postQuery } from './services/apiClient'
 import type { ExecutionMode, HealthResponse, QueryResponse } from './types/api'
 import './App.css'
@@ -56,6 +57,24 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator }: 
   const [prevCandidateResponse, setPrevCandidateResponse] = useState(sqlGenState.response)
   const [reviewedSql, setReviewedSql] = useState<string>(sqlGenState.response?.candidate_sql || '')
 
+  // 5. Execution Recovery state (Milestone B14-F14)
+  const [repairedCandidateIds, setRepairedCandidateIds] = useState<Record<string, boolean>>({})
+  const [isRepairing, setIsRepairing] = useState<boolean>(false)
+  const [repairError, setRepairError] = useState<string | null>(null)
+
+  // Synchronous in-flight guard and lifecycle tracking for repair requests
+  const activeRepairTokenRef = useRef<number | null>(null)
+  const repairSeqRef = useRef<number>(0)
+  const isMountedRef = useRef<boolean>(true)
+
+  useEffect(() => {
+    isMountedRef.current = true
+    return () => {
+      isMountedRef.current = false
+      activeRepairTokenRef.current = null
+    }
+  }, [])
+
   // Reset or initialize reviewed SQL when candidate response updates
   if (sqlGenState.response !== prevCandidateResponse) {
     setPrevCandidateResponse(sqlGenState.response)
@@ -81,16 +100,24 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator }: 
       !agentSession.selectedProfileId ||
       agentSession.schemaStatus !== 'loaded'
     ) {
+      activeRepairTokenRef.current = null
       sqlGenCoordinator.clearCandidate()
       sqlGenCoordinator.clearConversationContext()
       execCoordinator.clearResult()
+      setRepairedCandidateIds({})
+      setIsRepairing(false)
+      setRepairError(null)
     } else if (
       sqlGenState.lastGeneratedProfileId &&
       sqlGenState.lastGeneratedProfileId !== agentSession.selectedProfileId
     ) {
+      activeRepairTokenRef.current = null
       sqlGenCoordinator.clearCandidate()
       sqlGenCoordinator.clearConversationContext()
       execCoordinator.clearResult()
+      setRepairedCandidateIds({})
+      setIsRepairing(false)
+      setRepairError(null)
     }
   }, [
     agentSession.status,
@@ -223,13 +250,18 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator }: 
   }
 
   const handleResetConversation = () => {
+    activeRepairTokenRef.current = null
     sqlGenCoordinator.resetAll()
     execCoordinator.clearResult()
     setReviewedSql('')
+    setRepairedCandidateIds({})
+    setIsRepairing(false)
+    setRepairError(null)
   }
 
   const handleGenerateCandidateSql = async () => {
     execCoordinator.clearResult()
+    setRepairError(null)
     try {
       const res = await sqlGenCoordinator.generateCandidate(
         sqlGenState.question,
@@ -241,6 +273,135 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator }: 
       }
     } catch {
       // Error handled in sqlGenState.error
+    }
+  }
+
+  // Memoized error classification and repair eligibility
+  const errorClassification = useMemo(() => {
+    if (!queryExecState.error) {
+      return null
+    }
+    return classifyExecutionError(queryExecState.error)
+  }, [queryExecState.error])
+
+  const canRepair = useMemo(
+    () =>
+      canAttemptRepair({
+        executionError: queryExecState.error,
+        isExecutionLoading: queryExecState.isLoading,
+        isSqlGenLoading: sqlGenState.isLoading,
+        isRepairing,
+        errorClassification,
+        activeCandidateId: sqlGenState.candidateId,
+        repairedCandidateIds,
+        sessionStatus: agentSession.status,
+        selectedProfileId: agentSession.selectedProfileId,
+        schemaStatus: agentSession.schemaStatus,
+        lastGeneratedQuestion: sqlGenState.lastGeneratedQuestion,
+        isStale: sqlGenState.isStale,
+      }),
+    [
+      queryExecState.error,
+      queryExecState.isLoading,
+      sqlGenState.isLoading,
+      isRepairing,
+      errorClassification,
+      sqlGenState.candidateId,
+      repairedCandidateIds,
+      agentSession.status,
+      agentSession.selectedProfileId,
+      agentSession.schemaStatus,
+      sqlGenState.lastGeneratedQuestion,
+      sqlGenState.isStale,
+    ]
+  )
+
+  const handleRepairCandidateSql = async () => {
+    // 1. Synchronous in-flight guard check: if repair is already active, return immediately
+    if (activeRepairTokenRef.current !== null) {
+      return
+    }
+
+    // 2. Direct coordinator check to guard against stale closure if coordinator is loading
+    if (sqlGenCoordinator.getState().isLoading) {
+      return
+    }
+
+    const activeCandidateId = sqlGenCoordinator.getState().candidateId || sqlGenState.candidateId
+    const activeQuestion =
+      sqlGenCoordinator.getState().lastGeneratedQuestion || sqlGenState.lastGeneratedQuestion
+    if (
+      !canRepair ||
+      !activeCandidateId ||
+      !errorClassification?.diagnosticFeedback ||
+      !activeQuestion
+    ) {
+      return
+    }
+
+    // 3. Acquire ownership token synchronously BEFORE dispatching or scheduling state changes
+    const token = ++repairSeqRef.current
+    activeRepairTokenRef.current = token
+
+    const initiatingCandidateId = activeCandidateId
+    const initiatingProfileId = agentSession.selectedProfileId
+    const initiatingQuestion = SqlGenerationCoordinator.normalizeQuestion(activeQuestion)
+    const diagnosticFeedback = errorClassification.diagnosticFeedback
+
+    // Immediately record attempt to block duplicate rapid clicks
+    setRepairedCandidateIds((prev) => ({
+      ...prev,
+      [initiatingCandidateId]: true,
+    }))
+    setIsRepairing(true)
+    setRepairError(null)
+
+    try {
+      const res = await sqlGenCoordinator.generateCandidate(
+        initiatingQuestion,
+        agentSession.schemaContext,
+        initiatingProfileId,
+        { diagnosticFeedback }
+      )
+
+      // Guard check on resolution:
+      // - Must still be the active invocation token
+      // - Component must still be mounted
+      // - Response must be non-null
+      // - Session and profile must match initiating context
+      // - Schema status must still be loaded
+      // - Current coordinator question must still match initiating question (question-drift protection)
+      // - Candidate produced by this generation must still be the current active candidate in coordinator
+      if (
+        activeRepairTokenRef.current === token &&
+        isMountedRef.current &&
+        res &&
+        agentSession.status === 'authenticated' &&
+        agentSession.selectedProfileId === initiatingProfileId &&
+        agentSession.schemaStatus === 'loaded' &&
+        sqlGenCoordinator.matchesCurrentQuestion(initiatingQuestion) &&
+        sqlGenCoordinator.isCurrentCandidateId(res.candidateId)
+      ) {
+        execCoordinator.clearResult()
+        if (res.candidate_sql) {
+          setReviewedSql(res.candidate_sql)
+        }
+      }
+    } catch {
+      // Only set error if this invocation still owns the active token and component is mounted
+      if (activeRepairTokenRef.current === token && isMountedRef.current) {
+        setRepairError(
+          'Unable to generate repair suggestion. You can modify the query manually or retry execution.'
+        )
+      }
+    } finally {
+      // Release guard ONLY if this invocation still owns the active token
+      if (activeRepairTokenRef.current === token) {
+        activeRepairTokenRef.current = null
+        if (isMountedRef.current) {
+          setIsRepairing(false)
+        }
+      }
     }
   }
 
@@ -489,12 +650,20 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator }: 
                   isAmbiguousFailure={queryExecState.isAmbiguousFailure}
                   isConfirmedTimeout={queryExecState.isConfirmedTimeout}
                   activeProfileName={agentSession.selectedProfile?.display_name}
-                  onClear={() => execCoordinator.clearResult()}
+                  onClear={() => {
+                    execCoordinator.clearResult()
+                    setRepairError(null)
+                  }}
                   onRetry={() => {
                     if (reviewedSql.trim()) {
                       void handleExecuteCandidateSql(reviewedSql.trim())
                     }
                   }}
+                  canRepair={canRepair}
+                  isRepairing={isRepairing}
+                  onRepair={handleRepairCandidateSql}
+                  repairHint={errorClassification?.diagnosticFeedback}
+                  repairError={repairError}
                 />
               </section>
             )}

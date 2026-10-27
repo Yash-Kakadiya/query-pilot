@@ -75,8 +75,23 @@ export interface SqlGenerationState {
   lastRecordedCandidateId: string | null
 }
 
+export interface GenerateCandidateOptions extends RequestOptions {
+  diagnosticFeedback?: string | null
+}
+
+export interface GenerateCandidateResult extends GenerateSQLResponse {
+  candidateId?: string
+}
+
 export class SqlGenerationCoordinator {
   static readonly MAX_CONVERSATION_TURNS = 3
+
+  /**
+   * Normalizes question text using standard trimming consistent with candidate generation.
+   */
+  static normalizeQuestion(question: string | null | undefined): string {
+    return question ? question.trim() : ''
+  }
 
   private state: SqlGenerationState
   private listeners: Set<(state: SqlGenerationState) => void> = new Set()
@@ -107,6 +122,28 @@ export class SqlGenerationCoordinator {
   }
 
   /**
+   * Checks whether the provided candidate identity is currently the active candidate
+   * in the coordinator's state.
+   */
+  isCurrentCandidateId(candidateId: string | null | undefined): boolean {
+    if (!candidateId || !this.state.candidateId) {
+      return false
+    }
+    return this.state.candidateId === candidateId
+  }
+
+  /**
+   * Checks whether the current coordinator question matches the given question
+   * under standard trimming rules.
+   */
+  matchesCurrentQuestion(question: string | null | undefined): boolean {
+    return (
+      SqlGenerationCoordinator.normalizeQuestion(this.state.question) ===
+      SqlGenerationCoordinator.normalizeQuestion(question)
+    )
+  }
+
+  /**
    * Subscribes a listener to state changes (compatible with React useSyncExternalStore).
    */
   subscribe(listener: (state: SqlGenerationState) => void): () => void {
@@ -134,7 +171,8 @@ export class SqlGenerationCoordinator {
   setQuestion(newQuestion: string): void {
     const isStale = Boolean(
       this.state.lastGeneratedQuestion &&
-      newQuestion.trim() !== this.state.lastGeneratedQuestion.trim()
+      SqlGenerationCoordinator.normalizeQuestion(newQuestion) !==
+        SqlGenerationCoordinator.normalizeQuestion(this.state.lastGeneratedQuestion)
     )
     this.setState({
       question: newQuestion,
@@ -156,8 +194,8 @@ export class SqlGenerationCoordinator {
     question: string,
     schemaContext: ModelFacingSchemaContext | null,
     profileId: string | null,
-    options?: RequestOptions
-  ): Promise<GenerateSQLResponse | null> {
+    options?: GenerateCandidateOptions
+  ): Promise<GenerateCandidateResult | null> {
     // 1. Guard against duplicate submission
     if (this.state.isLoading) {
       return null
@@ -173,7 +211,7 @@ export class SqlGenerationCoordinator {
     }
 
     // 3. Client-side question validation
-    const trimmedQuestion = question.trim()
+    const trimmedQuestion = SqlGenerationCoordinator.normalizeQuestion(question)
     if (!trimmedQuestion) {
       const err = new Error('Question cannot be empty or whitespace.')
       this.setState({ error: err })
@@ -210,6 +248,9 @@ export class SqlGenerationCoordinator {
         ...(this.state.conversationContext.length > 0
           ? { conversation_context: this.state.conversationContext }
           : {}),
+        ...(options?.diagnosticFeedback && options.diagnosticFeedback.trim()
+          ? { diagnostic_feedback: options.diagnosticFeedback.trim() }
+          : {}),
       }
 
       const res = await generateSql(request, {
@@ -224,17 +265,23 @@ export class SqlGenerationCoordinator {
 
       const candidateId = `${currentGen}:${res.request_id || 'candidate'}`
 
+      const candidateResult: GenerateCandidateResult = {
+        ...res,
+        candidateId,
+      }
+
       this.setState({
         isLoading: false,
-        response: res,
+        response: candidateResult,
         error: null,
+        question: this.state.question ? this.state.question : trimmedQuestion,
         lastGeneratedQuestion: trimmedQuestion,
         lastGeneratedProfileId: profileId,
         candidateId,
         isStale: false,
       })
 
-      return res
+      return candidateResult
     } catch (err: unknown) {
       if (this.generation !== currentGen) {
         return null

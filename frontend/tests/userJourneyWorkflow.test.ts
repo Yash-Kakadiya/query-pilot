@@ -24,13 +24,12 @@ import { QueryExecutionCoordinator } from '../src/services/queryExecution.ts'
 import {
   synthesizeDeterministicAnswer,
   resolveCellPresentation,
-  formatDeterministicValue,
 } from '../src/services/answerSynthesis.ts'
+import { classifyExecutionError, canAttemptRepair } from '../src/services/errorClassification.ts'
 import type {
   AgentDatabaseSchema,
   ExecuteQueryResponse,
   GenerateSQLResponse,
-  ModelFacingSchemaContext,
   ProfileSummary,
 } from '../src/types/api.ts'
 
@@ -441,5 +440,273 @@ test('B10 User Journey - Honest Presentation of Errors, Timeouts & Truncation', 
       answer.text.includes('(partial result set — truncated by profile limit)'),
       'Must prominently label truncation'
     )
+  })
+})
+
+test('B14 User Journey - Execution Error Recovery Workflow', async (t) => {
+  t.afterEach(() => {
+    restoreFetch()
+  })
+
+  await t.test('recovers from recoverable query error through user-initiated repair to successful execution', async () => {
+    let generateSqlCount = 0
+    let executeQueryCount = 0
+    let lastGenerateBody: Record<string, unknown> | null = null
+
+    // Mock fetch for both generation and execution
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      const urlStr = String(url)
+      if (urlStr.includes('/generate-sql')) {
+        generateSqlCount++
+        lastGenerateBody = JSON.parse(String(init?.body)) as Record<string, unknown>
+        if (generateSqlCount === 1) {
+          // 1. Initial generation with bad column name
+          const initialGen: GenerateSQLResponse = {
+            candidate_sql: 'SELECT DeptName FROM dbo.Departments',
+            status: 'generated',
+            execution_disclaimer: 'Candidate SQL is unexecuted.',
+            request_id: 'req-gen-1',
+          }
+          return new Response(JSON.stringify(initialGen), { status: 200 })
+        }
+        // 2. Repaired generation with corrected column name
+        const repairedGen: GenerateSQLResponse = {
+          candidate_sql: 'SELECT DepartmentName FROM dbo.Departments',
+          status: 'generated',
+          execution_disclaimer: 'Candidate SQL is unexecuted.',
+          request_id: 'req-gen-2',
+        }
+        return new Response(JSON.stringify(repairedGen), { status: 200 })
+      }
+
+      if (urlStr.includes('/execute')) {
+        executeQueryCount++
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+        const querySql = String(body['sql'] || body['query'] || '')
+        if (querySql.includes('DeptName')) {
+          // Execution failure: invalid column name
+          return new Response(
+            JSON.stringify({
+              detail: "Database execution error: Invalid column name 'DeptName'. (207)",
+            }),
+            { status: 500 }
+          )
+        }
+        // Repaired query succeeds
+        const successResult: ExecuteQueryResponse = {
+          columns: ['DepartmentName'],
+          rows: [{ DepartmentName: 'Engineering' }, { DepartmentName: 'Marketing' }],
+          row_count: 2,
+          truncated: false,
+          execution_time_ms: 12.5,
+          request_id: 'req-exec-success',
+        }
+        return new Response(JSON.stringify(successResult), { status: 200 })
+      }
+
+      return new Response('Not Found', { status: 404 })
+    }) as typeof fetch
+
+    const sqlCoordinator = new SqlGenerationCoordinator()
+    const execCoordinator = new QueryExecutionCoordinator()
+
+    // 1. Generate initial candidate SQL
+    const initialCandidate = await sqlCoordinator.generateCandidate(
+      'Show all departments',
+      SAMPLE_MODEL_FACING_SCHEMA,
+      'sales_warehouse'
+    )
+    assert.ok(initialCandidate)
+    assert.strictEqual(generateSqlCount, 1)
+    const initialCandidateId = sqlCoordinator.getState().candidateId!
+    assert.ok(initialCandidateId)
+
+    // 2. Explicit user approval to execute candidate 1
+    let executionError: Error | null = null
+    try {
+      await execCoordinator.executeQuery('sales_warehouse', initialCandidate.candidate_sql!)
+    } catch (err) {
+      executionError = err as Error
+    }
+
+    assert.ok(executionError, 'Initial execution must fail')
+    assert.strictEqual(executeQueryCount, 1)
+    assert.strictEqual(generateSqlCount, 1, 'Execution failure alone must NOT trigger generation')
+
+    // 3. Classify execution error
+    const classification = classifyExecutionError(executionError)
+    assert.strictEqual(classification.category, 'recoverable_query_error')
+    assert.strictEqual(classification.recoverable, true)
+    assert.ok(classification.diagnosticFeedback)
+
+    // 4. Check eligibility with production helper
+    const isEligible = canAttemptRepair({
+      executionError,
+      isExecutionLoading: execCoordinator.getState().isLoading,
+      isSqlGenLoading: sqlCoordinator.getState().isLoading,
+      isRepairing: false,
+      errorClassification: classification,
+      activeCandidateId: initialCandidateId,
+      repairedCandidateIds: {},
+      sessionStatus: 'authenticated',
+      selectedProfileId: 'sales_warehouse',
+      schemaStatus: 'loaded',
+      lastGeneratedQuestion: sqlCoordinator.getState().lastGeneratedQuestion,
+      isStale: sqlCoordinator.getState().isStale,
+    })
+    assert.strictEqual(isEligible, true)
+
+    // 5. User explicitly initiates repair
+    // In-flight guard tracking: Invocation 1 acquires token
+    let activeRepairToken: number | null = 1
+    const repairedCandidateIds: Record<string, boolean> = { [initialCandidateId]: true }
+
+    // Dispatch repair generation
+    const repairPromise = sqlCoordinator.generateCandidate(
+      sqlCoordinator.getState().lastGeneratedQuestion!,
+      SAMPLE_MODEL_FACING_SCHEMA,
+      'sales_warehouse',
+      { diagnosticFeedback: classification.diagnosticFeedback }
+    )
+
+    // 6. Concurrency check: duplicate invocation while repair is in flight
+    const duplicateCanRepair = canAttemptRepair({
+      executionError,
+      isExecutionLoading: execCoordinator.getState().isLoading,
+      isSqlGenLoading: sqlCoordinator.getState().isLoading,
+      isRepairing: activeRepairToken !== null, // In flight!
+      errorClassification: classification,
+      activeCandidateId: initialCandidateId,
+      repairedCandidateIds,
+      sessionStatus: 'authenticated',
+      selectedProfileId: 'sales_warehouse',
+      schemaStatus: 'loaded',
+      lastGeneratedQuestion: sqlCoordinator.getState().lastGeneratedQuestion,
+      isStale: sqlCoordinator.getState().isStale,
+    })
+    assert.strictEqual(duplicateCanRepair, false, 'Duplicate invocation must be rejected while repair is active')
+
+    // 7. Await repair resolution
+    const repairedCandidate = await repairPromise
+    activeRepairToken = null // Released on completion
+    assert.ok(repairedCandidate)
+    assert.strictEqual(generateSqlCount, 2)
+    assert.strictEqual(
+      lastGenerateBody!['diagnostic_feedback'],
+      "Invalid column name: 'DeptName'. Please query only valid columns defined in the schema."
+    )
+
+    // 8. Repaired SQL invariant: distinct candidate, unexecuted state, zero auto-execution
+    const repairedCandidateId = sqlCoordinator.getState().candidateId!
+    assert.notStrictEqual(repairedCandidateId, initialCandidateId)
+    assert.strictEqual(repairedCandidate.status, 'generated')
+    assert.strictEqual(repairedCandidate.execution_disclaimer, 'Candidate SQL is unexecuted.')
+    assert.strictEqual(executeQueryCount, 1, 'Repaired SQL must NEVER be executed automatically')
+
+    // 9. Fresh explicit user authorization to execute repaired SQL
+    const finalResult = await execCoordinator.executeQuery(
+      'sales_warehouse',
+      repairedCandidate.candidate_sql!
+    )
+    assert.ok(finalResult)
+    assert.strictEqual(executeQueryCount, 2)
+    assert.strictEqual(finalResult.row_count, 2)
+    assert.strictEqual(finalResult.rows[0]['DepartmentName'], 'Engineering')
+
+    // 10. Record turn into conversation context (only after success!)
+    sqlCoordinator.recordCompletedTurn('Show all departments', finalResult.columns)
+    const context = sqlCoordinator.getState().conversationContext
+    assert.strictEqual(context.length, 1)
+    assert.strictEqual(context[0].user_question, 'Show all departments')
+    assert.deepStrictEqual(context[0].result_columns, ['DepartmentName'])
+    assert.ok(!JSON.stringify(context).includes('DeptName'), 'Error diagnostics must never leak into conversation context')
+  })
+
+  await t.test('repair failure preserves original failure, consumes attempt, and does not execute SQL', async () => {
+    let generateSqlCount = 0
+    let executeQueryCount = 0
+
+    globalThis.fetch = (async (url: string | URL | Request) => {
+      const urlStr = String(url)
+      if (urlStr.includes('/generate-sql')) {
+        generateSqlCount++
+        if (generateSqlCount === 1) {
+          return new Response(
+            JSON.stringify({
+              candidate_sql: 'SELECT BadCol FROM dbo.Departments',
+              status: 'generated',
+              execution_disclaimer: 'Candidate SQL is unexecuted.',
+              request_id: 'req-gen-fail-1',
+            }),
+            { status: 200 }
+          )
+        }
+        // Repair request fails (e.g. backend 500)
+        return new Response(JSON.stringify({ detail: 'LLM service failure' }), { status: 500 })
+      }
+      if (urlStr.includes('/execute')) {
+        executeQueryCount++
+        return new Response(
+          JSON.stringify({ detail: "Database execution error: Invalid column name 'BadCol'. (207)" }),
+          { status: 500 }
+        )
+      }
+      return new Response('Not Found', { status: 404 })
+    }) as typeof fetch
+
+    const sqlCoordinator = new SqlGenerationCoordinator()
+    const execCoordinator = new QueryExecutionCoordinator()
+
+    // 1. Initial candidate
+    const candidate = await sqlCoordinator.generateCandidate(
+      'Show departments',
+      SAMPLE_MODEL_FACING_SCHEMA,
+      'sales_warehouse'
+    )
+    const candidateId = sqlCoordinator.getState().candidateId!
+
+    // 2. Failed execution
+    let originalError: Error | null = null
+    try {
+      await execCoordinator.executeQuery('sales_warehouse', candidate!.candidate_sql!)
+    } catch (err) {
+      originalError = err as Error
+    }
+    assert.ok(originalError)
+    assert.strictEqual(executeQueryCount, 1)
+
+    // 3. Consume attempt before repair dispatch
+    const repairedCandidateIds: Record<string, boolean> = { [candidateId]: true }
+
+    // 4. Repair generation rejects
+    await assert.rejects(
+      async () =>
+        sqlCoordinator.generateCandidate(
+          'Show departments',
+          SAMPLE_MODEL_FACING_SCHEMA,
+          'sales_warehouse',
+          { diagnosticFeedback: "Invalid column name: 'BadCol'." }
+        )
+    )
+
+    // 5. Invariants after repair failure:
+    // - Original execution failure is preserved
+    assert.strictEqual(execCoordinator.getState().error?.message, originalError.message)
+    // - Attempt remains permanently consumed
+    assert.strictEqual(repairedCandidateIds[candidateId], true)
+    // - No further execution was triggered
+    assert.strictEqual(executeQueryCount, 1, 'Repair failure must NEVER trigger query execution')
+    // - Candidate cannot re-attempt repair
+    const canRetryRepair = canAttemptRepair({
+      executionError: execCoordinator.getState().error,
+      activeCandidateId: candidateId,
+      repairedCandidateIds,
+      sessionStatus: 'authenticated',
+      selectedProfileId: 'sales_warehouse',
+      schemaStatus: 'loaded',
+      lastGeneratedQuestion: 'Show departments',
+      isStale: false,
+    })
+    assert.strictEqual(canRetryRepair, false, 'Candidate attempt limit remains consumed after repair failure')
   })
 })

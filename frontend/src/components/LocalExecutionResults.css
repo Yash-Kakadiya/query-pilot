@@ -282,7 +282,11 @@
 }
 
 .local-error-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
   margin-top: 0.85rem;
+  flex-wrap: wrap;
 }
 
 .local-retry-btn {
@@ -297,8 +301,63 @@
   transition: opacity 0.15s ease-in-out;
 }
 
-.local-retry-btn:hover {
+.local-retry-btn:hover:not(:disabled) {
   opacity: 0.9;
+}
+
+.local-repair-btn {
+  background: #2563eb;
+  color: #ffffff;
+  border: none;
+  border-radius: 4px;
+  padding: 0.4rem 0.85rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.15s ease-in-out;
+}
+
+.local-repair-btn:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.local-retry-btn:disabled,
+.local-repair-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.local-repair-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: rgba(37, 99, 235, 0.12);
+  border-left: 3px solid #3b82f6;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  color: #93c5fd;
+  line-height: 1.4;
+}
+
+.local-repair-hint-icon {
+  font-size: 0.95rem;
+  flex-shrink: 0;
+  margin-top: 0.05rem;
+}
+
+.local-repair-hint-text strong {
+  color: #bfdbfe;
+}
+
+.local-repair-error-notice {
+  margin-top: 0.6rem;
+  font-size: 0.8rem;
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.1);
+  padding: 0.35rem 0.6rem;
+  border-radius: 4px;
 }
 
 /* Synthesized Local Answer Card */

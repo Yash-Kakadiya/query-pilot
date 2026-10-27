@@ -599,4 +599,48 @@ test('SQL Generation - Error Handling & Security Boundaries', async (t) => {
       assert.strictEqual(sessionStorage.getItem('generated_sql'), null)
     }
   })
+
+  await t.test('propagates diagnosticFeedback into request payload when provided', async () => {
+    let capturedBody: Record<string, unknown> | null = null
+
+    globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+      capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>
+      return new Response(JSON.stringify(SAMPLE_SUCCESS_RESPONSE), { status: 200 })
+    }) as typeof fetch
+
+    const coordinator = new SqlGenerationCoordinator()
+    const hint = "Invalid column name: 'DeptName'. Please query only valid columns defined in the schema."
+
+    const res = await coordinator.generateCandidate(
+      'Show all departments',
+      SAMPLE_PROJECTED_SCHEMA,
+      'sqlite_demo',
+      { diagnosticFeedback: hint }
+    )
+
+    assert.ok(res)
+    assert.ok(capturedBody)
+    assert.strictEqual((capturedBody as Record<string, unknown>)['diagnostic_feedback'], hint)
+  })
+
+  await t.test('omits diagnostic_feedback when omitted or whitespace', async () => {
+    let capturedBody: Record<string, unknown> | null = null
+
+    globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+      capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>
+      return new Response(JSON.stringify(SAMPLE_SUCCESS_RESPONSE), { status: 200 })
+    }) as typeof fetch
+
+    const coordinator = new SqlGenerationCoordinator()
+
+    await coordinator.generateCandidate(
+      'Show all departments',
+      SAMPLE_PROJECTED_SCHEMA,
+      'sqlite_demo',
+      { diagnosticFeedback: '   ' }
+    )
+
+    assert.ok(capturedBody)
+    assert.strictEqual((capturedBody as Record<string, unknown>)['diagnostic_feedback'], undefined)
+  })
 })

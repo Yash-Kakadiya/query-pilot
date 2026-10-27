@@ -15,6 +15,11 @@ export interface LocalExecutionResultsProps {
   activeProfileName?: string
   onClear: () => void
   onRetry?: () => void
+  canRepair?: boolean
+  isRepairing?: boolean
+  onRepair?: () => void
+  repairHint?: string | null
+  repairError?: string | null
 }
 
 /**
@@ -55,6 +60,11 @@ export function LocalExecutionResults({
   activeProfileName,
   onClear,
   onRetry,
+  canRepair = false,
+  isRepairing = false,
+  onRepair,
+  repairHint = null,
+  repairError = null,
 }: LocalExecutionResultsProps) {
   const synthesizedAnswer = useMemo(() => {
     if (isLoading) {
@@ -137,15 +147,44 @@ export function LocalExecutionResults({
             </div>
           )}
 
-          {onRetry && (
-            <div className="local-error-actions">
+          {/* Action buttons: Retry and Suggest Repair */}
+          <div className="local-error-actions">
+            {onRetry && (
               <button
                 type="button"
                 className="local-retry-btn"
                 onClick={onRetry}
+                disabled={isRepairing}
               >
                 Retry Execution
               </button>
+            )}
+
+            {canRepair && onRepair && (
+              <button
+                type="button"
+                className="local-repair-btn"
+                onClick={onRepair}
+                disabled={isRepairing}
+                aria-label="Suggest a repair for the failed query"
+              >
+                {isRepairing ? 'Suggesting Repair...' : 'Suggest Repair'}
+              </button>
+            )}
+          </div>
+
+          {canRepair && repairHint && (
+            <div className="local-repair-hint" role="note">
+              <span className="local-repair-hint-icon" aria-hidden="true">💡</span>
+              <span className="local-repair-hint-text">
+                <strong>Repair Guidance:</strong> {repairHint}
+              </span>
+            </div>
+          )}
+
+          {repairError && (
+            <div className="local-repair-error-notice" role="alert">
+              <span>⚠️ {repairError}</span>
             </div>
           )}
         </div>

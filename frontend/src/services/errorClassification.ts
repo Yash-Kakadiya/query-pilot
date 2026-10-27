@@ -301,3 +301,79 @@ function classifyDatabaseErrorMessage(rawMessage: string): ErrorClassificationRe
     userMessage: 'An unexpected database execution error occurred.',
   }
 }
+
+/**
+ * Parameters for evaluating whether a candidate SQL execution failure is eligible
+ * for user-initiated repair generation.
+ */
+export interface RepairEligibilityParams {
+  executionError: unknown
+  isExecutionLoading?: boolean
+  isSqlGenLoading?: boolean
+  isRepairing?: boolean
+  errorClassification?: ErrorClassificationResult | null
+  activeCandidateId?: string | null
+  repairedCandidateIds?: Record<string, boolean>
+  sessionStatus?: string
+  selectedProfileId?: string | null
+  schemaStatus?: string
+  lastGeneratedQuestion?: string | null
+  isStale?: boolean
+}
+
+/**
+ * Evaluates whether a candidate SQL execution failure is eligible for user-initiated repair.
+ *
+ * Strict fail-closed requirements:
+ * - The execution error must be present.
+ * - No query execution, SQL generation, or repair request may be currently in flight.
+ * - The error classification must be exactly 'recoverable_query_error' with non-null diagnostic feedback.
+ * - The active candidate identity must be non-empty and must not have already consumed its 1 attempt.
+ * - The session must be 'authenticated' with a selected profile and 'loaded' schema.
+ * - The natural-language question must be non-empty and not marked stale.
+ */
+export function canAttemptRepair(params: RepairEligibilityParams): boolean {
+  if (!params.executionError) {
+    return false
+  }
+  if (params.isExecutionLoading || params.isSqlGenLoading || params.isRepairing) {
+    return false
+  }
+
+  const classification =
+    params.errorClassification !== undefined
+      ? params.errorClassification
+      : classifyExecutionError(params.executionError)
+
+  if (
+    !classification ||
+    classification.category !== 'recoverable_query_error' ||
+    !classification.recoverable ||
+    !classification.diagnosticFeedback ||
+    !classification.diagnosticFeedback.trim()
+  ) {
+    return false
+  }
+
+  const candidateId = params.activeCandidateId ? params.activeCandidateId.trim() : ''
+  if (!candidateId) {
+    return false
+  }
+
+  if (params.repairedCandidateIds && params.repairedCandidateIds[candidateId]) {
+    return false
+  }
+
+  if (
+    params.sessionStatus !== 'authenticated' ||
+    !params.selectedProfileId ||
+    params.schemaStatus !== 'loaded' ||
+    !params.lastGeneratedQuestion ||
+    !params.lastGeneratedQuestion.trim() ||
+    params.isStale
+  ) {
+    return false
+  }
+
+  return true
+}
