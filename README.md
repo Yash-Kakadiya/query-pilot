@@ -274,6 +274,7 @@ QueryPilot is currently authorized strictly as a **Controlled Preview** (for loc
 - **Generation vs. Synthesis Execution Boundaries**: In Milestone B12-F5E2, zero database execution calls occurred during candidate SQL generation, and the browser UI workflow rendered a deterministic local answer directly from client memory without invoking Gemini for synthesis.
 - **Offline Test Reconciled Baseline (Milestone B13-M1)**: In the historical test run for Milestone B13-M1, the offline Python test suite reported **1,240 passed, 62 deselected, 35 warnings** when executing `pytest -o pythonpath=. -m "not integration"` (the 62 deselected tests are live database integration tests excluded by the filter). The frontend test suite (`npm test --prefix frontend`) reported **328 passed**. These counts represent milestone-specific historical evidence rather than permanent guarantees. Run test commands directly to establish current repository state.
 - **Deterministic Multi-Turn Evaluation Benchmark**: The offline multi-turn benchmark runner (`python scripts/run_multi_turn_evaluation.py`) executes 10 canonical multi-turn conversational scenarios (`MT-01`–`MT-10`), verifying prompt grounding, FIFO sliding-window eviction, topic/profile reset boundaries, sensitive data exclusion, and offline recovery harness isolation. The full benchmark report is available in [Multi-Turn Evaluation Benchmark Report](data/evaluation/multi_turn_evaluation_report.md).
+- **Deterministic Clarification Evaluation Benchmark**: The offline clarification benchmark runner (`python scripts/run_clarification_evaluation.py`) executes 10 canonical clarification scenarios (`CLAR-01`–`CLAR-10`), verifying lexical/temporal/aggregation/scope ambiguity patterns, negative controls on direct answerable and unsupported queries, defensive question reformulation and fallback derivation, option bounds ($n \le 5$), case-insensitive ID uniqueness, and cross-field status invariants. The full benchmark report is available in [Clarification Evaluation Benchmark Report](data/evaluation/clarification_evaluation_report.md).
 
 ### 3. Packaging & Distribution Verification
 - **Verified Wheel Smoke Test**: The distribution orchestration script (`python scripts/build_distribution.py`) compiles the React frontend into `frontend/dist/`, stages assets into `src/query_pilot/agent/static/`, and builds `dist/query_pilot-0.1.0-py3-none-any.whl`. When rebuilding packages after frontend modifications, use `python scripts/build_distribution.py --rebuild-frontend`. Wheel asset serving has been verified using `pip install --no-deps` in an environment where runtime dependencies were already satisfied.
@@ -304,6 +305,8 @@ QueryPilot is currently authorized strictly as a **Controlled Preview** (for loc
 - [Architecture & Decoupled Local Agent Specification](docs/architecture.md)
 - [API Reference (Legacy Prototype)](docs/api.md)
 - [Deployment Guide (Legacy Render Prototype)](docs/deployment.md)
-- [Evaluation Benchmark Harness](data/evaluation/README.md)
+- [Evaluation Framework Specification](docs/evaluation.md)
+- [Evaluation Benchmark Dataset Documentation](data/evaluation/README.md)
 - [Multi-Turn Evaluation Benchmark Report](data/evaluation/multi_turn_evaluation_report.md)
-
+- [Clarification Evaluation Benchmark Report](data/evaluation/clarification_evaluation_report.md)
+- [Explanation Evaluation Benchmark Report](data/evaluation/explanation_evaluation_report.md)

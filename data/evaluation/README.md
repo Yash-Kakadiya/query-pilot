@@ -163,6 +163,48 @@ The runner executes all 12 scenarios and generates two persistent evaluation art
 
 ---
 
+## Deterministic Clarification Benchmark (Milestone B13-EVAL3)
+
+The clarification evaluation harness ([`tests/eval_clarification.py`](../../tests/eval_clarification.py)) provides a 100% offline, reproducible benchmark for QueryPilot's structured clarification contracts, option validation boundaries, and resolution workflows ([`src/query_pilot/sql/generation.py`](../../src/query_pilot/sql/generation.py), [`src/query_pilot/api/models.py`](../../src/query_pilot/api/models.py), [`frontend/src/services/sqlGeneration.ts`](../../frontend/src/services/sqlGeneration.ts)).
+
+### Benchmark Invocation
+
+Run the evaluation benchmark directly via the standalone CLI runner or the pytest test suite:
+
+```powershell
+# Run the standalone CLI evaluation runner
+python scripts/run_clarification_evaluation.py
+
+# Or run the automated test suite
+pytest -o pythonpath=. -v tests/eval_clarification.py
+```
+
+The runner executes all 10 scenarios and generates two persistent evaluation artifacts:
+- **JSON Evidence Artifact**: [`data/evaluation/clarification_evaluation.json`](clarification_evaluation.json) — Structured scenario results, evidence payloads, and dynamic metrics.
+- **Auditable Markdown Report**: [`data/evaluation/clarification_evaluation_report.md`](clarification_evaluation_report.md) — Comprehensive scenario breakdown, production components exercised, and methodological disclosures.
+
+### Scenario Distribution & System Boundaries (10 Scenarios)
+
+| Scenario ID | Category | System Boundary | Objective & Verified Invariant |
+|---|---|---|---|
+| **CLAR-01** | `lexical_ambiguity` | Production Generation Contract | Ambiguous entity ("senior") produces `status="clarification_needed"` with 2 structured options. |
+| **CLAR-02** | `temporal_ambiguity` | Production Generation Contract | Ambiguous timeframe ("recent enrollments") adheres to `ClarificationOption` schema with temporal options. |
+| **CLAR-03** | `aggregation_ambiguity` | Production Generation Contract | Ambiguous aggregation ("average student score") maps to raw exam mean vs student GPA mean with null SQL. |
+| **CLAR-04** | `scope_filter_ambiguity` | Production API v1 Contract | Scope filter ambiguity ("faculties in Mathematics") preserved in `GenerateSQLResponse`. |
+| **CLAR-05** | `direct_answerable_control` | Production Generation Contract | Negative control on `Q001`: returns direct candidate SQL verified by `SQLValidator` and zero clarification options. |
+| **CLAR-06** | `explicit_unsupported_control` | Production Generation Contract | Negative control on out-of-scope `Q024`: returns `status="unsupported"` with reason and zero clarification options. |
+| **CLAR-07** | `option_resolution_reformulation` | Reference Reformulation Workflow | Selecting option with `suggested_question` derives clarified question and produces valid SQL without string concatenation drift. |
+| **CLAR-08** | `fallback_resolution` | Reference Reformulation Workflow | Selecting option with `suggested_question=None` defensively preserves original user question intact. |
+| **CLAR-09** | `option_bounds_validation` | Production Validation Invariants | Enforces `MAX_CLARIFICATION_OPTIONS = 5` and rejects empty option IDs and descriptions. |
+| **CLAR-10** | `id_uniqueness_and_status_invariants` | Production Validation Invariants | Enforces case-insensitive option ID uniqueness and cross-field status constraints. |
+
+### Methodological Scope & Limitations Disclosure
+
+1. **Deterministic Contract Verification**: Proves that Pydantic models, AST validators, option bounds, and client reformulation helpers enforce security, bounds, and schema invariants without error.
+2. **Offline Fixtures vs. Live Ambiguity Recognition**: Evaluates mechanical contracts offline with zero network calls or credentials; does not measure live LLM natural-language ambiguity recognition sensitivity.
+
+---
+
 ## Dataset Versioning and Historical Benchmark Compatibility
 
 - **Dataset Evolution**: The baseline question suite originally contained 32 cases (`Q001`–`Q032`). The active suite was expanded to 34 cases with the addition of `C001` and `C002`.

@@ -1,0 +1,303 @@
+{
+  "metadata": {
+    "benchmark": "QueryPilot Deterministic Clarification Evaluation",
+    "task_version": "B13-EVAL3",
+    "git_commit": "881d97f",
+    "timestamp_utc": "2026-10-27T04:19:26.745118+00:00",
+    "environment": "100% Offline (Deterministic Models & Mocked Database Dependencies)",
+    "total_scenarios": 10,
+    "target_contracts": [
+      "src/query_pilot/sql/generation.py (ClarificationOption, SQLGenerationResponse)",
+      "src/query_pilot/api/models.py (GenerateSQLResponse)",
+      "frontend/src/services/sqlGeneration.ts (deriveClarifiedQuestion)",
+      "src/query_pilot/sql/validator.py (SQLValidator)"
+    ]
+  },
+  "metrics": {
+    "total_scenarios": 10,
+    "passed_scenarios": 10,
+    "failed_scenarios": 0,
+    "pass_rate": 1.0,
+    "ambiguity_types_verified": 4,
+    "negative_controls_verified": 2,
+    "resolution_workflows_verified": 2,
+    "validation_invariants_verified": 2,
+    "category_counts": {
+      "lexical_ambiguity": 1,
+      "temporal_ambiguity": 1,
+      "aggregation_ambiguity": 1,
+      "scope_filter_ambiguity": 1,
+      "direct_answerable_control": 1,
+      "explicit_unsupported_control": 1,
+      "option_resolution_reformulation": 1,
+      "fallback_resolution": 1,
+      "option_bounds_validation": 1,
+      "id_uniqueness_and_status_invariants": 1
+    },
+    "boundary_counts": {
+      "production_generation_contract": 5,
+      "production_api_v1_contract": 1,
+      "reference_reformulation_workflow": 2,
+      "production_validation_invariants": 2
+    }
+  },
+  "scenario_results": [
+    {
+      "scenario_id": "CLAR-01",
+      "name": "Lexical Ambiguity (Domain Entities)",
+      "category": "lexical_ambiguity",
+      "system_boundary": "production_generation_contract",
+      "passed": true,
+      "production_components": [
+        "SQLGenerationResponse",
+        "GenerateSQLResponse",
+        "ClarificationOption"
+      ],
+      "assertion_details": [
+        "SQLGenerationResponse accepted status='clarification_needed' with null SQL",
+        "clarification_options contains exactly 2 structured options",
+        "Each option has non-empty option_id, description, and suggested_question",
+        "GenerateSQLResponse accepted status='clarification_needed' with preserved options",
+        "GenerateSQLResponse execution_disclaimer is 'Candidate SQL is unexecuted.' and is_executed=False"
+      ],
+      "evidence_data": {
+        "prompt": "Show performance for senior students.",
+        "option_ids": [
+          "senior_cohort",
+          "senior_marks"
+        ],
+        "status": "clarification_needed",
+        "api_status": "clarification_needed"
+      },
+      "failure_reason": null,
+      "limitation_note": "Deterministic contract and workflow verification only. Does not measure live LLM natural-language ambiguity sensitivity."
+    },
+    {
+      "scenario_id": "CLAR-02",
+      "name": "Temporal Ambiguity (Time Windows)",
+      "category": "temporal_ambiguity",
+      "system_boundary": "production_generation_contract",
+      "passed": true,
+      "production_components": [
+        "SQLGenerationResponse",
+        "ClarificationOption",
+        "validate_clarification_options"
+      ],
+      "assertion_details": [
+        "Status is strictly CLARIFICATION_NEEDED",
+        "Options adhere to ClarificationOption schema with temporal interpretations",
+        "Benchmark policy bound satisfied (2 options present)"
+      ],
+      "evidence_data": {
+        "prompt": "List recent enrollments.",
+        "option_ids": [
+          "current_semester",
+          "past_30_days"
+        ],
+        "clarification_prompt": "Please clarify if 'recent' refers to the current academic semester or the past 30 calendar days."
+      },
+      "failure_reason": null,
+      "limitation_note": "Deterministic contract and workflow verification only. Does not measure live LLM natural-language ambiguity sensitivity."
+    },
+    {
+      "scenario_id": "CLAR-03",
+      "name": "Aggregation Ambiguity (Score vs GPA Mean)",
+      "category": "aggregation_ambiguity",
+      "system_boundary": "production_generation_contract",
+      "passed": true,
+      "production_components": [
+        "SQLGenerationResponse",
+        "ClarificationOption"
+      ],
+      "assertion_details": [
+        "Status is CLARIFICATION_NEEDED with null candidate SQL",
+        "Aggregation options cleanly distinguish row-level average from student-level average",
+        "Both options supply distinct non-empty suggested_question reformulations"
+      ],
+      "evidence_data": {
+        "prompt": "What is the average student score in Computer Engineering?",
+        "options_count": 2
+      },
+      "failure_reason": null,
+      "limitation_note": "Deterministic contract and workflow verification only. Does not measure live LLM natural-language ambiguity sensitivity."
+    },
+    {
+      "scenario_id": "CLAR-04",
+      "name": "Scope / Filter Ambiguity (Active vs All Registered)",
+      "category": "scope_filter_ambiguity",
+      "system_boundary": "production_api_v1_contract",
+      "passed": true,
+      "production_components": [
+        "GenerateSQLResponse",
+        "ClarificationOption",
+        "validate_clarification_options"
+      ],
+      "assertion_details": [
+        "Scope filter options validated by validate_clarification_options",
+        "GenerateSQLResponse preserves clarification_options without corruption",
+        "status is CLARIFICATION_NEEDED and candidate_sql is strictly None"
+      ],
+      "evidence_data": {
+        "prompt": "Count faculties in Mathematics.",
+        "option_ids": [
+          "active_teaching_only",
+          "all_registered_payroll"
+        ]
+      },
+      "failure_reason": null,
+      "limitation_note": "Deterministic contract and workflow verification only. Does not measure live LLM natural-language ambiguity sensitivity."
+    },
+    {
+      "scenario_id": "CLAR-05",
+      "name": "Non-Ambiguous Negative Control (Answerable Query)",
+      "category": "direct_answerable_control",
+      "system_boundary": "production_generation_contract",
+      "passed": true,
+      "production_components": [
+        "SQLGenerationResponse",
+        "GenerateSQLResponse",
+        "SQLValidator"
+      ],
+      "assertion_details": [
+        "Status is ANSWERABLE (GENERATED in API v1)",
+        "candidate_sql is non-empty and read-only",
+        "clarification_prompt is None and clarification_options is empty list",
+        "SQLValidator allowed candidate SQL (allowed=True)"
+      ],
+      "evidence_data": {
+        "prompt": "List all academic departments with their code and name ordered by department code.",
+        "sql": "SELECT Code, Name FROM Departments ORDER BY Code ASC;",
+        "validator_allowed": true
+      },
+      "failure_reason": null,
+      "limitation_note": "Deterministic contract and workflow verification only. Does not measure live LLM natural-language ambiguity sensitivity."
+    },
+    {
+      "scenario_id": "CLAR-06",
+      "name": "Non-Ambiguous Negative Control (Unsupported Query)",
+      "category": "explicit_unsupported_control",
+      "system_boundary": "production_generation_contract",
+      "passed": true,
+      "production_components": [
+        "SQLGenerationResponse",
+        "GenerateSQLResponse"
+      ],
+      "assertion_details": [
+        "Status is UNSUPPORTED for out-of-scope query",
+        "candidate_sql is strictly None",
+        "clarification_prompt is None and clarification_options is empty list",
+        "unsupported_reason is populated with clear domain boundary explanation"
+      ],
+      "evidence_data": {
+        "prompt": "What are the hostel room fees for sophomore students?",
+        "unsupported_reason": "The database does not contain information about hostel facilities or room fee structures."
+      },
+      "failure_reason": null,
+      "limitation_note": "Deterministic contract and workflow verification only. Does not measure live LLM natural-language ambiguity sensitivity."
+    },
+    {
+      "scenario_id": "CLAR-07",
+      "name": "Option Resolution & Reformulation Workflow",
+      "category": "option_resolution_reformulation",
+      "system_boundary": "reference_reformulation_workflow",
+      "passed": true,
+      "production_components": [
+        "derive_clarified_question",
+        "SQLValidator",
+        "ClarificationOption"
+      ],
+      "assertion_details": [
+        "derive_clarified_question adopted non-empty suggested_question",
+        "Derived question matches expected: 'Show average test scores for students in Semester 7 or 8.'",
+        "Reformulation does NOT cumulatively append option description",
+        "Resolved SQL passes SQLValidator AST checks (allowed=True)"
+      ],
+      "evidence_data": {
+        "base_question": "Show performance for senior students.",
+        "selected_option_id": "senior_cohort",
+        "reformulated_question": "Show average test scores for students in Semester 7 or 8.",
+        "resolved_sql": "SELECT s.DepartmentId, AVG(m.Score) AS AvgScore FROM Students s JOIN Marks m ON s.StudentId = m.StudentId WHERE s.Semester IN (7, 8) GROUP BY s.DepartmentId;",
+        "validator_allowed": true
+      },
+      "failure_reason": null,
+      "limitation_note": "Deterministic contract and workflow verification only. Does not measure live LLM natural-language ambiguity sensitivity."
+    },
+    {
+      "scenario_id": "CLAR-08",
+      "name": "Fallback Resolution on Null / Empty Suggested Question",
+      "category": "fallback_resolution",
+      "system_boundary": "reference_reformulation_workflow",
+      "passed": true,
+      "production_components": [
+        "derive_clarified_question",
+        "ClarificationOption"
+      ],
+      "assertion_details": [
+        "ClarificationOption validator normalizes whitespace suggested_question to None",
+        "Fallback derivation preserves original question intact when suggested_question is None",
+        "Fallback derivation does NOT append option description or invent text"
+      ],
+      "evidence_data": {
+        "base_question": "List faculty contact details.",
+        "fallback_null_result": "List faculty contact details.",
+        "fallback_empty_result": "List faculty contact details."
+      },
+      "failure_reason": null,
+      "limitation_note": "Deterministic contract and workflow verification only. Does not measure live LLM natural-language ambiguity sensitivity."
+    },
+    {
+      "scenario_id": "CLAR-09",
+      "name": "Option Bounds & Non-Empty Fields Enforcement",
+      "category": "option_bounds_validation",
+      "system_boundary": "production_validation_invariants",
+      "passed": true,
+      "production_components": [
+        "validate_clarification_options",
+        "ClarificationOption",
+        "SQLGenerationResponse"
+      ],
+      "assertion_details": [
+        "validate_clarification_options strictly rejects > 5 options",
+        "ClarificationOption rejects empty or whitespace-only option_id",
+        "ClarificationOption rejects empty or whitespace-only description",
+        "SQLGenerationResponse rejects CLARIFICATION_NEEDED when sql is not None"
+      ],
+      "evidence_data": {
+        "max_options_bound": 5,
+        "rejected_counts": 6
+      },
+      "failure_reason": null,
+      "limitation_note": "Deterministic contract and workflow verification only. Does not measure live LLM natural-language ambiguity sensitivity."
+    },
+    {
+      "scenario_id": "CLAR-10",
+      "name": "ID Uniqueness & Status Invariant Constraints",
+      "category": "id_uniqueness_and_status_invariants",
+      "system_boundary": "production_validation_invariants",
+      "passed": true,
+      "production_components": [
+        "validate_clarification_options",
+        "SQLGenerationResponse",
+        "GenerateSQLResponse"
+      ],
+      "assertion_details": [
+        "validate_clarification_options strictly enforces case-insensitive option_id uniqueness",
+        "SQLGenerationResponse rejects ANSWERABLE status when clarification_options is present",
+        "SQLGenerationResponse rejects UNSUPPORTED status when clarification_options is present",
+        "SQLGenerationResponse rejects CLARIFICATION_NEEDED when prompt and explanation are both absent",
+        "GenerateSQLResponse rejects candidate_sql under CLARIFICATION_NEEDED status"
+      ],
+      "evidence_data": {
+        "checked_invariants": [
+          "case_insensitive_id_uniqueness",
+          "answerable_with_options_forbidden",
+          "unsupported_with_options_forbidden",
+          "clarification_missing_prompt_forbidden",
+          "generate_sql_response_candidate_sql_forbidden"
+        ]
+      },
+      "failure_reason": null,
+      "limitation_note": "Deterministic contract and workflow verification only. Does not measure live LLM natural-language ambiguity sensitivity."
+    }
+  ]
+}
