@@ -294,12 +294,19 @@ export async function generateSql(
   const validatedSchemaContext = projectToModelFacingSchema(request.schema_context)
 
   const effectiveRequestId = request.request_id?.trim() || options?.requestId?.trim()
+  const normalizedDiagnosticFeedback =
+    typeof request.diagnostic_feedback === 'string' && request.diagnostic_feedback.trim()
+      ? request.diagnostic_feedback.trim().slice(0, 500)
+      : undefined
 
   const payload: GenerateSQLRequest = {
     question: trimmedQuestion,
     schema_context: validatedSchemaContext,
     ...(request.conversation_context && request.conversation_context.length > 0
       ? { conversation_context: request.conversation_context }
+      : {}),
+    ...(normalizedDiagnosticFeedback
+      ? { diagnostic_feedback: normalizedDiagnosticFeedback }
       : {}),
     ...(effectiveRequestId ? { request_id: effectiveRequestId } : {}),
   }

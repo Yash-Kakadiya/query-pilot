@@ -793,6 +793,11 @@ class GenerateSQLRequest(BaseModel):
         max_length=128,
         description="Non-secret client correlation tracking ID.",
     )
+    diagnostic_feedback: Optional[str] = Field(
+        default=None,
+        max_length=500,
+        description="Optional sanitized execution error feedback to guide query repair (max 500 characters).",
+    )
 
     @field_validator("question")
     @classmethod
@@ -816,6 +821,20 @@ class GenerateSQLRequest(BaseModel):
         if len(v) > MAX_CONVERSATION_TURNS:
             raise ValueError(f"conversation_context cannot exceed {MAX_CONVERSATION_TURNS} turns, received {len(v)}.")
         return v
+
+    @field_validator("diagnostic_feedback")
+    @classmethod
+    def validate_diagnostic_feedback(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            raise TypeError("diagnostic_feedback must be a string.")
+        cleaned = v.strip()
+        if not cleaned:
+            return None
+        if len(cleaned) > 500:
+            raise ValueError(f"diagnostic_feedback exceeds maximum length of 500 characters ({len(cleaned)} chars).")
+        return cleaned
 
 
 class GenerateSQLResponse(BaseModel):

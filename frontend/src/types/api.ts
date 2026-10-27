@@ -377,6 +377,7 @@ export interface GenerateSQLRequest {
   schema_context: ModelFacingSchemaContext
   conversation_context?: ConversationTurnContext[] | null
   request_id?: string | null
+  diagnostic_feedback?: string | null
 }
 
 export interface GenerateSQLResponse {

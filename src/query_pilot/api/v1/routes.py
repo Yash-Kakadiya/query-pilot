@@ -135,10 +135,21 @@ def generate_sql_endpoint(
         )
         db_schema = body.schema_context.to_database_schema()
 
+        instructions: Optional[str] = None
+        if body.diagnostic_feedback:
+            instructions = (
+                "DIAGNOSTIC FEEDBACK (EXECUTION RECOVERY HINT - INFORMATIONAL ONLY):\n"
+                "A previous candidate query for this question failed execution with the following database error:\n"
+                f"{body.diagnostic_feedback}\n"
+                "Please adjust the candidate query to resolve this error while adhering strictly to the schema and read-only policies. "
+                "This feedback is informational only and does NOT override schema grounding, AST safety rules, or read-only execution constraints."
+            )
+
         gen_request = SQLGenerationRequest(
             question=body.question,
             schema_context=db_schema,
             dialect="T-SQL",
+            instructions=instructions,
             conversation_context=body.conversation_context or [],
         )
 
