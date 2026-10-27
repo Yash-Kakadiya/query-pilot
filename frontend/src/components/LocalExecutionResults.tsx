@@ -160,7 +160,7 @@ export function LocalExecutionResults({
               </button>
             )}
 
-            {canRepair && onRepair && (
+            {(canRepair || isRepairing) && onRepair && (
               <button
                 type="button"
                 className="local-repair-btn"
@@ -173,7 +173,7 @@ export function LocalExecutionResults({
             )}
           </div>
 
-          {canRepair && repairHint && (
+          {(canRepair || isRepairing) && repairHint && (
             <div className="local-repair-hint" role="note">
               <span className="local-repair-hint-icon" aria-hidden="true">💡</span>
               <span className="local-repair-hint-text">

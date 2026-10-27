@@ -99,6 +99,10 @@ class MockCursorResult:
 class MockProfileConnectionFactory(ProfileConnectionFactory):
     """Deterministic connection factory for offline browser testing."""
 
+    def __init__(self, store: ProfileStore):
+        super().__init__(store=store)
+        self.executed_statements: List[str] = []
+
     def create_engine(self, profile_id: str, **kwargs) -> Engine:
         profile = self._store.get_profile(profile_id)
         mock_engine = MagicMock(spec=Engine)
@@ -133,6 +137,7 @@ class MockProfileConnectionFactory(ProfileConnectionFactory):
 
         def execute_statement(statement, *args, **kwargs):
             sql_str = str(statement).strip()
+            self.executed_statements.append(sql_str)
 
             # 1. DB context verification or scalar DB name probe
             if "DB_NAME()" in sql_str.upper():
@@ -166,6 +171,13 @@ class MockProfileConnectionFactory(ProfileConnectionFactory):
 
             # 4. Deterministic query execution results based on referenced table
             upper_sql = sql_str.upper()
+            if "BADCOLUMN" in upper_sql:
+                raise OperationalError(
+                    sql_str,
+                    {},
+                    Exception("42S22: [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]Invalid column name 'BadColumn'. (207)"),
+                )
+
             if "ORDERS" in upper_sql:
                 cols = ["OrderID", "CustomerID", "OrderDate", "TotalAmount"]
                 rows = [
@@ -205,17 +217,23 @@ class MockProfileConnectionFactory(ProfileConnectionFactory):
 
 def build_sample_schema(database_name: str) -> DatabaseSchema:
     """Build a deterministic model-facing schema for testing schema loading."""
+    customer_cols = [
+        ColumnMetadata(name="CustomerID", data_type="int", nullable=False, primary_key=True),
+        ColumnMetadata(name="CompanyName", data_type="nvarchar(100)", nullable=False),
+        ColumnMetadata(name="City", data_type="nvarchar(50)", nullable=True),
+    ]
+    if "recovery" in database_name.lower() or "repair" in database_name.lower():
+        customer_cols.append(
+            ColumnMetadata(name="BadColumn", data_type="nvarchar(50)", nullable=True)
+        )
+
     return DatabaseSchema(
         database_name=database_name,
         tables=[
             TableMetadata(
                 schema_name="dbo",
                 table_name="Customers",
-                columns=[
-                    ColumnMetadata(name="CustomerID", data_type="int", nullable=False, primary_key=True),
-                    ColumnMetadata(name="CompanyName", data_type="nvarchar(100)", nullable=False),
-                    ColumnMetadata(name="City", data_type="nvarchar(50)", nullable=True),
-                ],
+                columns=customer_cols,
             ),
             TableMetadata(
                 schema_name="dbo",
@@ -265,6 +283,7 @@ class BrowserTestServer:
 
         self.audit_log: List[AuditRecord] = []
         self.received_generate_requests: List[GenerateSQLRequest] = []
+        self.repair_gate: Optional[threading.Event] = None
         self._server: Optional[uvicorn.Server] = None
         self._thread: Optional[threading.Thread] = None
 
@@ -320,7 +339,23 @@ class BrowserTestServer:
                 q_lower = gen_req.question.lower()
 
                 # Controlled generation-failure triggers based on question text
-                if "unsupported" in q_lower:
+                if gen_req.diagnostic_feedback:
+                    if hasattr(self, "repair_gate") and self.repair_gate is not None:
+                        self.repair_gate.wait(timeout=5.0)
+                    candidate_sql = "SELECT CustomerID, CompanyName, City FROM dbo.Customers WHERE City = 'Seattle';"
+                    resp = GenerateSQLResponse(
+                        candidate_sql=candidate_sql,
+                        status=GenerationStatus.GENERATED,
+                        request_id=req_id,
+                    )
+                elif "repair" in q_lower or "recovery" in q_lower:
+                    candidate_sql = "SELECT CustomerID, BadColumn, City FROM dbo.Customers WHERE City = 'Seattle';"
+                    resp = GenerateSQLResponse(
+                        candidate_sql=candidate_sql,
+                        status=GenerationStatus.GENERATED,
+                        request_id=req_id,
+                    )
+                elif "unsupported" in q_lower:
                     resp = GenerateSQLResponse(
                         status=GenerationStatus.UNSUPPORTED,
                         unsupported_reason="The requested business question is not supported by the available database schema.",
@@ -430,6 +465,10 @@ class BrowserTestServer:
     @property
     def bootstrap_token(self) -> str:
         return self._bootstrap_token
+
+    @property
+    def executed_statements(self) -> List[str]:
+        return self.factory.executed_statements
 
     def start(self, timeout_seconds: float = 5.0) -> None:
         """Start server in a background daemon thread and wait for socket readiness."""
