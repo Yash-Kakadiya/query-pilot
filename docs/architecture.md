@@ -842,22 +842,24 @@ All contracts enforce `model_config = {"extra": "forbid"}` to reject unrecognize
      - *Session Logout*: Session termination or invalidation wipes conversation context.
   5. **Decoupled Execution Boundary**: The generation service (`querypilot-api`) never connects to databases or executes queries. The local agent displays candidate SQL for user review, and execution occurs only when the user explicitly clicks **Execute Query on Database**.
 
-- **Response Model (`GenerateSQLResponse`, proposed):**
+- **Response Model (`GenerateSQLResponse`, implemented in `src/query_pilot/api/models.py`):**
 
 | Field Name | Type | Purpose | Trust Level | Sensitivity | Contains DB Values? |
 | :--- | :--- | :--- | :---: | :---: | :---: |
 | `candidate_sql` | `Optional[str]` | Generated read-only T-SQL candidate. Present ONLY when `status == "generated"`. | Machine-Generated Untrusted | Medium (Query Text) | No |
 | `status` | `GenerationStatus` | `"generated"` \| `"clarification_needed"` \| `"unsupported"` \| `"generation_failed"` | System Output | Low | No |
 | `clarification_prompt`| `Optional[str]` | Clarification prompt. Present ONLY when `status == "clarification_needed"`. | System Output | Low | No |
+| `clarification_options`| `List[ClarificationOption]` | Structured candidate disambiguation choices. Present ONLY when `status == "clarification_needed"` (empty list for other statuses). | System Output | Low | No |
 | `unsupported_reason` | `Optional[str]` | Safe explanation of refusal. Present ONLY when `status == "unsupported"`. | System Output | Low | No |
 | `execution_disclaimer`| `str` | Fixed disclaimer: `"Candidate SQL is unexecuted."` | System Constant | Low | No |
+| `is_executed` | `Literal[False]` | Fixed literal `False` confirming the candidate SQL has not been executed. | System Constant | Low | No |
 | `request_id` | `str` | Echoed correlation tracking ID. | System Output | Low | No |
 
 - **Generation Cross-Field Validation Rules:**
-  - If `status == "generated"`, `candidate_sql` must be a non-empty string, and `clarification_prompt` and `unsupported_reason` must be `None`.
-  - If `status == "clarification_needed"`, `clarification_prompt` must be a non-empty string, and `candidate_sql` must be `None`.
-  - If `status == "unsupported"`, `unsupported_reason` must be a non-empty string, and `candidate_sql` must be `None`.
-  - If `status == "generation_failed"`, `candidate_sql` must be `None`.
+  - If `status == "generated"`, `candidate_sql` must be a non-empty string, and `clarification_prompt`, `unsupported_reason`, and `clarification_options` must be `None` or empty.
+  - If `status == "clarification_needed"`, `clarification_prompt` must be a non-empty string, `candidate_sql` must be `None`, and `clarification_options` may contain at most 5 unique options.
+  - If `status == "unsupported"`, `unsupported_reason` must be a non-empty string, and `candidate_sql` and `clarification_options` must be `None` or empty.
+  - If `status == "generation_failed"`, `candidate_sql` and `clarification_options` must be `None` or empty.
 
 #### 2. Local-Agent Profile & Schema Discovery Contracts (Implemented)
 - **Routes:** `GET /agent/v1/profiles`, `GET /agent/v1/profiles/{profile_id}/schema`

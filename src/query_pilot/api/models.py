@@ -23,6 +23,7 @@ from query_pilot.sql.generation import (
     MAX_CONVERSATION_TURNS,
     ClarificationOption,
     ConversationTurnContext,
+    validate_clarification_options,
 )
 
 
@@ -835,6 +836,10 @@ class GenerateSQLResponse(BaseModel):
         default=None,
         description="Clarification prompt. Present ONLY when status == 'clarification_needed'.",
     )
+    clarification_options: List[ClarificationOption] = Field(
+        default_factory=list,
+        description="Structured candidate interpretation options for clarification.",
+    )
     unsupported_reason: Optional[str] = Field(
         default=None,
         description="Safe explanation of refusal. Present ONLY when status == 'unsupported'.",
@@ -849,6 +854,21 @@ class GenerateSQLResponse(BaseModel):
     )
     request_id: str = Field(..., description="Correlated request ID.")
 
+    @field_validator("clarification_options", mode="before")
+    @classmethod
+    def normalize_clarification_options(cls, v: Any) -> Any:
+        if v is None:
+            return []
+        return v
+
+    @field_validator("clarification_options")
+    @classmethod
+    def validate_options_bound(
+        cls, v: List[ClarificationOption]
+    ) -> List[ClarificationOption]:
+        """Ensure clarification_options is bounded to MAX_CLARIFICATION_OPTIONS with unique IDs."""
+        return validate_clarification_options(v)
+
     @model_validator(mode="after")
     def validate_generation_invariants(self) -> "GenerateSQLResponse":
         if self.status == GenerationStatus.GENERATED:
@@ -858,6 +878,8 @@ class GenerateSQLResponse(BaseModel):
                 raise ValueError("Generated status must not contain clarification_prompt.")
             if self.unsupported_reason is not None:
                 raise ValueError("Generated status must not contain unsupported_reason.")
+            if self.clarification_options:
+                raise ValueError("Generated status must not contain clarification_options.")
         elif self.status == GenerationStatus.CLARIFICATION_NEEDED:
             if self.candidate_sql is not None:
                 raise ValueError("Clarification status must not contain candidate_sql.")
@@ -872,9 +894,13 @@ class GenerateSQLResponse(BaseModel):
                 raise ValueError("Unsupported status requires a non-empty unsupported_reason.")
             if self.clarification_prompt is not None:
                 raise ValueError("Unsupported status must not contain clarification_prompt.")
+            if self.clarification_options:
+                raise ValueError("Unsupported status must not contain clarification_options.")
         elif self.status == GenerationStatus.GENERATION_FAILED:
             if self.candidate_sql is not None:
                 raise ValueError("Generation failed status must not contain candidate_sql.")
+            if self.clarification_options:
+                raise ValueError("Generation failed status must not contain clarification_options.")
         return self
 
 

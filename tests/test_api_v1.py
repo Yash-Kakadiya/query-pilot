@@ -27,6 +27,7 @@ from pydantic import ValidationError
 
 from query_pilot.api.app import create_app
 from query_pilot.api.models import (
+    ClarificationOption,
     ColumnSchemaContext,
     ForeignKeySchemaContext,
     GenerateSQLRequest,
@@ -193,8 +194,58 @@ def test_generate_sql_clarification_invariant(test_client, sample_schema_dict):
     assert data["status"] == "clarification_needed"
     assert data["candidate_sql"] is None
     assert data["clarification_prompt"] == "Do you want active departments or all archived departments?"
+    assert data["clarification_options"] == []
     assert data["unsupported_reason"] is None
     assert data["execution_disclaimer"] == "Candidate SQL is unexecuted."
+
+
+def test_generate_sql_clarification_with_options_endpoint(test_client, sample_schema_dict):
+    """Verify endpoint preserves multiple clarification options, option_ids, descriptions, and optional suggested_questions."""
+    client, _, mock_gen, _ = test_client
+    mock_gen.generate.return_value = SQLGenerationResponse(
+        status=SQLGenerationStatus.CLARIFICATION_NEEDED,
+        sql=None,
+        clarification_prompt="Which departments would you like to retrieve?",
+        clarification_options=[
+            ClarificationOption(
+                option_id="opt_active",
+                description="Active departments with currently enrolled students",
+                suggested_question="List active departments with enrolled students",
+            ),
+            ClarificationOption(
+                option_id="opt_all",
+                description="All academic departments including archived cohorts",
+                suggested_question=None,
+            ),
+        ],
+    )
+
+    payload = {
+        "question": "Show departments",
+        "schema_context": sample_schema_dict,
+        "request_id": "req-clarify-options-001",
+    }
+    response = client.post("/api/v1/generate-sql", json=payload)
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["status"] == "clarification_needed"
+    assert data["candidate_sql"] is None
+    assert data["clarification_prompt"] == "Which departments would you like to retrieve?"
+    assert data["unsupported_reason"] is None
+    assert data["is_executed"] is False
+    assert data["execution_disclaimer"] == "Candidate SQL is unexecuted."
+    assert data["request_id"] == "req-clarify-options-001"
+
+    options = data["clarification_options"]
+    assert len(options) == 2
+    assert options[0]["option_id"] == "opt_active"
+    assert options[0]["description"] == "Active departments with currently enrolled students"
+    assert options[0]["suggested_question"] == "List active departments with enrolled students"
+
+    assert options[1]["option_id"] == "opt_all"
+    assert options[1]["description"] == "All academic departments including archived cohorts"
+    assert options[1]["suggested_question"] is None
 
 
 def test_generate_sql_unsupported_invariant(test_client, sample_schema_dict):
@@ -278,6 +329,71 @@ def test_response_model_cross_field_invariants_direct():
             clarification_prompt="Which one?",
             request_id="req-test",
         )
+
+    # generated with clarification_options -> rejects
+    with pytest.raises(ValidationError):
+        GenerateSQLResponse(
+            status=GenerationStatus.GENERATED,
+            candidate_sql="SELECT 1",
+            clarification_options=[
+                ClarificationOption(option_id="opt1", description="Invalid for generated")
+            ],
+            request_id="req-test",
+        )
+
+    # unsupported with clarification_options -> rejects
+    with pytest.raises(ValidationError):
+        GenerateSQLResponse(
+            status=GenerationStatus.UNSUPPORTED,
+            unsupported_reason="Out of scope",
+            clarification_options=[
+                ClarificationOption(option_id="opt1", description="Invalid for unsupported")
+            ],
+            request_id="req-test",
+        )
+
+    # generation_failed with clarification_options -> rejects
+    with pytest.raises(ValidationError):
+        GenerateSQLResponse(
+            status=GenerationStatus.GENERATION_FAILED,
+            clarification_options=[
+                ClarificationOption(option_id="opt1", description="Invalid for failed")
+            ],
+            request_id="req-test",
+        )
+
+    # clarification_needed with duplicate option_id -> rejects
+    with pytest.raises(ValidationError):
+        GenerateSQLResponse(
+            status=GenerationStatus.CLARIFICATION_NEEDED,
+            clarification_prompt="Which one?",
+            clarification_options=[
+                ClarificationOption(option_id="dup_opt", description="First"),
+                ClarificationOption(option_id="dup_opt", description="Second"),
+            ],
+            request_id="req-test",
+        )
+
+    # clarification_needed exceeding MAX_CLARIFICATION_OPTIONS (5) -> rejects
+    with pytest.raises(ValidationError):
+        GenerateSQLResponse(
+            status=GenerationStatus.CLARIFICATION_NEEDED,
+            clarification_prompt="Which one?",
+            clarification_options=[
+                ClarificationOption(option_id=f"opt_{i}", description=f"Option {i}")
+                for i in range(6)
+            ],
+            request_id="req-test",
+        )
+
+    # extra="forbid" rejects unexpected fields
+    with pytest.raises(ValidationError):
+        GenerateSQLResponse.model_validate({
+            "status": "clarification_needed",
+            "clarification_prompt": "Which one?",
+            "request_id": "req-test",
+            "unrecognized_field": "disallowed",
+        })
 
 
 # ==============================================================================

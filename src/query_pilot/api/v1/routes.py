@@ -205,6 +205,7 @@ def generate_sql_endpoint(
                 candidate_sql=None,
                 status=GenerationStatus.CLARIFICATION_NEEDED,
                 clarification_prompt=prompt_text,
+                clarification_options=gen_response.clarification_options or [],
                 request_id=req_id,
             )
         elif gen_response.status == SQLGenerationStatus.UNSUPPORTED:

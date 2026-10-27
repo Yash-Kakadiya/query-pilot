@@ -55,6 +55,7 @@ Translates a natural-language question and model-facing schema context into a re
 | `candidate_sql` | `string \| null` | Generated read-only T-SQL candidate query. Present only when `status == "generated"`. |
 | `status` | `string` | Generation outcome (`"generated"`, `"clarification_needed"`, `"unsupported"`, `"generation_failed"`). |
 | `clarification_prompt` | `string \| null` | Clarification question when status is `"clarification_needed"`. |
+| `clarification_options` | `array[object]` | Structured candidate interpretation choices (each with `option_id`, `description`, and optional `suggested_question`). Default: `[]`. |
 | `unsupported_reason` | `string \| null` | Refusal explanation when status is `"unsupported"`. |
 | `execution_disclaimer` | `string` | Fixed disclaimer: `"Candidate SQL is unexecuted."` |
 | `is_executed` | `boolean` | Fixed literal `false` confirming the query has **not** been executed. |

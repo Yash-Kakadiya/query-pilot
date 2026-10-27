@@ -3,6 +3,7 @@
 from query_pilot.api.cli import build_parser as build_api_parser, main as api_main, run_api_cli
 from query_pilot.api.models import (
     AnswerGroundingStatus,
+    ClarificationOption,
     ColumnSchemaContext,
     DATA_TYPE_REGEX,
     ForeignKeySchemaContext,
@@ -23,6 +24,7 @@ from query_pilot.api.models import (
 
 __all__ = [
     "AnswerGroundingStatus",
+    "ClarificationOption",
     "ColumnSchemaContext",
     "DATA_TYPE_REGEX",
     "ForeignKeySchemaContext",

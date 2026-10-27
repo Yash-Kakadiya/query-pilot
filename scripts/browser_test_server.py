@@ -52,6 +52,7 @@ from query_pilot.db.profile import (
 )
 from query_pilot.api.models import (
     AnswerGroundingStatus,
+    ClarificationOption,
     GenerateSQLRequest,
     GenerateSQLResponse,
     GenerationStatus,
@@ -326,27 +327,23 @@ class BrowserTestServer:
                         request_id=req_id,
                     )
                 elif "clarification" in q_lower:
-                    resp_dict = {
-                        "candidate_sql": None,
-                        "status": "clarification_needed",
-                        "clarification_prompt": "Please specify whether you want active or all customers.",
-                        "clarification_options": [
-                            {
-                                "option_id": "opt_active",
-                                "description": "Active customers with orders in the last 90 days",
-                                "suggested_question": "Show active customers with recent orders",
-                            },
-                            {
-                                "option_id": "opt_seattle",
-                                "description": "All registered customers located in Seattle",
-                                "suggested_question": None,
-                            },
+                    resp = GenerateSQLResponse(
+                        status=GenerationStatus.CLARIFICATION_NEEDED,
+                        clarification_prompt="Please specify whether you want active or all customers.",
+                        clarification_options=[
+                            ClarificationOption(
+                                option_id="opt_active",
+                                description="Active customers with orders in the last 90 days",
+                                suggested_question="Show active customers with recent orders",
+                            ),
+                            ClarificationOption(
+                                option_id="opt_seattle",
+                                description="All registered customers located in Seattle",
+                                suggested_question=None,
+                            ),
                         ],
-                        "unsupported_reason": None,
-                        "execution_disclaimer": "Candidate SQL is unexecuted.",
-                        "request_id": req_id,
-                    }
-                    return httpx.Response(200, json=resp_dict)
+                        request_id=req_id,
+                    )
                 elif "fail" in q_lower or "error" in q_lower:
                     resp = GenerateSQLResponse(
                         status=GenerationStatus.GENERATION_FAILED,
