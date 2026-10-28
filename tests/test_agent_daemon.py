@@ -645,7 +645,195 @@ def test_logout_destroys_session_and_clears_cookie(agent_test_setup):
 
 
 def test_rotate_token_revokes_all_active_sessions(agent_test_setup):
-    """POST /agent/v1/auth/rotate-token immediately invalidates all active sessions."""
+    """POST /agent/v1/auth/rotate-token authenticated call invalidates all active sessions and provisions replacement."""
+    client = agent_test_setup["client"]
+    token = agent_test_setup["bootstrap_token"]
+    token_manager = agent_test_setup["token_manager"]
+
+    login_resp = client.post(
+        "/agent/v1/auth/bootstrap",
+        headers={"X-QueryPilot-Request": "1"},
+        json={"bootstrap_token": token},
+    )
+    session_id = login_resp.cookies.get(SESSION_COOKIE_NAME)
+    assert session_id is not None
+    assert not token_manager.has_active_token  # Initial token consumed
+
+    # Rotate token with valid session and CSRF header
+    rotate_resp = client.post(
+        "/agent/v1/auth/rotate-token",
+        headers={"X-QueryPilot-Request": "1"},
+        cookies={SESSION_COOKIE_NAME: session_id},
+    )
+    assert rotate_resp.status_code == status.HTTP_200_OK
+    assert rotate_resp.json()["status"] == "token_rotated"
+    assert "All active sessions have been invalidated" in rotate_resp.json()["message"]
+
+    # Cookie is cleared in response
+    set_cookie = rotate_resp.headers.get("set-cookie", "")
+    assert f"{SESSION_COOKIE_NAME}=" in set_cookie
+
+    # Previously active session is invalid
+    resp = client.get("/agent/v1/profiles", cookies={SESSION_COOKIE_NAME: session_id})
+    assert resp.status_code == status.HTTP_401_UNAUTHORIZED
+
+    # Replacement bootstrap token is active and usable to establish a new session
+    assert token_manager.has_active_token
+    with token_manager._lock:
+        new_token = token_manager._token
+    assert new_token is not None and len(new_token) == 64
+
+    # New bootstrap token can be consumed for a fresh session
+    new_login = client.post(
+        "/agent/v1/auth/bootstrap",
+        headers={"X-QueryPilot-Request": "1"},
+        json={"bootstrap_token": new_token},
+    )
+    assert new_login.status_code == status.HTTP_200_OK
+    new_session_id = new_login.cookies.get(SESSION_COOKIE_NAME)
+    assert new_session_id is not None
+    assert new_session_id != session_id
+
+    # New session is active and functional
+    profile_resp = client.get("/agent/v1/profiles", cookies={SESSION_COOKIE_NAME: new_session_id})
+    assert profile_resp.status_code == status.HTTP_200_OK
+
+
+def test_rotate_token_unauthenticated_rejected_and_preserves_sessions(agent_test_setup):
+    """POST /agent/v1/auth/rotate-token without session cookie returns 401 and preserves existing sessions."""
+    client = agent_test_setup["client"]
+    token = agent_test_setup["bootstrap_token"]
+    token_manager = agent_test_setup["token_manager"]
+    session_manager = agent_test_setup["session_manager"]
+
+    login_resp = client.post(
+        "/agent/v1/auth/bootstrap",
+        headers={"X-QueryPilot-Request": "1"},
+        json={"bootstrap_token": token},
+    )
+    session_id = login_resp.cookies.get(SESSION_COOKIE_NAME)
+    assert session_manager.active_session_count() == 1
+
+    # Attempt rotation with no session cookie
+    unauth_client = TestClient(
+        agent_test_setup["app"],
+        base_url="http://127.0.0.1:8001",
+        headers={"Host": "127.0.0.1:8001"},
+    )
+    rotate_resp = unauth_client.post(
+        "/agent/v1/auth/rotate-token",
+        headers={"X-QueryPilot-Request": "1"},
+    )
+    assert rotate_resp.status_code == status.HTTP_401_UNAUTHORIZED
+    assert "Authentication required" in rotate_resp.json().get("detail", "")
+
+    # Existing session must remain valid and operational
+    assert session_manager.active_session_count() == 1
+    resp = client.get("/agent/v1/profiles", cookies={SESSION_COOKIE_NAME: session_id})
+    assert resp.status_code == status.HTTP_200_OK
+
+    # Token manager state unchanged (no replacement token generated)
+    assert not token_manager.has_active_token
+
+
+def test_rotate_token_invalid_or_expired_session_rejected_and_does_not_rotate(agent_test_setup):
+    """POST /agent/v1/auth/rotate-token with invalid or expired cookie returns 401 without rotating."""
+    client = agent_test_setup["client"]
+    token_manager = agent_test_setup["token_manager"]
+
+    # Initial token is active
+    with token_manager._lock:
+        initial_token = token_manager._token
+    assert initial_token is not None
+
+    rotate_resp = client.post(
+        "/agent/v1/auth/rotate-token",
+        headers={"X-QueryPilot-Request": "1"},
+        cookies={SESSION_COOKIE_NAME: "bogus-non-existent-session-id"},
+    )
+    assert rotate_resp.status_code == status.HTTP_401_UNAUTHORIZED
+    assert "Session has expired or is invalid" in rotate_resp.json().get("detail", "")
+
+    # Ensure no token rotation occurred: token manager still holds the original unconsumed token
+    with token_manager._lock:
+        assert token_manager._token == initial_token
+    assert token_manager.has_active_token
+
+
+def test_rotate_token_missing_or_invalid_csrf_header_rejected(agent_test_setup):
+    """POST /agent/v1/auth/rotate-token requires X-QueryPilot-Request: 1 header."""
+    client = agent_test_setup["client"]
+    token = agent_test_setup["bootstrap_token"]
+    session_manager = agent_test_setup["session_manager"]
+
+    login_resp = client.post(
+        "/agent/v1/auth/bootstrap",
+        headers={"X-QueryPilot-Request": "1"},
+        json={"bootstrap_token": token},
+    )
+    session_id = login_resp.cookies.get(SESSION_COOKIE_NAME)
+
+    # 1. Missing header entirely
+    resp_missing = client.post(
+        "/agent/v1/auth/rotate-token",
+        cookies={SESSION_COOKIE_NAME: session_id},
+    )
+    assert resp_missing.status_code == status.HTTP_400_BAD_REQUEST
+    assert resp_missing.json().get("error") == "MISSING_CUSTOM_HEADER"
+
+    # 2. Invalid header value
+    resp_invalid = client.post(
+        "/agent/v1/auth/rotate-token",
+        headers={"X-QueryPilot-Request": "true"},
+        cookies={SESSION_COOKIE_NAME: session_id},
+    )
+    assert resp_invalid.status_code == status.HTTP_400_BAD_REQUEST
+    assert resp_invalid.json().get("error") == "MISSING_CUSTOM_HEADER"
+
+    # Active session remains completely valid
+    assert session_manager.active_session_count() == 1
+    resp = client.get("/agent/v1/profiles", cookies={SESSION_COOKIE_NAME: session_id})
+    assert resp.status_code == status.HTTP_200_OK
+
+
+def test_rotate_token_provisioning_failure_preserves_active_sessions(agent_test_setup, monkeypatch):
+    """If replacement token provisioning fails, active sessions remain valid and 500 is returned."""
+    client = agent_test_setup["client"]
+    token = agent_test_setup["bootstrap_token"]
+    token_manager = agent_test_setup["token_manager"]
+    session_manager = agent_test_setup["session_manager"]
+
+    login_resp = client.post(
+        "/agent/v1/auth/bootstrap",
+        headers={"X-QueryPilot-Request": "1"},
+        json={"bootstrap_token": token},
+    )
+    session_id = login_resp.cookies.get(SESSION_COOKIE_NAME)
+    assert session_manager.active_session_count() == 1
+
+    # Simulate token provisioning failure in token_manager.rotate_token
+    def mock_rotate_failure():
+        raise BootstrapTokenProvisioningError("Simulated disk write failure during token rotation")
+
+    monkeypatch.setattr(token_manager, "rotate_token", mock_rotate_failure)
+
+    # Attempt rotation
+    rotate_resp = client.post(
+        "/agent/v1/auth/rotate-token",
+        headers={"X-QueryPilot-Request": "1"},
+        cookies={SESSION_COOKIE_NAME: session_id},
+    )
+    assert rotate_resp.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    assert "Failed to provision replacement bootstrap token" in rotate_resp.json().get("detail", "")
+
+    # Active sessions MUST remain valid and active
+    assert session_manager.active_session_count() == 1
+    profile_resp = client.get("/agent/v1/profiles", cookies={SESSION_COOKIE_NAME: session_id})
+    assert profile_resp.status_code == status.HTTP_200_OK
+
+
+def test_rotate_token_response_contains_zero_sensitive_material(agent_test_setup):
+    """POST /agent/v1/auth/rotate-token response never leaks token or secret values."""
     client = agent_test_setup["client"]
     token = agent_test_setup["bootstrap_token"]
 
@@ -656,17 +844,24 @@ def test_rotate_token_revokes_all_active_sessions(agent_test_setup):
     )
     session_id = login_resp.cookies.get(SESSION_COOKIE_NAME)
 
-    # Rotate token
     rotate_resp = client.post(
         "/agent/v1/auth/rotate-token",
         headers={"X-QueryPilot-Request": "1"},
+        cookies={SESSION_COOKIE_NAME: session_id},
     )
     assert rotate_resp.status_code == status.HTTP_200_OK
-    assert rotate_resp.json()["status"] == "token_rotated"
+    body = rotate_resp.json()
+    assert set(body.keys()) == {"status", "message"}
+    assert body["status"] == "token_rotated"
 
-    # Previously active session is invalid
-    resp = client.get("/agent/v1/profiles", cookies={SESSION_COOKIE_NAME: session_id})
-    assert resp.status_code == status.HTTP_401_UNAUTHORIZED
+    # Confirm no token material anywhere in response body or headers
+    raw_body = rotate_resp.text.lower()
+    for forbidden in ["bootstrap_token", "secret", "session_id", "password"]:
+        assert forbidden not in raw_body
+        for h_key, h_val in rotate_resp.headers.items():
+            if h_key.lower() == "set-cookie":
+                continue
+            assert forbidden not in h_val.lower()
 
 
 # ==============================================================================

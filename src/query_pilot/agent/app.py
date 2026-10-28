@@ -316,11 +316,26 @@ def create_agent_app(
     @app.post(
         "/agent/v1/auth/rotate-token",
         response_model=RotateTokenResponse,
+        responses={
+            401: {"model": AgentErrorResponse},
+            500: {"model": AgentErrorResponse},
+        },
     )
-    def rotate_token(response: Response):
-        """Invalidate all active sessions and generate a fresh bootstrap token."""
+    def rotate_token(
+        response: Response,
+        session: Session = Depends(get_current_session),
+    ):
+        """Authenticate active session, provision replacement bootstrap token, and invalidate all active sessions."""
+        try:
+            resolved_token_mgr.rotate_token()
+        except Exception as exc:
+            logger.error("Failed to provision replacement bootstrap token: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to provision replacement bootstrap token.",
+            ) from None
+
         resolved_session_mgr.invalidate_all()
-        resolved_token_mgr.rotate_token()
         response.delete_cookie(
             key=SESSION_COOKIE_NAME,
             path="/",
