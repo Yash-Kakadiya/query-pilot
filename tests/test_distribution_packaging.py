@@ -24,6 +24,11 @@ import zipfile
 
 import pytest
 
+# Ensure repository root is on sys.path for importing scripts/
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 from scripts.build_distribution import (
     REQUIRED_RUNTIME_DEPS,
     build_wheel_in_isolated_staging,
@@ -79,7 +84,12 @@ def test_wheel_metadata_and_asset_contents(built_wheel: Path):
 
 
 def test_wheel_installed_serves_static_outside_repository(built_wheel: Path, tmp_path: Path):
-    """Verify that an installed wheel outside the repo checkout serves production UI."""
+    """Verify packaged-asset smoke test (--no-deps with linked dependencies) outside repo.
+
+    Note: This preserves the established fast smoke test verifying wheel asset unpacking
+    and runtime config discovery outside the repo. For clean dependency-resolved installation
+    without .pth linking, see scripts/verify_clean_install.py.
+    """
     repo_root = Path(__file__).resolve().parents[1]
     repo_venv_site = repo_root / ".venv" / "Lib" / "site-packages"
 
@@ -104,10 +114,13 @@ def test_wheel_installed_serves_static_outside_repository(built_wheel: Path, tmp
     run_cwd.mkdir()
 
     # Verify that get_default_static_dir() inside installed package resolves to site-packages
+    # and that query_pilot module resolves strictly to isolated venv (not repo src/)
     probe_code = (
+        "import pathlib\n"
+        "import query_pilot\n"
         "import query_pilot.agent.config as c\n"
-        "resolved = c.get_default_static_dir()\n"
-        "print('RESOLVED_STATIC:' + str(resolved))\n"
+        "print('RESOLVED_MODULE:' + str(pathlib.Path(query_pilot.__file__).resolve()))\n"
+        "print('RESOLVED_STATIC:' + str(c.get_default_static_dir().resolve()))\n"
     )
     probe_proc = subprocess.run(
         [str(venv_python), "-c", probe_code],
@@ -116,15 +129,25 @@ def test_wheel_installed_serves_static_outside_repository(built_wheel: Path, tmp
         text=True,
         check=True,
     )
+    resolved_module = None
     resolved_path = None
     for line in probe_proc.stdout.splitlines():
-        if line.startswith("RESOLVED_STATIC:"):
+        if line.startswith("RESOLVED_MODULE:"):
+            resolved_module = Path(line.split(":", 1)[1].strip())
+        elif line.startswith("RESOLVED_STATIC:"):
             resolved_path = Path(line.split(":", 1)[1].strip())
-            break
+
+    # Module origin assertions (strict path comparison, not substring)
+    assert resolved_module is not None
+    assert resolved_module.resolve().is_relative_to(venv_dir.resolve())
+    assert not resolved_module.resolve().is_relative_to(repo_root.resolve())
+
+    # Static asset assertions
     assert resolved_path is not None
     assert resolved_path.is_dir()
     assert (resolved_path / "index.html").is_file()
-    assert "site-packages" in str(resolved_path)
+    assert resolved_path.resolve().is_relative_to(venv_dir.resolve())
+    assert not resolved_path.resolve().is_relative_to(repo_root.resolve())
 
     # Launch installed querypilot-agent daemon on isolated loopback port
     port = get_free_port()
@@ -427,3 +450,97 @@ def test_wheel_requires_python_and_metadata_compatibility(built_wheel: Path):
         assert "Tag: py3-none-any" in wheel_content
 
 
+# ==============================================================================
+# B19-S1B Clean-Install & Offline Harness Verification Tests
+# ==============================================================================
+
+
+def test_verify_clean_install_cli_argument_validation():
+    """Verify verify_clean_install CLI argument parsing and safety validation."""
+    from scripts.verify_clean_install import build_arg_parser
+
+    parser = build_arg_parser()
+
+    # 1. Default mode is None (resolved to dependency-resolved at runtime)
+    args = parser.parse_args([])
+    assert args.mode is None
+    assert args.wheelhouse is None
+
+    # 2. --mode offline accepted
+    args_offline = parser.parse_args(["--mode", "offline", "--wheelhouse", "some/path"])
+    assert args_offline.mode == "offline"
+    assert args_offline.wheelhouse == Path("some/path")
+
+    # 3. Invalid mode rejected
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--mode", "invalid-mode"])
+
+    # 4. --skip-build flag parsed
+    args_skip = parser.parse_args(["--skip-build", "--wheel", "my.whl"])
+    assert args_skip.skip_build is True
+    assert args_skip.wheel == Path("my.whl")
+
+
+def test_offline_wheelhouse_installation(built_wheel: Path):
+    """Verify true offline installation using an explicit wheelhouse (--no-index).
+
+    Opt-in via QUERYPILOT_TEST_WHEELHOUSE pointing to a directory of pre-downloaded wheels.
+    Strictly skips if no wheelhouse is configured, and fails if the configured path is invalid.
+    Never produces a false positive.
+    """
+    wheelhouse_env = os.getenv("QUERYPILOT_TEST_WHEELHOUSE")
+    if not wheelhouse_env:
+        pytest.skip(
+            "True offline installation test requires QUERYPILOT_TEST_WHEELHOUSE "
+            "pointing to a directory containing pre-downloaded wheels."
+        )
+
+    wheelhouse_path = Path(wheelhouse_env).resolve()
+    if not wheelhouse_path.is_dir():
+        pytest.fail(f"Configured QUERYPILOT_TEST_WHEELHOUSE directory does not exist: {wheelhouse_path}")
+
+    wheels = list(wheelhouse_path.glob("*.whl"))
+    if not wheels:
+        pytest.fail(f"Configured QUERYPILOT_TEST_WHEELHOUSE contains no .whl files: {wheelhouse_path}")
+
+    from scripts.verify_clean_install import VerificationHarness
+
+    repo_root = Path(__file__).resolve().parents[1]
+    harness = VerificationHarness(
+        repo_root=repo_root,
+        mode="offline",
+        wheelhouse=wheelhouse_path,
+        wheel_path=built_wheel,
+        skip_loopback=True,
+    )
+    summary = harness.verify()
+    assert summary["install_success"] is True
+    assert summary["module_origin_verified"] is True
+
+
+def test_clean_install_dependency_resolved(built_wheel: Path):
+    """Verify clean-environment dependency-resolved installation outside repo.
+
+    Opt-in via QUERYPILOT_TEST_CLEAN_INSTALL=1 to keep default test runs fast.
+    """
+    if os.getenv("QUERYPILOT_TEST_CLEAN_INSTALL") != "1":
+        pytest.skip(
+            "Dependency-resolved clean install test is opt-in (set QUERYPILOT_TEST_CLEAN_INSTALL=1) "
+            "to keep standard unit test runs fast and deterministic."
+        )
+
+    from scripts.verify_clean_install import VerificationHarness
+
+    repo_root = Path(__file__).resolve().parents[1]
+    harness = VerificationHarness(
+        repo_root=repo_root,
+        mode="dependency-resolved",
+        wheel_path=built_wheel,
+        skip_loopback=False,
+    )
+    summary = harness.verify()
+    assert summary["install_success"] is True
+    assert summary["module_origin_verified"] is True
+    assert summary["packaged_assets_verified"] is True
+    assert summary["cli_smoke_verified"] is True
+    assert summary["loopback_serving_verified"] is True
