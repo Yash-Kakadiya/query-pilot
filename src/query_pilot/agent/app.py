@@ -185,9 +185,9 @@ def create_agent_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        # Startup: provision bootstrap token if not present
+        # Startup: adopt pre-existing provisioned token or initialize fresh token
         if not resolved_token_mgr.has_active_token:
-            resolved_token_mgr.initialize_token()
+            resolved_token_mgr.adopt_or_initialize_token()
         # Initialize owned upstream client if not injected
         owned_client: Optional[httpx.AsyncClient] = None
         if app.state.upstream_client is None:

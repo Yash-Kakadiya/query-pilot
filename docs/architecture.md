@@ -276,8 +276,9 @@ To eliminate URL leakage, browser history caching, shoulder surfing, and referre
    - The user or UI can call `POST /agent/v1/auth/logout`.
    - The agent destroys the session state in memory and returns an expired `Set-Cookie` header (`Max-Age=0`).
 4. **Token Rotation & Revocation:**
-   - Executing `querypilot-agent --rotate-token` or calling `POST /agent/v1/auth/rotate-token` immediately invalidates **all active sessions** and issues a fresh bootstrap token.
-   - Terminating the agent process destroys all in-memory sessions instantly.
+   - **Authenticated In-Session Rotation:** Calling `POST /agent/v1/auth/rotate-token` from an active authenticated session immediately invalidates all active sessions and provisions a replacement bootstrap token.
+   - **Out-of-Band Operator Recovery:** An operator locked out of an active session can execute `querypilot-agent auth rotate` (or `--rotate-token`) to securely provision a replacement bootstrap token to disk. CLI provisioning does not immediately invalidate in-memory sessions held by an already running daemon; restarting the local agent daemon terminates in-memory sessions and adopts the replacement token on startup.
+   - **Daemon Termination:** Terminating the agent daemon process ends the process lifecycle and clears all in-memory session states.
 
 ### 6.3 Tri-Layer Defense-in-Depth Loopback Architecture
 
@@ -608,6 +609,7 @@ The following components are implemented, tested, and active in the Python codeb
        - Platform Limitations: On Windows, native atomic creation flags equivalent to `O_NOFOLLOW | O_EXCL` are not exposed directly via Python's standard library `os.open` without win32 ctypes/C extensions; file-level TOCTOU mitigation relies on pre-creation link checks, exclusive replacement of regular files, post-creation attribute verification, and fail-closed cleanup.
      - Session Management: Ambient `HttpOnly; SameSite=Strict; Path=/` session cookie (`qpt_session`) with 1-hour idle timeout and 12-hour absolute lifetime.
      - Logout & Token Rotation (`POST /agent/v1/auth/logout`, `POST /agent/v1/auth/rotate-token`): Destroys session state, clears cookie, and invalidates all active sessions.
+     - Out-of-Band CLI Recovery (`querypilot-agent auth rotate`, `querypilot-agent --rotate-token`): Securely provisions a replacement bootstrap token with restricted permissions (`0600` / DACL). In-memory session invalidation and token activation take effect upon daemon restart.
      - Logging Protection: Tokens, cookies, authentication payloads, and credentials are never logged.
    - Browser & Origin Protections (`src/query_pilot/agent/middleware.py`):
      - Host-Header Validation: Mitigates DNS rebinding attacks by rejecting unapproved Host headers with HTTP 400 (`127.0.0.1:8001`, `localhost:8001`, `[::1]:8001` permitted).

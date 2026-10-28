@@ -7,7 +7,10 @@ with optional browser launch for opening the production UI at http://127.0.0.1:8
 from __future__ import annotations
 
 import argparse
+import datetime
+import os
 from pathlib import Path
+import platform
 import sys
 import threading
 import time
@@ -18,6 +21,10 @@ import webbrowser
 from pydantic import ValidationError
 
 from query_pilot.agent.app import create_agent_app
+from query_pilot.agent.auth import (
+    BootstrapTokenManager,
+    BootstrapTokenProvisioningError,
+)
 from query_pilot.agent.config import (
     AgentConfig,
     _get_env_bool,
@@ -130,9 +137,43 @@ def build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Open the local UI in the default browser after the daemon is ready (default: False).",
     )
+    parser.add_argument(
+        "--rotate-token",
+        action="store_true",
+        default=False,
+        help="Rotate bootstrap token and exit (out-of-band operator recovery).",
+    )
 
     # Subparsers for profile management commands
     subparsers = parser.add_subparsers(dest="subcommand", help="Agent subcommands.")
+
+    # auth subparser
+    auth_parser = subparsers.add_parser("auth", help="Manage daemon authentication and bootstrap tokens.")
+    auth_subparsers = auth_parser.add_subparsers(dest="auth_action", help="Auth actions.")
+
+    # auth rotate
+    rotate_parser = auth_subparsers.add_parser("rotate", help="Provision a replacement bootstrap token.")
+    rotate_parser.add_argument(
+        "--token-dir",
+        type=Path,
+        default=None,
+        help="Path to directory for bootstrap token file (default: ~/.query_pilot or QUERYPILOT_TOKEN_DIR).",
+    )
+    rotate_parser.add_argument(
+        "--show-token",
+        action="store_true",
+        default=False,
+        help="Display the raw token secret on stdout (default: False).",
+    )
+
+    # auth info
+    info_parser = auth_subparsers.add_parser("info", help="Inspect bootstrap token file state and daemon reachability.")
+    info_parser.add_argument(
+        "--token-dir",
+        type=Path,
+        default=None,
+        help="Path to directory for bootstrap token file (default: ~/.query_pilot or QUERYPILOT_TOKEN_DIR).",
+    )
 
     profile_parser = subparsers.add_parser("profile", help="Manage approved database connection profiles.")
     profile_subparsers = profile_parser.add_subparsers(dest="profile_action", help="Profile actions.")
@@ -381,10 +422,110 @@ def handle_profile_add(args: argparse.Namespace) -> int:
         return 1
 
 
+def handle_auth_rotate(args: argparse.Namespace) -> int:
+    """Handle 'querypilot-agent auth rotate' and '--rotate-token' commands."""
+    resolved_dir = getattr(args, "token_dir", None) or get_default_token_dir()
+    show_token = getattr(args, "show_token", False)
+
+    try:
+        manager = BootstrapTokenManager(token_dir=resolved_dir)
+        new_token = manager.initialize_token()
+    except Exception as exc:
+        sys.stderr.write(f"ERROR: Failed to provision bootstrap token: {exc}\n")
+        return 1
+
+    sys.stdout.write(
+        f"SUCCESS: Bootstrap token provisioned successfully at '{manager.token_path}'.\n"
+        "Permissions: Verified restricted exclusively to current user.\n"
+        "ACTION REQUIRED: Restart the QueryPilot local agent daemon to activate this token and clear in-memory sessions.\n"
+    )
+    if show_token:
+        sys.stdout.write(f"Token: {new_token}\n")
+
+    return 0
+
+
+def handle_auth_info(args: argparse.Namespace) -> int:
+    """Handle 'querypilot-agent auth info' command."""
+    resolved_dir = getattr(args, "token_dir", None) or get_default_token_dir()
+    manager = BootstrapTokenManager(token_dir=resolved_dir)
+    token_path = manager.token_path
+
+    if not token_path.exists():
+        file_status = "Not present (consumed by bootstrap, deleted, or uninitialized)"
+        perm_status = "N/A"
+        mtime_str = "N/A"
+    else:
+        if token_path.is_symlink() or os.path.islink(str(token_path)):
+            file_status = "WARNING: Symlink or reparse point detected (untrusted)"
+            perm_status = "REJECTED (symlinks not permitted)"
+        elif not token_path.is_file():
+            file_status = "WARNING: Path is not a regular file"
+            perm_status = "REJECTED (non-regular file)"
+        else:
+            file_status = "Present on disk (pending daemon startup or browser bootstrap)"
+            if platform.system() != "Windows":
+                st = token_path.stat()
+                if (st.st_mode & 0o077) != 0:
+                    perm_status = f"WARNING: Insecure mode {oct(st.st_mode)} (expected 0600)"
+                else:
+                    perm_status = "Verified mode 0600 (restricted to user)"
+            else:
+                try:
+                    manager._verify_windows_acl(token_path)
+                    perm_status = "Verified restricted to current user via DACL"
+                except Exception as exc:
+                    perm_status = f"WARNING: DACL verification failed ({exc})"
+
+        try:
+            mtime_epoch = token_path.stat().st_mtime
+            mtime_str = datetime.datetime.fromtimestamp(mtime_epoch, tz=datetime.timezone.utc).isoformat()
+        except Exception:
+            mtime_str = "Unknown"
+
+    daemon_host = getattr(args, "host", "127.0.0.1")
+    daemon_port = getattr(args, "port", 8001)
+    daemon_status = "Not reachable on loopback (daemon appears stopped)"
+    try:
+        req = urllib.request.Request(f"http://{daemon_host}:{daemon_port}/app/", method="GET")
+        with urllib.request.urlopen(req, timeout=0.5):
+            daemon_status = f"Reachable at http://{daemon_host}:{daemon_port} (Note: Daemon may hold a different in-memory token until restarted)"
+    except Exception:
+        pass
+
+    sys.stdout.write(
+        "QueryPilot Bootstrap Token Diagnostic Info:\n"
+        f"  Token Directory:    {resolved_dir}\n"
+        f"  Token File Path:    {token_path}\n"
+        f"  Token File Status:  {file_status}\n"
+        f"  Permissions Status: {perm_status}\n"
+        f"  Last Modified (UTC):{mtime_str}\n"
+        f"  Daemon Status:      {daemon_status}\n\n"
+        "[DIAGNOSTIC NOTICE] The file and daemon states above are point-in-time diagnostics.\n"
+        "File presence does not guarantee that a running daemon has adopted the token.\n"
+        "If the daemon was already running when the token was provisioned, restart the daemon.\n"
+    )
+    return 0
+
+
 def run_agent_cli(args: Optional[list[str]] = None) -> int:
     """Parse arguments and execute agent command or start daemon."""
     parser = build_parser()
     parsed = parser.parse_args(args)
+
+    # Check for legacy --rotate-token flag
+    if getattr(parsed, "rotate_token", False):
+        return handle_auth_rotate(parsed)
+
+    # Route auth subcommands
+    if parsed.subcommand == "auth":
+        if parsed.auth_action == "rotate":
+            return handle_auth_rotate(parsed)
+        elif parsed.auth_action == "info":
+            return handle_auth_info(parsed)
+        else:
+            parser.parse_args(["auth", "--help"])
+            return 1
 
     # Route profile subcommands
     if parsed.subcommand == "profile":
