@@ -544,3 +544,126 @@ def test_clean_install_dependency_resolved(built_wheel: Path):
     assert summary["packaged_assets_verified"] is True
     assert summary["cli_smoke_verified"] is True
     assert summary["loopback_serving_verified"] is True
+
+
+# ==============================================================================
+# B19-S3A Reproducible Build & Asset Freshness Tests
+# ==============================================================================
+
+
+def test_source_date_epoch_resolution_and_validation(tmp_path: Path):
+    """Verify SOURCE_DATE_EPOCH resolution precedence, range clamping, and error handling."""
+    from scripts.build_distribution import (
+        MIN_SOURCE_DATE_EPOCH,
+        MAX_SOURCE_DATE_EPOCH,
+        resolve_source_date_epoch,
+    )
+
+    repo_root = Path(__file__).resolve().parents[1]
+
+    # 1. Explicit integer timestamp within valid range
+    assert resolve_source_date_epoch(repo_root, explicit_epoch=1700000000) == 1700000000
+
+    # 2. Explicit string timestamp within valid range
+    assert resolve_source_date_epoch(repo_root, explicit_epoch="1700000000") == 1700000000
+
+    # 3. Invalid non-integer string raises ValueError
+    with pytest.raises(ValueError, match="must be an integer UNIX timestamp"):
+        resolve_source_date_epoch(repo_root, explicit_epoch="invalid_epoch_val")
+
+    # 4. Out-of-bounds: before 1980-01-01 (ZIP header constraint) raises ValueError
+    with pytest.raises(ValueError, match="ZIP archive header constraints"):
+        resolve_source_date_epoch(repo_root, explicit_epoch=MIN_SOURCE_DATE_EPOCH - 1)
+
+    # 5. Out-of-bounds: past year 2100 raises ValueError
+    with pytest.raises(ValueError, match="exceeds maximum supported year"):
+        resolve_source_date_epoch(repo_root, explicit_epoch=MAX_SOURCE_DATE_EPOCH + 1)
+
+    # 6. Fallback to git commit metadata when no explicit value or env var is present
+    orig_env = os.environ.pop("SOURCE_DATE_EPOCH", None)
+    try:
+        git_ts = resolve_source_date_epoch(repo_root, explicit_epoch=None)
+        assert isinstance(git_ts, int)
+        assert git_ts >= MIN_SOURCE_DATE_EPOCH
+    finally:
+        if orig_env is not None:
+            os.environ["SOURCE_DATE_EPOCH"] = orig_env
+
+    # 7. Non-git directory without environment variable returns documented fallback
+    empty_dir = tmp_path / "not_a_git_repo"
+    empty_dir.mkdir()
+    orig_env = os.environ.pop("SOURCE_DATE_EPOCH", None)
+    try:
+        fallback_epoch = resolve_source_date_epoch(empty_dir, explicit_epoch=None)
+        assert fallback_epoch == 1700000000
+    finally:
+        if orig_env is not None:
+            os.environ["SOURCE_DATE_EPOCH"] = orig_env
+
+
+def test_frontend_asset_freshness_notice_emitted(capsys):
+    """Verify build_frontend_bundle emits clear freshness notice when reusing existing dist."""
+    from scripts.build_distribution import build_frontend_bundle
+
+    repo_root = Path(__file__).resolve().parents[1]
+    frontend_dist = repo_root / "frontend" / "dist"
+    if not (frontend_dist / "index.html").is_file():
+        pytest.skip("frontend/dist/index.html is not present")
+
+    res = build_frontend_bundle(repo_root, force=False)
+    assert res == frontend_dist
+    captured = capsys.readouterr()
+    assert "[notice] Using pre-existing production frontend build" in captured.out
+    assert "Freshness limitation" in captured.out
+    assert "--rebuild-frontend" in captured.out
+
+
+def test_wheel_build_repeat_deterministic_hashes(tmp_path: Path):
+    """Verify repeat builds of the same revision produce bitwise identical wheel hashes.
+
+    Opt-in via QUERYPILOT_TEST_REPEAT_BUILD=1 to keep standard unit test runs fast.
+    """
+    if os.getenv("QUERYPILOT_TEST_REPEAT_BUILD") != "1":
+        pytest.skip(
+            "Repeat-build reproducibility test is opt-in (set QUERYPILOT_TEST_REPEAT_BUILD=1) "
+            "to keep standard unit test runs fast and deterministic."
+        )
+
+    import hashlib
+    from scripts.build_distribution import (
+        build_wheel_in_isolated_staging,
+        resolve_python_toolchain,
+    )
+
+    repo_root = Path(__file__).resolve().parents[1]
+    frontend_dist = repo_root / "frontend" / "dist"
+    if not (frontend_dist / "index.html").is_file():
+        pytest.skip(f"Frontend production build missing at {frontend_dist}")
+
+    python_exe, has_setuptools = resolve_python_toolchain()
+    if not has_setuptools:
+        pytest.skip("No Python environment with setuptools found.")
+
+    dir1 = tmp_path / "repeat_build_1"
+    dir2 = tmp_path / "repeat_build_2"
+    dir1.mkdir()
+    dir2.mkdir()
+
+    wheel1 = build_wheel_in_isolated_staging(repo_root, dir1, frontend_dist, python_exe)
+    wheel2 = build_wheel_in_isolated_staging(repo_root, dir2, frontend_dist, python_exe)
+
+    hash1 = hashlib.sha256(wheel1.read_bytes()).hexdigest()
+    hash2 = hashlib.sha256(wheel2.read_bytes()).hexdigest()
+
+    if hash1 != hash2:
+        with zipfile.ZipFile(wheel1) as z1, zipfile.ZipFile(wheel2) as z2:
+            mismatches = []
+            for n in z1.namelist():
+                if n in z2.namelist():
+                    i1 = z1.getinfo(n)
+                    i2 = z2.getinfo(n)
+                    if i1.CRC != i2.CRC or i1.date_time != i2.date_time:
+                        mismatches.append(f"{n}: CRC {i1.CRC} vs {i2.CRC}, mtime {i1.date_time} vs {i2.date_time}")
+            pytest.fail(f"Wheel hashes differ:\nBuild 1: {hash1}\nBuild 2: {hash2}\nMismatched entries:\n" + "\n".join(mismatches))
+
+    assert hash1 == hash2

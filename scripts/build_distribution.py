@@ -56,6 +56,91 @@ FORBIDDEN_FILE_PATTERNS = [
 ]
 
 
+# Minimum and maximum valid timestamps for ZIP archive MS-DOS date headers
+MIN_SOURCE_DATE_EPOCH = 315532800  # 1980-01-01 00:00:00 UTC
+MAX_SOURCE_DATE_EPOCH = 4102444800  # 2100-01-01 00:00:00 UTC
+DEFAULT_SOURCE_DATE_EPOCH = 1700000000  # Documented fallback: 2023-11-14 22:13:20 UTC (used when git metadata is absent)
+
+
+def get_git_commit_timestamp(repo_root: Path) -> Optional[int]:
+    """Retrieve the commit timestamp (UNIX epoch seconds) for HEAD in repo_root.
+
+    Returns None if git is unavailable, repo_root is not a git repository,
+    or git execution fails.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "log", "-1", "--format=%ct"],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode == 0 and proc.stdout.strip().isdigit():
+            return int(proc.stdout.strip())
+    except Exception:
+        pass
+    return None
+
+
+def resolve_source_date_epoch(
+    repo_root: Path,
+    explicit_epoch: Optional[str | int] = None,
+) -> int:
+    """Resolve and validate a deterministic SOURCE_DATE_EPOCH timestamp.
+
+    Resolution precedence:
+    1. Caller-supplied explicit_epoch argument (if provided).
+    2. os.environ["SOURCE_DATE_EPOCH"] (if set).
+    3. Git commit timestamp of HEAD in repo_root (if repo_root is a git repository).
+    4. DEFAULT_SOURCE_DATE_EPOCH (documented deterministic project fallback).
+
+    Validation rules:
+    - Must be an integer UNIX timestamp in seconds.
+    - Must be >= 315532800 (1980-01-01 00:00:00 UTC) to satisfy ZIP header constraints.
+    - Must be <= 4102444800 (2100-01-01 00:00:00 UTC).
+
+    Raises:
+    - ValueError: if an explicit or environment timestamp fails validation.
+    """
+    raw_value = explicit_epoch if explicit_epoch is not None else os.environ.get("SOURCE_DATE_EPOCH")
+
+    if raw_value is not None:
+        try:
+            epoch = int(str(raw_value).strip())
+        except (ValueError, TypeError):
+            raise ValueError(
+                f"Invalid SOURCE_DATE_EPOCH '{raw_value}': must be an integer UNIX timestamp in seconds."
+            )
+
+        if epoch < MIN_SOURCE_DATE_EPOCH:
+            raise ValueError(
+                f"Invalid SOURCE_DATE_EPOCH {epoch}: timestamp must be >= {MIN_SOURCE_DATE_EPOCH} "
+                "(1980-01-01 00:00:00 UTC) to satisfy ZIP archive header constraints."
+            )
+        if epoch > MAX_SOURCE_DATE_EPOCH:
+            raise ValueError(
+                f"Invalid SOURCE_DATE_EPOCH {epoch}: timestamp exceeds maximum supported year 2100."
+            )
+        return epoch
+
+    # Derive from Git commit metadata
+    git_ts = get_git_commit_timestamp(repo_root)
+    if git_ts is not None:
+        if git_ts < MIN_SOURCE_DATE_EPOCH:
+            raise ValueError(
+                f"Git commit timestamp {git_ts} is prior to ZIP archive minimum (1980-01-01)."
+            )
+        return git_ts
+
+    # Documented deterministic fallback when Git metadata is unavailable
+    print(
+        f"[notice] Git commit metadata unavailable in {repo_root}; "
+        f"using documented project fallback SOURCE_DATE_EPOCH: {DEFAULT_SOURCE_DATE_EPOCH}"
+    )
+    return DEFAULT_SOURCE_DATE_EPOCH
+
+
 def resolve_python_toolchain() -> tuple[str, bool]:
     """Find a Python executable with setuptools available for building wheels."""
     # Check current interpreter
@@ -95,7 +180,12 @@ def build_frontend_bundle(repo_root: Path, force: bool = False) -> Path:
     index_html = dist_dir / "index.html"
 
     if index_html.is_file() and not force:
-        print(f"[build] Using existing production frontend build at: {dist_dir}")
+        print(f"[notice] Using pre-existing production frontend build at: {dist_dir}")
+        print(
+            "[notice] Freshness limitation: Pre-existing assets are reused without content-hash verification.\n"
+            "[notice] If frontend sources under frontend/src/ have changed, run with --rebuild-frontend "
+            "to ensure assets reflect the latest source revision."
+        )
         return dist_dir
 
     print(f"[build] Building production frontend in {frontend_dir}...")
@@ -114,10 +204,13 @@ def build_wheel_in_isolated_staging(
     dist_dir: Path,
     frontend_dist: Path,
     python_exe: str,
+    source_date_epoch: Optional[str | int] = None,
 ) -> Path:
     """Build a distribution wheel using an isolated temporary staging directory.
 
     Guarantees:
+    - Deterministic Output: Enforces SOURCE_DATE_EPOCH (from caller, env, or git commit timestamp)
+      to ensure byte-for-byte reproducible wheel archive generation.
     - Never modifies or deletes any file or directory in the source tree (repo_root).
     - Preserves pre-existing src/query_pilot/agent/static, build/, or .egg-info directories.
     - All staging and intermediate build artifacts are isolated in a temporary directory
@@ -126,6 +219,9 @@ def build_wheel_in_isolated_staging(
     """
     dist_dir.mkdir(parents=True, exist_ok=True)
     abs_dist = str(dist_dir.resolve())
+
+    resolved_epoch = resolve_source_date_epoch(repo_root, explicit_epoch=source_date_epoch)
+    print(f"[build] Using deterministic SOURCE_DATE_EPOCH: {resolved_epoch}")
 
     temp_stage = Path(tempfile.mkdtemp(prefix="qp_pkg_stage_"))
     try:
@@ -146,7 +242,10 @@ def build_wheel_in_isolated_staging(
             shutil.rmtree(staged_static)
         shutil.copytree(frontend_dist, staged_static)
 
-        # Build wheel with cwd set to the isolated staging directory
+        # Build wheel with cwd set to the isolated staging directory, passing SOURCE_DATE_EPOCH
+        build_env = os.environ.copy()
+        build_env["SOURCE_DATE_EPOCH"] = str(resolved_epoch)
+
         code = (
             "import setuptools.build_meta as bm\n"
             f"wheel_name = bm.build_wheel(r'''{abs_dist}''')\n"
@@ -155,6 +254,7 @@ def build_wheel_in_isolated_staging(
         proc = subprocess.run(
             [python_exe, "-c", code],
             cwd=str(temp_stage),
+            env=build_env,
             capture_output=True,
             text=True,
             check=False,
@@ -347,6 +447,12 @@ def main() -> int:
         action="store_true",
         help="Force rebuild of frontend assets with 'npm run build'.",
     )
+    parser.add_argument(
+        "--source-date-epoch",
+        type=str,
+        default=None,
+        help="Explicit UNIX epoch timestamp for reproducible wheel building (overrides Git commit timestamp).",
+    )
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parents[1]
@@ -360,7 +466,13 @@ def main() -> int:
 
     frontend_dist = build_frontend_bundle(repo_root, force=args.rebuild_frontend)
 
-    wheel_path = build_wheel_in_isolated_staging(repo_root, dist_dir, frontend_dist, python_exe)
+    wheel_path = build_wheel_in_isolated_staging(
+        repo_root,
+        dist_dir,
+        frontend_dist,
+        python_exe,
+        source_date_epoch=args.source_date_epoch,
+    )
     inspect_and_verify_wheel(wheel_path)
     print(f"\n[success] QueryPilot wheel successfully built and verified:\n  {wheel_path}\n")
     return 0
