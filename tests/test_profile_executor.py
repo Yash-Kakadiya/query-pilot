@@ -588,3 +588,324 @@ def test_validation_failure_does_not_leak_partial_data(fake_trusted_profile, fak
 
     mock_db_engine.connect.assert_not_called()
 
+
+# ==============================================================================
+# 5. Sensitive-Column Redaction & Wildcard Projection Security (SEC-B16-01)
+# ==============================================================================
+
+
+@pytest.fixture
+def fake_employee_profile() -> ConnectionProfile:
+    """Profile permitting the Employees table with custom sensitive column."""
+    return ConnectionProfile(
+        profile_id="hr_analytics",
+        display_name="HR Analytics",
+        server="corp-dw.internal,1433",
+        database_name="Analytics_DW_Prod",
+        use_trusted_connection=True,
+        timeout_seconds=10,
+        max_row_limit=50,
+        allowed_tables=["Employees", "Customers"],
+        sensitive_columns=["ExecutiveBonus"],
+        schema_name="dbo",
+    )
+
+
+def test_wildcard_select_star_redacts_sensitive_columns(
+    fake_employee_profile, fake_schema, mock_db_engine, mock_db_connection
+):
+    """SELECT * projection has sensitive columns redacted from both columns and rows."""
+    mock_cursor = MagicMock()
+    # Cursor returns columns including sensitive ones (SSN, PasswordHash)
+    mock_cursor.keys.return_value = ["EmployeeID", "EmployeeName", "Salary", "SSN", "PasswordHash"]
+    mock_cursor.fetchmany.return_value = [
+        (1, "Alice", 100000.0, "000-00-0000", "hash123"),
+        (2, "Bob", 90000.0, "111-11-1111", "hash456"),
+    ]
+    mock_db_connection.execution_options.return_value.execute.return_value = mock_cursor
+
+    adapter = ProfileExecutionBoundary(
+        config=fake_employee_profile,
+        schema=fake_schema,
+        engine=mock_db_engine,
+    )
+
+    res = adapter.execute("SELECT * FROM Employees;")
+
+    assert res.columns == ["EmployeeID", "EmployeeName", "Salary"]
+    assert "SSN" not in res.columns
+    assert "PasswordHash" not in res.columns
+    assert res.row_count == 2
+    assert res.rows == [
+        {"EmployeeID": 1, "EmployeeName": "Alice", "Salary": 100000.0},
+        {"EmployeeID": 2, "EmployeeName": "Bob", "Salary": 90000.0},
+    ]
+
+
+def test_qualified_wildcard_redacts_sensitive_columns(
+    fake_employee_profile, fake_schema, mock_db_engine, mock_db_connection
+):
+    """Qualified wildcard e.* projection has sensitive columns redacted consistently."""
+    mock_cursor = MagicMock()
+    mock_cursor.keys.return_value = ["EmployeeID", "EmployeeName", "SSN", "PasswordHash"]
+    mock_cursor.fetchmany.return_value = [
+        (10, "Charlie", "999-99-9999", "secret_hash"),
+    ]
+    mock_db_connection.execution_options.return_value.execute.return_value = mock_cursor
+
+    adapter = ProfileExecutionBoundary(
+        config=fake_employee_profile,
+        schema=fake_schema,
+        engine=mock_db_engine,
+    )
+
+    res = adapter.execute("SELECT e.* FROM Employees e;")
+
+    assert res.columns == ["EmployeeID", "EmployeeName"]
+    assert "SSN" not in res.columns
+    assert "PasswordHash" not in res.columns
+    assert res.rows == [{"EmployeeID": 10, "EmployeeName": "Charlie"}]
+
+
+def test_explicit_sensitive_column_rejected_at_validation(
+    fake_employee_profile, fake_schema, mock_db_engine
+):
+    """Explicit references to sensitive columns are rejected before execution and never touch the driver."""
+    adapter = ProfileExecutionBoundary(
+        config=fake_employee_profile,
+        schema=fake_schema,
+        engine=mock_db_engine,
+    )
+
+    for query in [
+        "SELECT PasswordHash FROM Employees;",
+        "SELECT SSN FROM Employees;",
+        "SELECT e.PasswordHash FROM Employees e;",
+        "SELECT SSN AS SafeName FROM Employees;",
+    ]:
+        with pytest.raises(UnsafeQueryError):
+            adapter.execute(query)
+
+    mock_db_engine.connect.assert_not_called()
+
+
+def test_case_variations_and_profile_sensitive_columns_redacted(
+    fake_employee_profile, fake_schema, mock_db_engine, mock_db_connection
+):
+    """Case variations of canonical and profile-specific sensitive columns are redacted."""
+    mock_cursor = MagicMock()
+    mock_cursor.keys.return_value = ["EmployeeID", "passWORD_hash", "sSn", "EXECUTIVEBONUS"]
+    mock_cursor.fetchmany.return_value = [
+        (1, "h", "s", 50000),
+    ]
+    mock_db_connection.execution_options.return_value.execute.return_value = mock_cursor
+
+    adapter = ProfileExecutionBoundary(
+        config=fake_employee_profile,
+        schema=fake_schema,
+        engine=mock_db_engine,
+    )
+
+    res = adapter.execute("SELECT * FROM Employees;")
+
+    assert res.columns == ["EmployeeID"]
+    assert res.rows == [{"EmployeeID": 1}]
+
+
+def test_duplicate_and_aliased_result_labels_redacted_safely(
+    fake_employee_profile, fake_schema, mock_db_engine, mock_db_connection
+):
+    """Duplicate column labels matching sensitive names cannot bypass redaction."""
+    mock_cursor = MagicMock()
+    mock_cursor.keys.return_value = ["EmployeeID", "PasswordHash", "PasswordHash"]
+    mock_cursor.fetchmany.return_value = [
+        (1, "hashA", "hashB"),
+    ]
+    mock_db_connection.execution_options.return_value.execute.return_value = mock_cursor
+
+    adapter = ProfileExecutionBoundary(
+        config=fake_employee_profile,
+        schema=fake_schema,
+        engine=mock_db_engine,
+    )
+
+    res = adapter.execute("SELECT * FROM Employees;")
+
+    assert res.columns == ["EmployeeID"]
+    assert res.rows == [{"EmployeeID": 1}]
+
+
+def test_all_sensitive_columns_result_fails_closed(
+    fake_employee_profile, fake_schema, mock_db_engine, mock_db_connection
+):
+    """If all columns returned by query execution are sensitive, execution fails closed."""
+    mock_cursor = MagicMock()
+    mock_cursor.keys.return_value = ["PasswordHash", "SSN"]
+    mock_cursor.fetchmany.return_value = [("hash1", "000-00-0000")]
+    mock_db_connection.execution_options.return_value.execute.return_value = mock_cursor
+
+    adapter = ProfileExecutionBoundary(
+        config=fake_employee_profile,
+        schema=fake_schema,
+        engine=mock_db_engine,
+    )
+
+    with pytest.raises(UnsafeQueryError, match="completely redacted by policy"):
+        adapter.execute("SELECT * FROM Employees;")
+
+
+# ==============================================================================
+# 6. Table-Source Boundary Rejection & Driver Isolation (SEC-B16-02 / SEC-B16-03)
+# ==============================================================================
+
+
+@pytest.mark.parametrize(
+    "forbidden_sql",
+    [
+        "SELECT * FROM OPENROWSET('SQLNCLI', 'Server=remotesrv;', 'SELECT 1');",
+        "SELECT * FROM OPENQUERY(RemoteSrv, 'SELECT 1');",
+        "SELECT * FROM OPENDATASOURCE('SQLNCLI', 'Data Source=srv;').db.dbo.t;",
+        "SELECT * FROM OPENJSON('{}');",
+        "SELECT * FROM sys.fn_get_sql(0x123);",
+        "SELECT * FROM dbo.ufnGetCustomerInformation(1);",
+        "SELECT * FROM Students s CROSS APPLY STRING_SPLIT('a,b', ',');",
+        "SELECT * FROM Students s CROSS APPLY OPENROWSET('SQLNCLI', 'Server=x;', 'SELECT 1');",
+    ],
+)
+def test_forbidden_table_sources_never_reach_driver(
+    fake_trusted_profile, fake_schema, mock_db_engine, forbidden_sql
+):
+    """Prohibited table sources and TVFs are rejected before execution and never call the database driver."""
+    adapter = ProfileExecutionBoundary(
+        config=fake_trusted_profile,
+        schema=fake_schema,
+        engine=mock_db_engine,
+    )
+
+    with pytest.raises(UnsafeQueryError):
+        adapter.execute(forbidden_sql)
+
+    # Database connection was NEVER opened
+    mock_db_engine.connect.assert_not_called()
+
+
+# ==============================================================================
+# 7. Lineage Bypass & Duplicate Label Tests (B16-S4)
+# ==============================================================================
+
+
+@pytest.mark.parametrize(
+    "bypassed_sql",
+    [
+        "WITH cte (a, b, c) AS (SELECT * FROM Employees) SELECT a, b, c FROM cte;",
+        "SELECT a, b, c FROM (SELECT * FROM Employees) AS d (a, b, c);",
+        "WITH cte (a, b, c) AS (SELECT e.* FROM Employees e) SELECT a, b, c FROM cte;",
+        "SELECT a, b, c FROM (SELECT e.* FROM Employees e) AS d (a, b, c);",
+        "WITH cte1 AS (SELECT * FROM Employees), cte2 (x, y, z) AS (SELECT * FROM cte1) SELECT x, y, z FROM cte2;",
+        "SELECT x, y, z FROM (SELECT * FROM (SELECT * FROM Employees) AS inner_d) AS d (x, y, z);",
+        "WITH cte (a, b, c, d) AS (SELECT EmployeeID, e.* FROM Employees e) SELECT a, b, c, d FROM cte;",
+        "SELECT a, b FROM Employees AS e (a, b);",
+    ],
+)
+def test_positional_alias_over_wildcard_never_reaches_driver(
+    fake_employee_profile, fake_schema, mock_db_engine, bypassed_sql
+):
+    """Positional alias lists over wildcard projections are rejected pre-execution and never call the driver."""
+    adapter = ProfileExecutionBoundary(
+        config=fake_employee_profile,
+        schema=fake_schema,
+        engine=mock_db_engine,
+    )
+
+    with pytest.raises(UnsafeQueryError, match="Positional column"):
+        adapter.execute(bypassed_sql)
+
+    # Driver connection was NEVER opened
+    mock_db_engine.connect.assert_not_called()
+
+
+def test_duplicate_non_sensitive_labels_disambiguated_safely(
+    fake_trusted_profile, fake_schema, mock_db_engine, mock_db_connection
+):
+    """Duplicate non-sensitive column labels are disambiguated with numeric suffixes without losing values."""
+    mock_cursor = MagicMock()
+    mock_cursor.keys.return_value = ["CustomerID", "CustomerID"]
+    mock_cursor.fetchmany.return_value = [(101, 102)]
+    mock_db_connection.execution_options.return_value.execute.return_value = mock_cursor
+
+    adapter = ProfileExecutionBoundary(
+        config=fake_trusted_profile,
+        schema=fake_schema,
+        engine=mock_db_engine,
+    )
+
+    res = adapter.execute("SELECT c.CustomerID, o.CustomerID FROM Customers c JOIN Orders o ON c.CustomerID = o.CustomerID;")
+
+    assert res.columns == ["CustomerID", "CustomerID_1"]
+    assert res.row_count == 1
+    assert res.rows == [{"CustomerID": 101, "CustomerID_1": 102}]
+
+
+def test_case_variant_duplicate_labels_disambiguated_safely(
+    fake_trusted_profile, fake_schema, mock_db_engine, mock_db_connection
+):
+    """Case-variant duplicate column labels are disambiguated case-insensitively."""
+    mock_cursor = MagicMock()
+    mock_cursor.keys.return_value = ["customerid", "CustomerID"]
+    mock_cursor.fetchmany.return_value = [(201, 202)]
+    mock_db_connection.execution_options.return_value.execute.return_value = mock_cursor
+
+    adapter = ProfileExecutionBoundary(
+        config=fake_trusted_profile,
+        schema=fake_schema,
+        engine=mock_db_engine,
+    )
+
+    res = adapter.execute("SELECT CustomerID FROM Customers;")
+
+    assert res.columns == ["customerid", "CustomerID_1"]
+    assert res.rows == [{"customerid": 201, "CustomerID_1": 202}]
+
+
+def test_duplicate_labels_with_existing_numbered_column_avoids_collision(
+    fake_trusted_profile, fake_schema, mock_db_engine, mock_db_connection
+):
+    """Disambiguation detects existing numbered columns and chooses the next available suffix."""
+    mock_cursor = MagicMock()
+    mock_cursor.keys.return_value = ["col", "col", "col_1"]
+    mock_cursor.fetchmany.return_value = [(1, 2, 3)]
+    mock_db_connection.execution_options.return_value.execute.return_value = mock_cursor
+
+    adapter = ProfileExecutionBoundary(
+        config=fake_trusted_profile,
+        schema=fake_schema,
+        engine=mock_db_engine,
+    )
+
+    res = adapter.execute("SELECT CustomerID FROM Customers;")
+
+    assert res.columns == ["col", "col_2", "col_1"]
+    assert res.rows == [{"col": 1, "col_2": 2, "col_1": 3}]
+
+
+def test_mixed_sensitive_and_non_sensitive_duplicates(
+    fake_employee_profile, fake_schema, mock_db_engine, mock_db_connection
+):
+    """Sensitive duplicates are redacted while non-sensitive duplicates are preserved and disambiguated."""
+    mock_cursor = MagicMock()
+    mock_cursor.keys.return_value = ["EmployeeID", "EmployeeID", "PasswordHash", "PasswordHash"]
+    mock_cursor.fetchmany.return_value = [(1, 2, "secret1", "secret2")]
+    mock_db_connection.execution_options.return_value.execute.return_value = mock_cursor
+
+    adapter = ProfileExecutionBoundary(
+        config=fake_employee_profile,
+        schema=fake_schema,
+        engine=mock_db_engine,
+    )
+
+    res = adapter.execute("SELECT * FROM Employees;")
+
+    assert res.columns == ["EmployeeID", "EmployeeID_1"]
+    assert "PasswordHash" not in res.columns
+    assert res.rows == [{"EmployeeID": 1, "EmployeeID_1": 2}]
+

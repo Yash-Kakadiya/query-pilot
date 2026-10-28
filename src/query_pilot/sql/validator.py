@@ -38,7 +38,17 @@ FORBIDDEN_AST_NODES = (
     exp.Into,
     exp.Set,
     exp.Transaction,
+    exp.OpenJSON,
 )
+
+# Prohibited remote rowset and distributed query function names
+FORBIDDEN_ROWSET_FUNCTIONS: frozenset[str] = frozenset({
+    "openrowset",
+    "openquery",
+    "opendatasource",
+    "openjson",
+    "openxml",
+})
 
 
 class SQLValidator:
@@ -150,6 +160,20 @@ class SQLValidator:
                     ],
                 )
 
+        # Check for forbidden remote rowset or distributed query functions
+        for func in stmt.find_all(exp.Anonymous, exp.Func):
+            func_name = (func.name or (str(func.this) if hasattr(func, "this") else "")).strip().lower()
+            if func_name in FORBIDDEN_ROWSET_FUNCTIONS:
+                return ValidationResult(
+                    allowed=False,
+                    reasons=[
+                        ValidationReason(
+                            code=ValidationReasonCode.FORBIDDEN_OPERATION,
+                            message=f"Remote or distributed rowset source '{func_name.upper()}' is strictly prohibited.",
+                        )
+                    ],
+                )
+
         # 5. Resource Policy / Explicit Row Limit Checks
         reasons: List[ValidationReason] = []
         warnings: List[str] = []
@@ -213,11 +237,101 @@ class SQLValidator:
             if subq.alias:
                 alias_to_table[subq.alias.lower()] = None
 
+        # Check for positional column alias lists over wildcard projections (lineage bypass defense)
+        for alias_node in stmt.find_all(exp.TableAlias):
+            if alias_node.columns:
+                parent = alias_node.parent
+                if isinstance(parent, exp.Table):
+                    reasons.append(
+                        ValidationReason(
+                            code=ValidationReasonCode.UNSUPPORTED_QUERY_SHAPE,
+                            message="Positional column aliases on physical table sources are not permitted.",
+                        )
+                    )
+                else:
+                    source = getattr(parent, "this", None) if parent is not None else None
+                    if source is None or source.find(exp.Star) is not None:
+                        reasons.append(
+                            ValidationReason(
+                                code=ValidationReasonCode.UNSUPPORTED_QUERY_SHAPE,
+                                message="Positional column renaming over wildcard query projections is not permitted.",
+                            )
+                        )
+
+        # Check for Lateral table sources (e.g. CROSS/OUTER APPLY)
+        for lateral in stmt.find_all(exp.Lateral):
+            if isinstance(lateral.this, (exp.Anonymous, exp.Func)):
+                func_name = str(lateral.this.this).strip() if hasattr(lateral.this, "this") else str(lateral.this).strip()
+                if func_name.lower() in FORBIDDEN_ROWSET_FUNCTIONS:
+                    reasons.append(
+                        ValidationReason(
+                            code=ValidationReasonCode.FORBIDDEN_OPERATION,
+                            message=f"Remote or distributed rowset source '{func_name.upper()}' is strictly prohibited.",
+                        )
+                    )
+                else:
+                    reasons.append(
+                        ValidationReason(
+                            code=ValidationReasonCode.UNSUPPORTED_QUERY_SHAPE,
+                            message=f"Table-valued function or dynamic table source '{func_name}' is not permitted.",
+                        )
+                    )
+            elif isinstance(lateral.this, exp.OpenJSON):
+                reasons.append(
+                    ValidationReason(
+                        code=ValidationReasonCode.FORBIDDEN_OPERATION,
+                        message="Dynamic JSON rowset source 'OPENJSON' is strictly prohibited.",
+                    )
+                )
+            elif lateral.alias:
+                alias_to_table[lateral.alias.lower()] = None
+
         for table in stmt.find_all(exp.Table):
-            tbl_name = table.name
-            if not tbl_name:
+            # Check for non-identifier table sources (TVFs, dynamic sources, functions)
+            if isinstance(table.this, (exp.Anonymous, exp.Func)):
+                func_name = str(table.this.this).strip() if hasattr(table.this, "this") else str(table.this).strip()
+                if func_name.lower() in FORBIDDEN_ROWSET_FUNCTIONS:
+                    reasons.append(
+                        ValidationReason(
+                            code=ValidationReasonCode.FORBIDDEN_OPERATION,
+                            message=f"Remote or distributed rowset source '{func_name.upper()}' is strictly prohibited.",
+                        )
+                    )
+                else:
+                    reasons.append(
+                        ValidationReason(
+                            code=ValidationReasonCode.UNSUPPORTED_QUERY_SHAPE,
+                            message=f"Table-valued function or dynamic table source '{func_name}' is not permitted.",
+                        )
+                    )
                 continue
-            tbl_lower = tbl_name.lower()
+            elif isinstance(table.this, exp.OpenJSON):
+                reasons.append(
+                    ValidationReason(
+                        code=ValidationReasonCode.FORBIDDEN_OPERATION,
+                        message="Dynamic JSON rowset source 'OPENJSON' is strictly prohibited.",
+                    )
+                )
+                continue
+            elif not isinstance(table.this, exp.Identifier):
+                reasons.append(
+                    ValidationReason(
+                        code=ValidationReasonCode.UNSUPPORTED_QUERY_SHAPE,
+                        message="Table source with missing or non-identifier name is not permitted.",
+                    )
+                )
+                continue
+
+            tbl_name = table.name
+            if not tbl_name or not tbl_name.strip():
+                reasons.append(
+                    ValidationReason(
+                        code=ValidationReasonCode.UNSUPPORTED_QUERY_SHAPE,
+                        message="Table source with empty name is not permitted.",
+                    )
+                )
+                continue
+            tbl_lower = tbl_name.strip().lower()
 
             # Skip CTE references
             if tbl_lower in cte_names:
@@ -228,7 +342,8 @@ class SQLValidator:
 
             # Reject unauthorized foreign catalogs
             if table.catalog:
-                if table.catalog.lower() != self.schema.database_name.lower():
+                cat_str = str(table.catalog).strip().lower()
+                if cat_str != self.schema.database_name.lower():
                     reasons.append(
                         ValidationReason(
                             code=ValidationReasonCode.FORBIDDEN_TABLE,

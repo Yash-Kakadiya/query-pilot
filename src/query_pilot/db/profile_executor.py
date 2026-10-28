@@ -61,6 +61,39 @@ class ProfileExecutionError(QueryExecutionError):
     pass
 
 
+def disambiguate_column_labels(columns: List[str]) -> List[str]:
+    """Deterministically disambiguate duplicate column names case-insensitively.
+
+    Preserves original names where unique. When duplicates or case variations exist,
+    appends an incrementing numeric suffix (e.g. '_1', '_2') while ensuring no collision
+    with other existing column names.
+    """
+    seen_counts: Dict[str, int] = {}
+    used_lower: Set[str] = set()
+    all_orig_lower = {str(c).strip().lower() for c in columns if c}
+    disambiguated: List[str] = []
+
+    for raw_col in columns:
+        col_str = str(raw_col) if raw_col is not None else "column"
+        norm = col_str.strip().lower()
+        if norm not in seen_counts:
+            seen_counts[norm] = 1
+            disambiguated.append(col_str)
+            used_lower.add(norm)
+        else:
+            suffix_idx = seen_counts[norm]
+            seen_counts[norm] += 1
+            candidate = f"{col_str}_{suffix_idx}"
+            while candidate.lower() in all_orig_lower or candidate.lower() in used_lower:
+                suffix_idx += 1
+                seen_counts[norm] += 1
+                candidate = f"{col_str}_{suffix_idx}"
+            disambiguated.append(candidate)
+            used_lower.add(candidate.lower())
+
+    return disambiguated
+
+
 class ProfileExecutionBoundary:
     """Execution boundary contract for profile-governed SQL execution.
 
@@ -353,15 +386,35 @@ class ProfileExecutionBoundary:
         finally:
             conn.close()
 
-        # Step 7: Format rows into JSON-safe serialized dictionary representations
+        # Step 7: Post-execution sensitive-column redaction and shape verification
+        # Authoritatively filter out any columns matching the sensitive column policy
+        sensitive_indices = {
+            i
+            for i, col in enumerate(columns)
+            if col and sensitive_policy.is_sensitive(str(col))
+        }
+
+        safe_indices = [i for i in range(len(columns)) if i not in sensitive_indices]
+        raw_safe_columns = [columns[i] for i in safe_indices]
+
+        # Fail closed if query result contained only sensitive column(s)
+        if columns and not raw_safe_columns:
+            raise UnsafeQueryError(
+                "Query execution result contained only sensitive column(s), which were completely redacted by policy."
+            )
+
+        # Disambiguate duplicate or case-variant column labels to prevent row dictionary key collisions
+        safe_columns = disambiguate_column_labels(raw_safe_columns)
+
+        # Format rows into JSON-safe serialized dictionary representations using safe columns
         formatted_rows: List[Dict[str, Any]] = []
         for row in raw_rows:
             formatted_rows.append(
-                {col: serialize_value(val) for col, val in zip(columns, row)}
+                {safe_columns[j]: serialize_value(row[safe_indices[j]]) for j in range(len(safe_indices))}
             )
 
         return QueryResult(
-            columns=columns,
+            columns=safe_columns,
             rows=formatted_rows,
             row_count=len(formatted_rows),
             truncated=truncated,

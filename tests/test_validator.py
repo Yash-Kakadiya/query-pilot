@@ -340,3 +340,120 @@ def test_live_schema_validation_and_execution(live_model_facing_schema):
     val_sensitive = validate_sql(sensitive_sql, live_model_facing_schema)
     assert val_sensitive.allowed is False
     assert ValidationReasonCode.SENSITIVE_COLUMN in val_sensitive.reason_codes
+
+
+# ==============================================================================
+# SEC-B16-02 & SEC-B16-03: Table Source Validation Regression Tests
+# ==============================================================================
+
+@pytest.mark.parametrize(
+    "sql,expected_code",
+    [
+        ("SELECT * FROM OPENROWSET('SQLNCLI', 'Server=127.0.0.1;', 'SELECT 1');", ValidationReasonCode.FORBIDDEN_OPERATION),
+        ("SELECT * FROM OPENROWSET('SQLNCLI', 'Server=127.0.0.1;', 'SELECT 1') AS r;", ValidationReasonCode.FORBIDDEN_OPERATION),
+        ("SELECT * FROM OPENQUERY(LinkedServer, 'SELECT 1');", ValidationReasonCode.FORBIDDEN_OPERATION),
+        ("SELECT * FROM OPENQUERY(LinkedServer, 'SELECT 1') AS q;", ValidationReasonCode.FORBIDDEN_OPERATION),
+        ("SELECT * FROM OPENDATASOURCE('SQLNCLI', 'Data Source=127.0.0.1;').db.dbo.t;", ValidationReasonCode.FORBIDDEN_OPERATION),
+        ("SELECT * FROM OPENDATASOURCE('SQLNCLI', 'Data Source=127.0.0.1;');", ValidationReasonCode.FORBIDDEN_OPERATION),
+        ("SELECT * FROM OPENJSON('[{\"id\":1}]');", ValidationReasonCode.FORBIDDEN_OPERATION),
+        ("SELECT * FROM OPENJSON('[{\"id\":1}]') AS j;", ValidationReasonCode.FORBIDDEN_OPERATION),
+        ("WITH cte AS (SELECT * FROM OPENROWSET('SQLNCLI', 's', 'q')) SELECT * FROM cte;", ValidationReasonCode.FORBIDDEN_OPERATION),
+    ],
+)
+def test_validate_sql_remote_and_dynamic_rowsets_prohibited(mock_schema, sql, expected_code):
+    """Verify that OPENROWSET, OPENQUERY, OPENDATASOURCE, and OPENJSON are rejected with FORBIDDEN_OPERATION."""
+    res = validate_sql(sql, mock_schema)
+    assert res.allowed is False
+    assert expected_code in res.reason_codes
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM sys.fn_get_sql(0x123);",
+        "SELECT * FROM sys.fn_get_sql(0x123) AS f;",
+        "SELECT * FROM dbo.ufnGetCustomerInformation(1);",
+        "SELECT * FROM STRING_SPLIT('1,2,3', ',');",
+        "SELECT * FROM Students s CROSS APPLY STRING_SPLIT('a,b', ',');",
+    ],
+)
+def test_validate_sql_table_valued_functions_rejected(mock_schema, sql):
+    """Verify that table-valued functions in FROM or APPLY positions are rejected with UNSUPPORTED_QUERY_SHAPE."""
+    res = validate_sql(sql, mock_schema)
+    assert res.allowed is False
+    assert ValidationReasonCode.UNSUPPORTED_QUERY_SHAPE in res.reason_codes
+
+
+def test_validate_sql_supported_ctes_and_derived_tables_preserved(mock_schema):
+    """Verify that standard relational CTEs and derived tables remain fully supported."""
+    cte_query = "WITH Eligible AS (SELECT StudentId FROM Students WHERE Status = 'Active') SELECT e.StudentId FROM Eligible e;"
+    res_cte = validate_sql(cte_query, mock_schema)
+    assert res_cte.allowed is True
+    assert "Students" in res_cte.referenced_tables
+
+    derived_query = "SELECT d.StudentId FROM (SELECT StudentId FROM Students) AS d;"
+    res_derived = validate_sql(derived_query, mock_schema)
+    assert res_derived.allowed is True
+    assert "Students" in res_derived.referenced_tables
+
+    join_query = "SELECT s.FullName, e.CourseOfferingId FROM Students s JOIN CourseEnrollments e ON s.StudentId = e.StudentId;"
+    res_join = validate_sql(join_query, mock_schema)
+    assert res_join.allowed is True
+    assert set(res_join.referenced_tables) == {"Students", "CourseEnrollments"}
+
+
+# ==============================================================================
+# SEC-B16-04 Finding 1: Lineage Bypass via Positional Alias Lists Regression Tests
+# ==============================================================================
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        # Reported vulnerable CTE pattern
+        "WITH cte (a, b, c) AS (SELECT * FROM Students) SELECT a, b, c FROM cte;",
+        # Reported vulnerable derived table pattern
+        "SELECT a, b, c FROM (SELECT * FROM Students) AS d (a, b, c);",
+        # Qualified wildcard projections
+        "WITH cte (a, b, c) AS (SELECT s.* FROM Students s) SELECT a, b, c FROM cte;",
+        "SELECT a, b, c FROM (SELECT s.* FROM Students s) AS d (a, b, c);",
+        # Nested CTEs with wildcard
+        "WITH cte1 AS (SELECT * FROM Students), cte2 (x, y, z) AS (SELECT * FROM cte1) SELECT x, y, z FROM cte2;",
+        # Nested derived tables with wildcard
+        "SELECT x, y, z FROM (SELECT * FROM (SELECT * FROM Students) AS inner_d) AS d (x, y, z);",
+        # Mixed explicit column and wildcard projection
+        "WITH cte (a, b, c, d) AS (SELECT StudentId, s.* FROM Students s) SELECT a, b, c, d FROM cte;",
+        # Positional column alias on physical table
+        "SELECT a, b FROM Students AS s (a, b);",
+        # CROSS APPLY with positional alias over wildcard subquery
+        "SELECT a, b FROM Students s CROSS APPLY (SELECT * FROM CourseEnrollments c) AS d (a, b);",
+    ],
+)
+def test_validate_sql_positional_alias_over_wildcard_rejected(mock_schema, sql):
+    """Verify that positional column aliases over wildcard query projections are rejected."""
+    res = validate_sql(sql, mock_schema)
+    assert res.allowed is False
+    assert ValidationReasonCode.UNSUPPORTED_QUERY_SHAPE in res.reason_codes
+
+
+def test_validate_sql_safe_ctes_and_derived_tables_with_alias_lists(mock_schema):
+    """Verify that positional column aliases are permitted when column lineage has no wildcards."""
+    # CTE with explicit non-wildcard projection
+    safe_cte = "WITH cte (a, b) AS (SELECT 1 AS x, 2 AS y) SELECT a, b FROM cte;"
+    res_cte = validate_sql(safe_cte, mock_schema)
+    assert res_cte.allowed is True
+
+    # Derived table with explicit non-wildcard projection
+    safe_derived = "SELECT a, b FROM (SELECT 1 AS x, 2 AS y) AS d (a, b);"
+    res_derived = validate_sql(safe_derived, mock_schema)
+    assert res_derived.allowed is True
+
+    # CTE without positional alias list over wildcard remains permitted
+    cte_star = "WITH cte AS (SELECT * FROM Students) SELECT * FROM cte;"
+    res_cte_star = validate_sql(cte_star, mock_schema)
+    assert res_cte_star.allowed is True
+
+    # Derived table without positional alias list over wildcard remains permitted
+    derived_star = "SELECT * FROM (SELECT * FROM Students) AS d;"
+    res_derived_star = validate_sql(derived_star, mock_schema)
+    assert res_derived_star.allowed is True
