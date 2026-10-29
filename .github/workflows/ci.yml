@@ -21,6 +21,11 @@ jobs:
     timeout-minutes: 15
 
     steps:
+      - name: Inspect runner environment
+        run: |
+          uname -a
+          cat /etc/os-release | grep -E '^(NAME|VERSION|VERSION_ID)='
+
       - name: Check out repository
         uses: actions/checkout@v5
         with:
