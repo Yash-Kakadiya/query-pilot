@@ -1,0 +1,62 @@
+name: CI
+
+"on":
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: Test & Package Verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: "frontend/package-lock.json"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]"
+
+      - name: Build frontend production bundle
+        run: |
+          npm ci --prefix frontend
+          npm run build --prefix frontend
+
+      - name: Run unit and packaging test suite
+        run: |
+          pytest -o pythonpath="src ." -m "not integration" --ignore-glob="tests/test_browser_*.py"
+
+      - name: Build distribution wheel
+        run: |
+          python scripts/build_distribution.py
+
+      - name: Verify clean dependency-resolved installation
+        run: |
+          python scripts/verify_clean_install.py --mode dependency-resolved --wheel dist/query_pilot-0.1.0-py3-none-any.whl --skip-loopback
