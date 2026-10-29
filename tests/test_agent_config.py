@@ -400,7 +400,10 @@ def test_pyproject_contains_runtime_dependencies():
 
     optional_deps = data.get("project", {}).get("optional-dependencies", {})
     assert "test" in optional_deps
-    assert optional_deps["test"] == ["pytest>=8.0.0"]
+    assert optional_deps["test"] == [
+        "pytest>=8.0.0",
+        "websockets>=12.0",
+    ]
 
     tool_setuptools = data.get("tool", {}).get("setuptools", {})
     package_data = tool_setuptools.get("package-data", {})
