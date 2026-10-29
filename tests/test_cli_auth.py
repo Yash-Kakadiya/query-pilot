@@ -27,6 +27,7 @@ from pathlib import Path
 import platform
 import stat
 import subprocess
+import sys
 from unittest.mock import patch
 
 from fastapi import status
@@ -176,6 +177,7 @@ def test_posix_permission_hardening(temp_token_dir: Path):
     assert st.st_uid == os.getuid()
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows-specific icacls DACL hardening test")
 def test_windows_acl_hardening_failure(temp_token_dir: Path, capsys):
     """8 & 9. Windows ACL failure aborts cleanly, fails closed, and cleans up partial file."""
     mock_fail_proc = subprocess.CompletedProcess(
@@ -228,6 +230,7 @@ def test_daemon_startup_fails_closed_on_malformed_token_file(temp_token_dir: Pat
     """11. Startup fails closed on malformed existing token files without deleting them."""
     token_path = temp_token_dir / "agent.token"
     token_path.write_text("malformed_short_token", encoding="utf-8")
+    token_path.chmod(0o600)
 
     config = AgentConfig(token_dir=temp_token_dir, max_concurrent_requests=10)
     token_mgr = BootstrapTokenManager(token_dir=temp_token_dir)
