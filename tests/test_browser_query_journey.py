@@ -128,6 +128,7 @@ class HeadlessChromeClient:
                 self.chrome_path,
                 "--headless=new" if self.headless else "",
                 f"--remote-debugging-port={self.cdp_port}",
+                "--remote-debugging-address=127.0.0.1",
                 "--disable-gpu",
                 "--no-first-run",
                 "--no-default-browser-check",
@@ -152,9 +153,14 @@ class HeadlessChromeClient:
                 pass
             raise
 
-    def _wait_for_cdp_port(self, timeout: float = 5.0) -> None:
+    def _wait_for_cdp_port(self, timeout: float = 15.0) -> None:
         deadline = time.time() + timeout
         while time.time() < deadline:
+            if self._proc is not None and self._proc.poll() is not None:
+                raise RuntimeError(
+                    f"Chrome process terminated unexpectedly with exit code {self._proc.returncode} "
+                    f"before CDP port {self.cdp_port} became ready."
+                )
             try:
                 req = urllib.request.Request(f"http://127.0.0.1:{self.cdp_port}/json/version", method="GET")
                 with urllib.request.urlopen(req, timeout=0.5) as resp:
