@@ -55,6 +55,13 @@ jobs:
         run: |
           pytest -o pythonpath="src ." -m "not integration" --ignore-glob="tests/test_browser_*.py"
 
+      - name: Run browser acceptance journeys
+        env:
+          GEMINI_API_KEY: "ci-dummy-key-for-test-collection"
+        run: |
+          google-chrome --version || which google-chrome || which chromium-browser
+          pytest -o pythonpath="src ." tests/test_browser_*.py
+
       - name: Build distribution wheel
         run: |
           python scripts/build_distribution.py

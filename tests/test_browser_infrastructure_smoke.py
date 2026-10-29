@@ -14,9 +14,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sys
 import urllib.request
 import urllib.error
 import pytest
+
+# Ensure repository root is on sys.path for importing scripts/
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from query_pilot.agent.models import ExecuteQueryResponse
 from query_pilot.api.models import (
