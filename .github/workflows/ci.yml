@@ -50,6 +50,8 @@ jobs:
           npm run build --prefix frontend
 
       - name: Run unit and packaging test suite
+        env:
+          GEMINI_API_KEY: "ci-dummy-key-for-test-collection"
         run: |
           pytest -o pythonpath="src ." -m "not integration" --ignore-glob="tests/test_browser_*.py"
 
