@@ -18,6 +18,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import sysconfig
 import time
 import urllib.request
 import zipfile
@@ -35,6 +36,45 @@ from scripts.build_distribution import (
     inspect_and_verify_wheel,
     resolve_python_toolchain,
 )
+
+
+def get_venv_binaries(venv_dir: Path) -> dict[str, Path]:
+    """Resolve executable and site-packages paths for target virtual environment."""
+    if sys.platform == "win32":
+        bin_dir = venv_dir / "Scripts"
+        site_packages = venv_dir / "Lib" / "site-packages"
+        ext = ".exe"
+    else:
+        bin_dir = venv_dir / "bin"
+        py_ver = f"python{sys.version_info.major}.{sys.version_info.minor}"
+        site_packages = venv_dir / "lib" / py_ver / "site-packages"
+        ext = ""
+    if not site_packages.is_dir():
+        candidates = list(venv_dir.glob("**/site-packages"))
+        if candidates:
+            site_packages = candidates[0]
+    return {
+        "python": bin_dir / f"python{ext}",
+        "pip": bin_dir / f"pip{ext}",
+        "agent": bin_dir / f"querypilot-agent{ext}",
+        "api": bin_dir / f"querypilot-api{ext}",
+        "site_packages": site_packages,
+    }
+
+
+def get_host_site_packages() -> Path:
+    """Resolve the active Python environment's site-packages directory."""
+    purelib = Path(sysconfig.get_path("purelib"))
+    if purelib.is_dir():
+        return purelib
+    for p in sys.path:
+        path_p = Path(p)
+        if path_p.name == "site-packages" and path_p.is_dir():
+            return path_p
+    repo_site = _REPO_ROOT / ".venv" / "Lib" / "site-packages"
+    if repo_site.is_dir():
+        return repo_site
+    raise RuntimeError("Unable to locate active site-packages directory for test dependency linkage.")
 
 
 def get_free_port() -> int:
@@ -90,24 +130,25 @@ def test_wheel_installed_serves_static_outside_repository(built_wheel: Path, tmp
     and runtime config discovery outside the repo. For clean dependency-resolved installation
     without .pth linking, see scripts/verify_clean_install.py.
     """
-    repo_root = Path(__file__).resolve().parents[1]
-    repo_venv_site = repo_root / ".venv" / "Lib" / "site-packages"
+    repo_root = _REPO_ROOT
+    host_site = get_host_site_packages()
 
     # Create fresh isolated venv using current interpreter (Python 3.12)
     venv_dir = tmp_path / "isolated_venv"
     subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True)
 
-    venv_pip = venv_dir / "Scripts" / "pip.exe"
-    venv_python = venv_dir / "Scripts" / "python.exe"
-    venv_agent = venv_dir / "Scripts" / "querypilot-agent.exe"
+    bins = get_venv_binaries(venv_dir)
+    venv_pip = bins["pip"]
+    venv_python = bins["python"]
+    venv_agent = bins["agent"]
+    venv_site = bins["site_packages"]
 
     # Install built wheel with --no-deps
     subprocess.run([str(venv_pip), "install", "--no-deps", str(built_wheel)], check=True)
     assert venv_agent.is_file(), f"Expected installed binary {venv_agent}"
 
     # Link repo runtime dependencies into isolated venv site-packages via .pth
-    venv_site = venv_dir / "Lib" / "site-packages"
-    (venv_site / "_local_deps.pth").write_text(str(repo_venv_site) + "\n", encoding="utf-8")
+    (venv_site / "_local_deps.pth").write_text(str(host_site) + "\n", encoding="utf-8")
 
     # Working directory completely outside repo
     run_cwd = tmp_path / "scratch_workdir"
@@ -230,18 +271,18 @@ def test_wheel_installed_serves_static_outside_repository(built_wheel: Path, tmp
 
 def test_wheel_installed_static_dir_override(built_wheel: Path, tmp_path: Path):
     """Verify that --static-dir override takes precedence over packaged static assets."""
-    repo_root = Path(__file__).resolve().parents[1]
-    repo_venv_site = repo_root / ".venv" / "Lib" / "site-packages"
+    host_site = get_host_site_packages()
 
     venv_dir = tmp_path / "override_venv"
     subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True)
 
-    venv_pip = venv_dir / "Scripts" / "pip.exe"
-    venv_agent = venv_dir / "Scripts" / "querypilot-agent.exe"
+    bins = get_venv_binaries(venv_dir)
+    venv_pip = bins["pip"]
+    venv_agent = bins["agent"]
+    venv_site = bins["site_packages"]
 
     subprocess.run([str(venv_pip), "install", "--no-deps", str(built_wheel)], check=True)
-    venv_site = venv_dir / "Lib" / "site-packages"
-    (venv_site / "_local_deps.pth").write_text(str(repo_venv_site) + "\n", encoding="utf-8")
+    (venv_site / "_local_deps.pth").write_text(str(host_site) + "\n", encoding="utf-8")
 
     # Create custom static directory with custom index.html
     custom_static = tmp_path / "custom_static_dir"
