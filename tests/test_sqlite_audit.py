@@ -17,6 +17,7 @@ import shutil
 import sqlite3
 import stat
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -733,8 +734,11 @@ class TestWALFilesystemIntegrity:
         if os.path.exists(shm_path):
             os.remove(shm_path)
 
-        # Deny write permissions on directory via icacls on Windows
-        subprocess.run(["icacls", db_dir, "/deny", "Everyone:(W,WD,AD)"], capture_output=True)
+        # Deny write permissions on directory (via icacls on Windows or chmod on POSIX)
+        if sys.platform == "win32":
+            subprocess.run(["icacls", db_dir, "/deny", "Everyone:(W,WD,AD)"], capture_output=True)
+        else:
+            os.chmod(db_dir, stat.S_IREAD | stat.S_IEXEC)
 
         # Capture before state
         h_db_before, mtime_db_before = get_file_digest_and_mtime(db_path)
@@ -759,7 +763,10 @@ class TestWALFilesystemIntegrity:
         finally:
             if engine:
                 engine.dispose()
-            subprocess.run(["icacls", db_dir, "/remove:d", "Everyone"], capture_output=True)
+            if sys.platform == "win32":
+                subprocess.run(["icacls", db_dir, "/remove:d", "Everyone"], capture_output=True)
+            else:
+                os.chmod(db_dir, stat.S_IRWXU)
 
         # Capture after state
         h_db_after, mtime_db_after = get_file_digest_and_mtime(db_path)

@@ -603,7 +603,8 @@ def test_wal_scenario_4_wal_missing_shm_in_readonly_dir(tmp_path: Path):
             ro_conn.execute("SELECT id FROM t")
             ro_conn.close()
         except sqlite3.OperationalError as exc:
-            assert "unable to open database file" in str(exc).lower() or "read-only" in str(exc).lower()
+            err_msg = str(exc).lower()
+            assert "unable to open database file" in err_msg or "readonly" in err_msg or "read-only" in err_msg
     finally:
         os.chmod(str(readonly_dir), stat.S_IWRITE | stat.S_IREAD | stat.S_IEXEC)
 

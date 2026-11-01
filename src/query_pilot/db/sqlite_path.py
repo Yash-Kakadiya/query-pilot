@@ -161,8 +161,8 @@ def validate_sqlite_database_path(
         )
 
     # 4b. Trailing dots and spaces on components (Win32 filename spoofing / normalization bypass)
-    raw_path_obj = Path(trimmed)
-    for part in raw_path_obj.parts:
+    raw_components = [p for p in re.split(r"[\\/]+", trimmed) if p]
+    for part in raw_components:
         p_clean = part.rstrip("\\/")
         if not p_clean or (len(p_clean) == 2 and p_clean[1] == ":") or p_clean in {".", ".."}:
             continue
@@ -172,7 +172,7 @@ def validate_sqlite_database_path(
             )
 
     # 5. DOS reserved device names (including extensions e.g. NUL.db, CON.txt, or in directories)
-    for part in raw_path_obj.parts:
+    for part in raw_components:
         p_clean = part.rstrip("\\/")
         base_component = p_clean.split(".")[0].lower()
         if base_component in DOS_DEVICE_NAMES:
@@ -180,6 +180,7 @@ def validate_sqlite_database_path(
                 f"SECURITY REJECTION: DOS reserved device name '{base_component}' (in component '{part}') is prohibited as a database path."
             )
 
+    raw_path_obj = Path(trimmed)
     stem = raw_path_obj.stem.lower()
     name = raw_path_obj.name.lower()
     if stem in DOS_DEVICE_NAMES or name in DOS_DEVICE_NAMES:
@@ -243,8 +244,13 @@ def validate_sqlite_database_path(
     # 10. Protected application state and secrets
     resolved_name = target.name.lower()
     resolved_parts = [p.lower() for p in target.parts]
-    raw_parts = [p.lower() for p in raw_path_obj.parts]
-    all_parts = set(resolved_parts).union(raw_parts)
+    raw_parts = [p.lower() for p in raw_components]
+    all_parts = set()
+    for p in resolved_parts + raw_parts:
+        all_parts.add(p)
+        for sub in re.split(r"[\\/]+", p):
+            if sub:
+                all_parts.add(sub.lower())
 
     # Rejection of .env files and environment configurations
     if (
