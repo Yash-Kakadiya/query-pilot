@@ -601,46 +601,64 @@ function validateProfileConfigPayload(payload: ValidateProfileConfigRequest): vo
     })
   }
 
-  const srv = payload.server?.trim()
-  if (!srv) {
+  const engineType = payload.engine_type || 'mssql'
+  if (engineType !== 'mssql' && engineType !== 'sqlite') {
     throw new AgentClientError({
-      message: 'Server target is required and cannot be blank.',
-      kind: 'validation',
-    })
-  }
-  if (srv.length > 255) {
-    throw new AgentClientError({
-      message: 'Server target cannot exceed 255 characters.',
+      message: `Unsupported engine_type '${engineType}'. QueryPilot supports 'mssql' and 'sqlite'.`,
       kind: 'validation',
     })
   }
 
-  const db = payload.database_name?.trim()
-  if (!db) {
-    throw new AgentClientError({
-      message: 'Database name is required and cannot be blank.',
-      kind: 'validation',
-    })
-  }
-  if (db.length > 128) {
-    throw new AgentClientError({
-      message: 'Database name cannot exceed 128 characters.',
-      kind: 'validation',
-    })
-  }
+  if (engineType === 'sqlite') {
+    const dbPath = payload.database_path?.trim()
+    if (!dbPath) {
+      throw new AgentClientError({
+        message: 'Database path is required for SQLite profiles and cannot be blank.',
+        kind: 'validation',
+      })
+    }
+    if (dbPath.length > 1000) {
+      throw new AgentClientError({
+        message: 'Database path cannot exceed 1000 characters.',
+        kind: 'validation',
+      })
+    }
+  } else {
+    // MSSQL validation
+    const srv = payload.server?.trim()
+    if (!srv) {
+      throw new AgentClientError({
+        message: 'Server target is required and cannot be blank.',
+        kind: 'validation',
+      })
+    }
+    if (srv.length > 255) {
+      throw new AgentClientError({
+        message: 'Server target cannot exceed 255 characters.',
+        kind: 'validation',
+      })
+    }
 
-  if (payload.engine_type && payload.engine_type !== 'mssql') {
-    throw new AgentClientError({
-      message: "Unsupported engine_type. QueryPilot only supports 'mssql'.",
-      kind: 'validation',
-    })
-  }
+    const db = payload.database_name?.trim()
+    if (!db) {
+      throw new AgentClientError({
+        message: 'Database name is required and cannot be blank.',
+        kind: 'validation',
+      })
+    }
+    if (db.length > 128) {
+      throw new AgentClientError({
+        message: 'Database name cannot exceed 128 characters.',
+        kind: 'validation',
+      })
+    }
 
-  if (payload.use_trusted_connection !== undefined && payload.use_trusted_connection !== true) {
-    throw new AgentClientError({
-      message: 'QueryPilot requires Windows Integrated Authentication (use_trusted_connection=true).',
-      kind: 'validation',
-    })
+    if (payload.use_trusted_connection !== undefined && payload.use_trusted_connection !== true) {
+      throw new AgentClientError({
+        message: 'QueryPilot requires Windows Integrated Authentication (use_trusted_connection=true).',
+        kind: 'validation',
+      })
+    }
   }
 }
 

@@ -162,6 +162,8 @@ export interface RotateTokenResponse {
 export interface ProfileSummary {
   profile_id: string
   display_name: string
+  engine_type?: 'mssql' | 'sqlite'
+  database_name?: string | null
   schema_name?: string | null
   timeout_seconds: number
   max_row_limit: number
@@ -198,11 +200,12 @@ export type AgentErrorKind =
 export interface ValidateProfileConfigRequest {
   profile_id: string
   display_name: string
-  server: string
-  database_name: string
+  server?: string
+  database_name?: string
+  database_path?: string
   schema_name?: string
   driver?: string
-  engine_type?: 'mssql'
+  engine_type?: 'mssql' | 'sqlite'
   use_trusted_connection?: boolean
   timeout_seconds?: number
   max_row_limit?: number
@@ -372,17 +375,31 @@ export type GenerationStatus =
   | 'unsupported'
   | 'generation_failed'
 
+export interface BusinessMetricDefinition {
+  /** Metric identifier or business label (1-100 characters). */
+  name: string
+  /** Plain-text definition or description of business metric (1-500 characters). */
+  description: string
+  /** Optional calculation formula or SQL expression hint (max 500 characters). */
+  calculation_formula?: string | null
+  /** Optional list of schema table names to which this metric applies (at most 10 tables). */
+  applicable_tables?: string[]
+}
+
 export interface GenerateSQLRequest {
   question: string
   schema_context: ModelFacingSchemaContext
+  dialect?: string | null
   conversation_context?: ConversationTurnContext[] | null
   request_id?: string | null
   diagnostic_feedback?: string | null
+  business_metrics?: BusinessMetricDefinition[] | null
 }
 
 export interface GenerateSQLResponse {
   candidate_sql: string | null
   status: GenerationStatus
+  dialect?: string | null
   clarification_prompt?: string | null
   clarification_options?: ClarificationOption[]
   unsupported_reason?: string | null

@@ -145,12 +145,15 @@ def generate_sql_endpoint(
                 "This feedback is informational only and does NOT override schema grounding, AST safety rules, or read-only execution constraints."
             )
 
+        effective_dialect = body.dialect or "tsql"
+        canonical_req_dialect = "T-SQL" if effective_dialect == "tsql" else effective_dialect
         gen_request = SQLGenerationRequest(
             question=body.question,
             schema_context=db_schema,
-            dialect="T-SQL",
+            dialect=canonical_req_dialect,
             instructions=instructions,
             conversation_context=body.conversation_context or [],
+            business_metrics=body.business_metrics,
         )
 
         try:
@@ -160,6 +163,7 @@ def generate_sql_endpoint(
             return GenerateSQLResponse(
                 candidate_sql=None,
                 status=GenerationStatus.GENERATION_FAILED,
+                dialect=effective_dialect,
                 request_id=req_id,
             )
         except Exception as exc:
@@ -167,6 +171,7 @@ def generate_sql_endpoint(
             return GenerateSQLResponse(
                 candidate_sql=None,
                 status=GenerationStatus.GENERATION_FAILED,
+                dialect=effective_dialect,
                 request_id=req_id,
             )
 
@@ -177,17 +182,19 @@ def generate_sql_endpoint(
                 return GenerateSQLResponse(
                     candidate_sql=None,
                     status=GenerationStatus.GENERATION_FAILED,
+                    dialect=effective_dialect,
                     request_id=req_id,
                 )
             if len(candidate) > 10000:
                 return GenerateSQLResponse(
                     candidate_sql=None,
                     status=GenerationStatus.GENERATION_FAILED,
+                    dialect=effective_dialect,
                     request_id=req_id,
                 )
 
             # Primary AST and policy validation against client schema
-            validator = SQLValidator(schema=db_schema)
+            validator = SQLValidator(schema=db_schema, dialect=effective_dialect)
             val_result = validator.validate(candidate)
             if not val_result.allowed:
                 reason_code = val_result.reasons[0].code.value if val_result.reasons else "VALIDATION_FAILED"
@@ -198,12 +205,14 @@ def generate_sql_endpoint(
                     candidate_sql=None,
                     status=GenerationStatus.UNSUPPORTED,
                     unsupported_reason=bounded_reason,
+                    dialect=effective_dialect,
                     request_id=req_id,
                 )
 
             return GenerateSQLResponse(
                 candidate_sql=candidate,
                 status=GenerationStatus.GENERATED,
+                dialect=effective_dialect,
                 request_id=req_id,
             )
         elif gen_response.status == SQLGenerationStatus.CLARIFICATION_NEEDED:
@@ -217,6 +226,7 @@ def generate_sql_endpoint(
                 status=GenerationStatus.CLARIFICATION_NEEDED,
                 clarification_prompt=prompt_text,
                 clarification_options=gen_response.clarification_options or [],
+                dialect=effective_dialect,
                 request_id=req_id,
             )
         elif gen_response.status == SQLGenerationStatus.UNSUPPORTED:
@@ -228,12 +238,14 @@ def generate_sql_endpoint(
                 candidate_sql=None,
                 status=GenerationStatus.UNSUPPORTED,
                 unsupported_reason=reason_text,
+                dialect=effective_dialect,
                 request_id=req_id,
             )
         else:
             return GenerateSQLResponse(
                 candidate_sql=None,
                 status=GenerationStatus.GENERATION_FAILED,
+                dialect=effective_dialect,
                 request_id=req_id,
             )
 

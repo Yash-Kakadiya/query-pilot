@@ -131,6 +131,68 @@ sequenceDiagram
 10. **Grounded Answer Synthesis (UI $\rightarrow$ Hosted API $\rightarrow$ Gemini):** By default, the frontend sends only the question and column metadata (`{ "columns": [...], "row_count": N }`) to the Hosted API (`POST /api/query/synthesize-answer`). Zero database result values are sent by default. Only under explicit user opt-in are non-sensitive aggregate summaries forwarded.
 11. **Presentation & Display (UI):** The UI renders tabular result records, grounded narrative answer, validation badges, execution latency, and (if enabled) the validated SQL query, clearly distinguishing local data from hosted model responses.
 
+### 3.2 Multi-Dialect End-to-End Workflow (MSSQL & SQLite)
+
+Starting in Milestone B24, QueryPilot supports multi-dialect execution with SQLite alongside Microsoft SQL Server. The end-to-end data flow operates through profile-authoritative dialect routing:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant UI as React 19 Frontend
+    participant Agent as Local Agent Daemon (:8001)
+    participant Hosted as Hosted API Service (:8000)
+    participant Gemini as Google Gemini API
+    participant DB as Local Database (MSSQL or SQLite)
+
+    Note over User,UI: 1. Profile Discovery & Selection
+    UI->>Agent: GET /agent/v1/profiles (Session Cookie)
+    Agent-->>UI: Return safe summaries (profile_id, display_name, engine_type, database_name)
+    User->>UI: Selects Profile (e.g. "university_demo" [SQLite])
+
+    Note over UI,DB: 2. Local Dynamic Introspection
+    UI->>Agent: GET /agent/v1/profiles/{id}/schema?project=true
+    Agent->>DB: Introspect tables & columns (NullPool, mode=ro)
+    DB-->>Agent: Raw relational metadata
+    Agent-->>UI: Model-Facing Schema Context (sanitized, zero file paths)
+
+    Note over User,Gemini: 3. Authoritative Dialect Routing & Candidate Generation
+    User->>UI: Asks Question ("What is the average mark in each course?")
+    UI->>Agent: POST /api/v1/generate-sql (Proxy Header: X-Profile-ID: university_demo)
+    Agent->>Agent: Inspect X-Profile-ID -> Resolves engine_type="sqlite" -> Injects dialect="sqlite"
+    Agent->>Hosted: Forward {question, schema_context, dialect="sqlite"} (Strips X-Profile-ID)
+    Hosted->>Gemini: Assemble dialect prompt & generate candidate SQL
+    Gemini-->>Hosted: SQLite Candidate SQL + Assumptions
+    Hosted->>Hosted: Primary AST Validation (sqlglot SQLite dialect)
+    Hosted-->>Agent: Return {candidate_sql, dialect="sqlite", status="generated"}
+    Agent-->>UI: Return unexecuted candidate SQL
+
+    Note over User,UI: 4. Human Review & Execution Approval
+    UI->>User: Display candidate SQL with syntax highlighting & unexecuted notice
+    User->>UI: Reviews query and clicks "Execute Query on Database"
+
+    Note over UI,DB: 5. Guarded Local Execution
+    UI->>Agent: POST /agent/v1/profiles/{id}/execute {sql, request_id}
+    Agent->>Agent: Secondary AST Validation (Dialect-specific read-only check)
+    Agent->>DB: Execute query via physical connection with Authorizer callbacks & Watchdog timeout
+    DB-->>Agent: Tabular result rows (bounded <= 100 rows, 15s timeout)
+    Agent-->>UI: Return {columns, rows, execution_time_ms, truncated} (Local only)
+
+    Note over UI,Gemini: 6. Metadata-Only Synthesis & Visualization
+    UI->>Agent: POST /api/v1/synthesize-answer {question, columns, row_count, execution_time_ms}
+    Agent->>Hosted: Forward synthesis payload (ZERO data rows transmitted)
+    Hosted->>Gemini: Generate grounded explanation from metadata
+    Gemini-->>Hosted: Prose narrative
+    Hosted-->>UI: Grounded answer text
+    UI->>User: Render interactive table, visualizer charts & grounded narrative
+```
+
+#### Key Architecture Distinctions
+
+1. **Profile-Authoritative Routing**: The user or frontend never specifies raw dialect strings. The local agent resolves the selected profile's `engine_type` from disk (`~/.query_pilot/profiles.json`) and injects the authoritative dialect parameter (`"sqlite"` or `"tsql"`).
+2. **Zero Row Leakage to Hosted Services**: Tabular database rows are returned directly from the local database to the local agent and into browser client memory. Neither the generation API nor Google Gemini ever receives raw database rows.
+3. **Execution Safety Isolation**: All query execution occurs locally through the local agent execution boundary with hard-clamped timeouts (15s ceiling), result ceilings (100 rows), and physical SQLite authorizers prohibiting non-SELECT queries.
+
 ---
 
 ## 4. Component Responsibility Boundary
@@ -399,6 +461,39 @@ Security mitigations must be accurately characterized; no single control elimina
      - **Green Badge:** `[🔒 Computed Locally — Never Leaves This Machine]` displayed above the Tabular Results grid.
      - **Amber Badge:** `[☁️ Hosted AI Summary (Zero Database Rows Transmitted)]` or `[☁️ Hosted AI Summary (Aggregates Transmitted Under User Consent)]` displayed on the Answer card.
 
+### 7.3 Data Flow Domains & Network Isolation Qualifications
+
+QueryPilot enforces strict data isolation across specific software boundaries, but is **not** an "air-gapped" or mathematically isolated "zero-trust" environment:
+- **Not Air-Gapped**: The Generation API service (`querypilot-api`) connects outbound over HTTPS to Google's hosted Gemini API for candidate SQL generation. An air-gapped system by definition has no external internet connectivity.
+- **Qualified Boundary Description**: The boundary is a **local database execution vs. hosted AI generation separation**. The local agent and database live on the user's host/intranet, while SQL generation is performed remotely.
+
+#### Detailed Data Flow Mapping Across Five Processing Domains:
+1. **Data Sent to Hosted Model / Gemini API**:
+   - User's natural-language question text.
+   - Model-facing database schema metadata (table names, non-sensitive column names, canonical data types, and sanitized table/column comments, capped at 48 KB / 49,152 UTF-8 bytes).
+   - Matched business metric definitions (name, description, calculation formula text, capped at top-3 / 1,200 chars).
+   - Prior conversation turn semantic metadata (prior question text, returned column names, resolved intent; at most 3 turns).
+   - Optional synthesis request metadata (question, candidate SQL, returned column names, row count, execution latency; strictly zero raw rows).
+2. **Data Retained in Volatile Browser Memory**:
+   - Raw query execution results (`columns` array, tabular `rows` array up to 100 rows).
+   - Interactive visualization chart model (`ResultVisualizer` formatted data, gap placeholders, sampled points).
+   - Client conversation history (up to 3 turns with question, resolved intent, column names, row count, execution status, timestamp).
+   - Session authentication state (`qpt_session` cookie handled by browser network stack).
+3. **Data Held by Local Agent (`querypilot-agent`)**:
+   - Connection profiles (`profiles.json`: server address, database name, driver, timeout, row limit; no passwords).
+   - Active ephemeral bootstrap token (`agent.token`, valid for 5 minutes).
+   - Temporary database cursor buffers during query execution.
+   - Reflected SQLAlchemy schema metadata cache for the active profile.
+4. **Data Executed Against the Database**:
+   - User-authorized candidate SQL query (after passing dual-layer AST validation).
+   - Schema introspection queries (`SELECT DB_NAME()`, information schema reflection).
+   - All database commands run under the Windows OS security context of the active local user running `querypilot-agent` (`Trusted_Connection=yes`).
+5. **Data Explicitly Excluded from Conversational Context & Generation Prompts**:
+   - **Prior SQL Queries**: Prior candidate, executed, or failed SQL queries are strictly excluded from conversation history turns and SQL-generation prompts (`extra="forbid"`, `role="user"` only) to prevent prompt injection and context window bloat. Candidate SQL is transmitted only during execution requests to the local agent, and during optional answer synthesis requests (`POST /api/v1/synthesize-answer`) to summarize execution results.
+   - **Raw Database Rows**: Zero rows, cell values, or raw records are ever transmitted to the hosted API service across generation, conversation context, or answer synthesis.
+   - **Database Credentials & Connection Strings**: Zero passwords, hostnames, or connection strings are ever transmitted over the network or stored remotely.
+   - **Diagnostics**: Raw ODBC error traces and internal driver details are stripped and sanitized locally before any display.
+
 ---
 
 ## 8. Trusted Connection Profiles & Execution Isolation
@@ -454,6 +549,24 @@ Stored in `~/.query_pilot/profiles.json` on the user's local machine:
   Engines are keyed strictly by `profile_id`. A connection for Profile A never shares or uses the connection pool of Profile B.
 - **Schema Cache TTL:** Model-facing schemas are cached in memory keyed by `profile_id` with a 1-hour TTL.
 - **Revocation & Cleanup:** If a profile is deleted from `profiles.json`, the agent disposes of the corresponding SQLAlchemy engine pool (`engine.dispose()`) and purges its schema cache. Subsequent requests for that profile fail closed with HTTP 404 Profile Not Found.
+
+### 8.4 API Dialect Routing & Authority Boundaries
+
+QueryPilot connects dialect-aware SQL generation across the Local Agent → Hosted API → Gemini workflow while preserving local execution authority:
+
+1. **Supported Dialects & Aliases:**
+   - Supported canonical dialects: `tsql` (Microsoft SQL Server) and `sqlite` (SQLite 3).
+   - Clean alias normalization: `mssql` / `t-sql` / omitted → `tsql`; `sqlite3` → `sqlite`. Unsupported dialects are rejected with HTTP 422.
+2. **Authoritative Dialect Resolution:**
+   - The dialect sent to the hosted API is derived strictly from the local profile's authoritative `engine_type`.
+   - Even if the frontend or user question requests a different dialect, the local profile's engine configuration strictly overrides it.
+   - If an existing profile has no explicit engine type, it defaults safely to `tsql`.
+3. **Privacy & Redaction Boundary:**
+   - Local profile IDs, file paths, connection strings, and credentials are never transmitted to the hosted API.
+   - The agent proxy strips `profile_id`, `database_path`, `server`, and credentials from generation payloads before dispatching upstream.
+4. **Execution Authority Invariant:**
+   - The hosted API generates candidate SQL for the target dialect; it never connects to customer databases and never executes SQL.
+   - The returned candidate SQL must pass independent local read-only safeguards (SQLite authorizer and timeout watchdog for SQLite; AST safety validation and transaction isolation for MSSQL) before execution.
 
 ---
 
@@ -1148,4 +1261,67 @@ Future implementation tasks must verify each of the following 10 acceptance crit
 8. **Schema Context Size Enforcement:** Automated API tests must assert that `POST /api/v1/generate-sql` rejects schema payloads exceeding 48 KB or table counts exceeding 50 with HTTP 422.
 9. **Cross-Field Status Validation:** Automated API tests must assert that `GenerateSQLResponse` and `SynthesizeAnswerResponse` reject invalid field combinations (e.g. `status: "generated"` with missing SQL, or `status: "unsupported"` with populated SQL).
 10. **Separate Milestone for Live Driver Verification:** The repository documentation must clearly classify live driver-level statement timeout enforcement under connection pooling as unverified until an authorized live-database integration milestone is executed.
+
+---
+
+## 14. Advanced Subsystems & UI Architecture (Milestones B21 & B22)
+
+The architecture has expanded to incorporate bounded retrieval for business metrics, bounded schema documentation, and client-side visualization workflows:
+
+```mermaid
+flowchart TD
+    subgraph Client ["Client Browser (Volatile Memory)"]
+        UI["React 19 Workspace"]
+        MetricModal["MetricConfigModal\n(<= 5 metrics, <= 8192 bytes)"]
+        HistoryDrawer["ConversationHistoryDrawer\n(<= 3 turns, Safe Display Model)"]
+        Visualizer["ResultVisualizer (Lazy Loaded)\n(Bar, Line, Scatter + Gaps)"]
+
+        MetricModal -.->|"Inject into request"| UI
+        UI -->|"Execute Query"| LocalAgent
+        LocalAgent -->|"Result rows (in-memory)"| UI
+        UI -->|"Display rows"| Visualizer
+        UI -->|"Record completed turn\n(NO SQL, NO rows)"| HistoryDrawer
+    end
+
+    subgraph BackendAPI ["Generation API Service (:8000)"]
+        Matcher["BusinessMetricsMatcher\n(Relevance, Follow-up gate, Top-3, <= 1200 chars)"]
+        SchemaBudget["Schema Context Budget Formatter\n(<= 48 KB / 49,152 UTF-8 bytes)"]
+        PromptBuilder["Prompt Construction Engine\n(Inert literal metric text)"]
+        GeminiClient["Gemini LLM Client"]
+
+        UI -->|"Generate Candidate Request"| Matcher
+        Matcher --> PromptBuilder
+        SchemaBudget --> PromptBuilder
+        PromptBuilder --> GeminiClient
+    end
+
+    subgraph LocalAgent ["Local Agent Daemon (:8001)"]
+        ASTValidator["SQLValidator (sqlglot)\n(Read-only SELECT, Table/Col check)"]
+        Executor["ReadOnlySQLExecutor (pyodbc)\n(15s timeout, 100 row ceiling)"]
+    end
+```
+
+### 14.1 Request-Scoped Business Metrics Retrieval Engine (`metrics_matcher.py`)
+- **Deterministic Pure Functional Logic**: Pure in-memory matching with zero external network or embedding dependencies.
+- **Scoring Pipeline**: Evaluates candidate metrics using tokenized phrase matching, name overlap, substantive description overlap, and formula term presence.
+- **Anti-Bleeding Follow-Up Gate**: Uses `is_conversational_follow_up()` to allow genuine follow-ups (e.g. *"Filter them by computer science department"*) to retain relevant prior intent, while blocking independent topic shifts from inheriting stale intent.
+- **Entity Compatibility**: In conversational follow-ups, blocks metrics if the current question explicitly targets an entity or table incompatible with the metric's declared applicable tables.
+- **Budget Envelopes**: Capped at at most 3 selected metrics and 1,200 rendered prompt characters. Formulas are rendered strictly as delimited informational text.
+
+### 14.2 Bounded Schema Documentation Formatting (`format_schema_context`)
+- **Budget Ceiling**: Enforces a strict maximum of 49,152 UTF-8 bytes (48 KB) on the final formatted schema context prompt.
+- **Sanitized Documentation**: Formats table comments (max 300 chars) and column comments (max 150 chars) with prompt injection sanitization.
+- **Deterministic Pruning**: When schema context exceeds 48 KB, lower-priority comments are deterministically pruned while preserving database dialect headers, table declarations, and foreign key relationships.
+
+### 14.3 Client-Side Interactive Data Visualization (`ResultVisualizer.tsx`)
+- **Component-Level Code Splitting**: Lazy-loaded via `React.lazy` and `React.Suspense`. Defers the 407 kB Recharts chunk until the user activates the chart view, reducing initial application bundle size by >53%.
+- **True Missing-Value Semantics**: Missing, null, undefined, boolean, and non-numeric values are plotted as gaps (`null`), never silently converted to zero. Valid numeric zeroes (`0`, `"0"`) are preserved at the baseline.
+- **Deterministic Uniform Stride Sampling**: Datasets exceeding 200 points (line/scatter) or 100 categories (bar) are sampled via `sampleUniformStride`, ensuring first and last endpoints are preserved and intervals are uniformly distributed.
+- **Local-Only Privacy Invariant**: Consumes raw rows strictly from browser memory (`props.result.rows`); zero result rows are transmitted across the network or stored in web storage.
+
+### 14.4 Bounded Multi-Turn Conversation History (`ConversationHistoryDrawer.tsx`)
+- **Bounded Capacity**: Bounded to at most 3 turns with FIFO sliding-window eviction.
+- **Safe Display Model**: Stores only turn number, question, resolved intent, synthesized summary, column names, row count, execution status, and timestamp. Strictly forbids storing SQL query text, cell values, database rows, or credentials.
+- **Turn Restoration & Branching**: Allows restoring any earlier turn $k$, restoring the question input while automatically truncating subsequent turns ($> k$) from both history and context, ensuring clean conversational branching.
+- **Volatile Lifecycle Resets**: Cleared immediately on "+ New Topic", active profile change, session expiration, or user logout.
 

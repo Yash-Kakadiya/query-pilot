@@ -1,6 +1,62 @@
 /* =============================================================================
-   QueryPilot Frontend Design System & Workspace Styles
+   Business Metric Configuration Trigger Bar (Milestone B22-C)
    ============================================================================= */
+.metric-config-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.metric-config-trigger-btn {
+  background: var(--card-bg, #1e293b);
+  border: 1px solid var(--border-color, #334155);
+  color: var(--text-primary, #f8fafc);
+  border-radius: 6px;
+  padding: 0.4rem 0.85rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  transition: all 0.15s ease;
+}
+
+.metric-config-trigger-btn:hover {
+  background: #334155;
+  border-color: #3b82f6;
+  color: #60a5fa;
+}
+
+.metric-config-active-hint {
+  font-size: 0.75rem;
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  padding: 0.25rem 0.5rem;
+  border-radius: 9999px;
+}
+
+.history-quick-reset-btn {
+  background: transparent;
+  border: 1px solid #cbd5e1;
+  color: #64748b;
+  border-radius: 6px;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.history-quick-reset-btn:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+  border-color: #94a3b8;
+}
+
+
 
 /* Layout Container */
 .app-container {

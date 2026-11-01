@@ -19,11 +19,14 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Union
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.engine import Connection, Engine, Inspector
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.pool import NullPool
 
 from query_pilot.db.connection import (
     DatabaseConnectionError,
     DatabaseSecurityError,
+    create_profile_sqlite_engine,
     verify_database_context,
+    verify_sqlite_database_context,
 )
 from query_pilot.db.factory import (
     ProfileConnectionFactory,
@@ -95,10 +98,17 @@ class ProfileDatabaseIntrospector:
             # Derive immutable ProfileEngineConfiguration from ConnectionProfile
             timeout = config.clamp_timeout()
             max_rows = config.clamp_row_limit()
-            engine_kwargs = {
-                "pool_pre_ping": True,
-                "connect_args": {"timeout": timeout},
-            }
+            if config.engine_type == "sqlite":
+                engine_kwargs = {
+                    "poolclass": NullPool,
+                }
+                schema_name = config.schema_name or "main"
+            else:
+                engine_kwargs = {
+                    "pool_pre_ping": True,
+                    "connect_args": {"timeout": timeout},
+                }
+                schema_name = config.schema_name or "dbo"
             policy = config.get_sensitive_column_policy()
             self._config = ProfileEngineConfiguration(
                 profile_id=config.profile_id,
@@ -111,7 +121,9 @@ class ProfileDatabaseIntrospector:
                 max_row_limit=max_rows,
                 allowed_tables=config.allowed_tables,
                 sensitive_columns=tuple(sorted(list(policy.denylist))),
-                schema_name=config.schema_name,
+                schema_name=schema_name,
+                engine_type=config.engine_type,
+                database_path=config.database_path,
             )
         elif isinstance(config, ProfileEngineConfiguration):
             self._config = config
@@ -170,7 +182,7 @@ class ProfileDatabaseIntrospector:
 
         if self._factory is not None:
             try:
-                eng = self._factory.create_engine(self._config.profile_id)
+                eng = self._factory.create_engine(self._config.profile_id, mode="introspection")
                 return eng.connect()
             except SQLAlchemyError as exc:
                 sanitized = sanitize_message(str(exc))
@@ -179,6 +191,24 @@ class ProfileDatabaseIntrospector:
                 ) from exc
 
         try:
+            if self._config.engine_type == "sqlite" and self._config.database_path:
+                from query_pilot.db.profile import ConnectionProfile
+                # Construct ephemeral profile for introspection engine factory
+                ephemeral_profile = ConnectionProfile(
+                    profile_id=self._config.profile_id,
+                    display_name=self._config.display_name,
+                    engine_type="sqlite",
+                    database_path=self._config.database_path,
+                    database_name=self._config.expected_db,
+                    schema_name=self._config.schema_name or "main",
+                    timeout_seconds=self._config.timeout_seconds,
+                    max_row_limit=self._config.max_row_limit,
+                    allowed_tables=self._config.allowed_tables,
+                    sensitive_columns=self._config.sensitive_columns,
+                )
+                eng = create_profile_sqlite_engine(ephemeral_profile, mode="introspection")
+                return eng.connect()
+
             eng = create_engine(self._config.sqlalchemy_url, **self._config.engine_kwargs)
             return eng.connect()
         except Exception as exc:
@@ -225,11 +255,20 @@ class ProfileDatabaseIntrospector:
                 f"('{self.default_schema_name}') with '{schema_name}'."
             )
 
-        target_schema = self.default_schema_name
+        if self._config.engine_type == "sqlite":
+            target_schema = None
+            metadata_schema_name = "main"
+        else:
+            target_schema = self.default_schema_name
+            metadata_schema_name = target_schema
 
         conn = self._acquire_connection()
         try:
-            db_name = verify_database_context(conn, expected_db=self._config.expected_db)
+            if self._config.engine_type == "sqlite":
+                verify_sqlite_database_context(conn, expected_path=self._config.database_path or "")
+                db_name = self._config.expected_db
+            else:
+                db_name = verify_database_context(conn, expected_db=self._config.expected_db)
             inspector: Inspector = inspect(conn)
 
             try:
@@ -343,7 +382,7 @@ class ProfileDatabaseIntrospector:
 
                     tables.append(
                         TableMetadata(
-                            schema_name=target_schema,
+                            schema_name=metadata_schema_name,
                             table_name=tbl_name,
                             columns=columns,
                             primary_keys=pk_columns,

@@ -150,6 +150,11 @@ async function sendV1Request<T>(
     headers[ACCESS_KEY_HEADER] = effectiveKey
   }
 
+  const effectiveProfileId = options?.profileId?.trim()
+  if (effectiveProfileId) {
+    headers['X-Profile-ID'] = effectiveProfileId
+  }
+
   let response: Response
   try {
     response = await fetch(url, {
@@ -302,11 +307,15 @@ export async function generateSql(
   const payload: GenerateSQLRequest = {
     question: trimmedQuestion,
     schema_context: validatedSchemaContext,
+    ...(request.dialect ? { dialect: request.dialect } : {}),
     ...(request.conversation_context && request.conversation_context.length > 0
       ? { conversation_context: request.conversation_context }
       : {}),
     ...(normalizedDiagnosticFeedback
       ? { diagnostic_feedback: normalizedDiagnosticFeedback }
+      : {}),
+    ...(request.business_metrics && request.business_metrics.length > 0
+      ? { business_metrics: request.business_metrics }
       : {}),
     ...(effectiveRequestId ? { request_id: effectiveRequestId } : {}),
   }

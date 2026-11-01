@@ -21,10 +21,12 @@ export interface ProfileOnboardingModalProps {
 }
 
 interface FormFields {
+  engineType: 'mssql' | 'sqlite'
   profileId: string
   displayName: string
   server: string
   databaseName: string
+  databasePath: string
   schemaName: string
   timeoutSeconds: number
   maxRowLimit: number
@@ -32,10 +34,12 @@ interface FormFields {
 }
 
 const INITIAL_FIELDS: FormFields = {
+  engineType: 'mssql',
   profileId: '',
   displayName: '',
   server: 'localhost',
   databaseName: '',
+  databasePath: '',
   schemaName: 'dbo',
   timeoutSeconds: 15,
   maxRowLimit: 100,
@@ -49,13 +53,13 @@ function mapFailureCodeToFriendlyMessage(code?: ConnectionFailureCode | null, fa
     case 'AUTH_FAILED':
       return 'Windows Integrated Authentication failed. Please verify that your current Windows user account has access permissions to this SQL Server instance.'
     case 'UNREACHABLE':
-      return 'SQL Server instance is unreachable. Please verify that SQL Server is running, the host/instance name is correct, and TCP/IP or Named Pipes protocols are enabled.'
+      return 'Database instance or file is unreachable. Please verify that the server is running or that the local SQLite database file path is accessible.'
     case 'TIMEOUT':
       return 'Connection timed out. The local database did not respond within the configured timeout window.'
     case 'DATABASE_MISMATCH':
-      return 'Database mismatch. Successfully contacted SQL Server, but the specified database does not exist or cannot be accessed.'
+      return 'Database mismatch. The connected database did not match the expected database identity or canonical file path.'
     case 'DRIVER_ERROR':
-      return 'ODBC Driver error. Ensure that "ODBC Driver 17 for SQL Server" is installed on this machine.'
+      return 'Driver error. Ensure that the required database driver is installed on this machine.'
     case 'CONNECTION_FAILED':
     default:
       return fallbackMessage || 'Failed to establish connection to the specified database.'
@@ -142,6 +146,29 @@ export function ProfileOnboardingModal({
     }
   }
 
+  const handleEngineTypeChange = (newEngine: 'mssql' | 'sqlite') => {
+    if (newEngine === fields.engineType) {
+      return
+    }
+    setFields((prev) => ({
+      ...prev,
+      engineType: newEngine,
+      schemaName: newEngine === 'sqlite' ? 'main' : 'dbo',
+      // Clear sensitive databasePath when switching away from SQLite
+      databasePath: newEngine === 'sqlite' ? prev.databasePath : '',
+    }))
+    // Clear engine-specific validation errors upon engine switch
+    setFieldErrors((prev) => {
+      const next = { ...prev }
+      delete next.server
+      delete next.databaseName
+      delete next.databasePath
+      delete next.schemaName
+      return next
+    })
+    setGeneralError(null)
+  }
+
   const validateClientFields = (): boolean => {
     const errors: Record<string, string> = {}
     const pid = fields.profileId.trim()
@@ -153,26 +180,38 @@ export function ProfileOnboardingModal({
       errors.profileId = 'Profile ID may only contain letters, numbers, underscores, and hyphens.'
     }
 
-    const srv = fields.server.trim()
-    if (!srv) {
-      errors.server = 'SQL Server host or instance is required.'
-    } else if (srv.length > 255) {
-      errors.server = 'Server target cannot exceed 255 characters.'
-    }
-
-    const db = fields.databaseName.trim()
-    if (!db) {
-      errors.databaseName = 'Database name is required.'
-    } else if (db.length > 128) {
-      errors.databaseName = 'Database name cannot exceed 128 characters.'
-    }
-
     if (fields.displayName.trim().length > 128) {
       errors.displayName = 'Display name cannot exceed 128 characters.'
     }
 
-    if (fields.schemaName.trim().length > 128) {
-      errors.schemaName = 'Schema name cannot exceed 128 characters.'
+    if (fields.engineType === 'mssql') {
+      const srv = fields.server.trim()
+      if (!srv) {
+        errors.server = 'SQL Server host or instance is required.'
+      } else if (srv.length > 255) {
+        errors.server = 'Server target cannot exceed 255 characters.'
+      }
+
+      const db = fields.databaseName.trim()
+      if (!db) {
+        errors.databaseName = 'Database name is required.'
+      } else if (db.length > 128) {
+        errors.databaseName = 'Database name cannot exceed 128 characters.'
+      }
+
+      if (fields.schemaName.trim().length > 128) {
+        errors.schemaName = 'Schema name cannot exceed 128 characters.'
+      }
+    } else {
+      // SQLite validation
+      const dbPath = fields.databasePath.trim()
+      if (!dbPath) {
+        errors.databasePath = 'Database file path is required.'
+      } else if (dbPath.length > 1000) {
+        errors.databasePath = 'Database path exceeds maximum allowed length.'
+      } else if (!/^(?:[a-zA-Z]:[\\/]|\\\\|\/)/.test(dbPath)) {
+        errors.databasePath = 'Please provide an absolute path to the SQLite database file (e.g. C:\\... or /...).'
+      }
     }
 
     if (fields.timeoutSeconds < 1 || fields.timeoutSeconds > 15) {
@@ -203,19 +242,31 @@ export function ProfileOnboardingModal({
     setSubmissionStep('validating')
 
     const effectiveDisplayName = fields.displayName.trim() || fields.profileId.trim()
-    const payload: CreateProfileRequest = {
-      profile_id: fields.profileId.trim(),
-      display_name: effectiveDisplayName,
-      server: fields.server.trim(),
-      database_name: fields.databaseName.trim(),
-      schema_name: fields.schemaName.trim() || 'dbo',
-      driver: 'ODBC Driver 17 for SQL Server',
-      engine_type: 'mssql',
-      use_trusted_connection: true,
-      timeout_seconds: fields.timeoutSeconds,
-      max_row_limit: fields.maxRowLimit,
-      set_as_default: fields.setAsDefault,
-    }
+    const payload: CreateProfileRequest =
+      fields.engineType === 'sqlite'
+        ? {
+            profile_id: fields.profileId.trim(),
+            display_name: effectiveDisplayName,
+            engine_type: 'sqlite',
+            database_path: fields.databasePath.trim(),
+            schema_name: 'main',
+            timeout_seconds: fields.timeoutSeconds,
+            max_row_limit: fields.maxRowLimit,
+            set_as_default: fields.setAsDefault,
+          }
+        : {
+            profile_id: fields.profileId.trim(),
+            display_name: effectiveDisplayName,
+            engine_type: 'mssql',
+            server: fields.server.trim(),
+            database_name: fields.databaseName.trim(),
+            schema_name: fields.schemaName.trim() || 'dbo',
+            driver: 'ODBC Driver 17 for SQL Server',
+            use_trusted_connection: true,
+            timeout_seconds: fields.timeoutSeconds,
+            max_row_limit: fields.maxRowLimit,
+            set_as_default: fields.setAsDefault,
+          }
 
     try {
       // 1. Authoritative local agent offline validation
@@ -310,6 +361,8 @@ export function ProfileOnboardingModal({
               <p className="profile-modal-subtitle">
                 {savedProfile
                   ? 'Verify connectivity or proceed to use this database profile.'
+                  : fields.engineType === 'sqlite'
+                  ? 'Configure an approved local SQLite database profile for natural-language queries.'
                   : 'Configure an approved local SQL Server database profile for natural-language queries.'}
               </p>
             </div>
@@ -335,12 +388,49 @@ export function ProfileOnboardingModal({
               </div>
             )}
 
+            {/* Database Engine Selector */}
+            <div className="profile-engine-selector-group" role="radiogroup" aria-label="Database Engine">
+              <span className="profile-form-label">Select Database Engine <span className="required-star">*</span></span>
+              <div className="engine-toggle-buttons">
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={fields.engineType === 'mssql'}
+                  className={`engine-toggle-btn ${fields.engineType === 'mssql' ? 'engine-active' : ''}`}
+                  onClick={() => handleEngineTypeChange('mssql')}
+                  disabled={isSubmitting}
+                >
+                  <span className="engine-icon" aria-hidden="true">🏢</span>
+                  <span className="engine-label">Microsoft SQL Server</span>
+                </button>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={fields.engineType === 'sqlite'}
+                  className={`engine-toggle-btn ${fields.engineType === 'sqlite' ? 'engine-active' : ''}`}
+                  onClick={() => handleEngineTypeChange('sqlite')}
+                  disabled={isSubmitting}
+                >
+                  <span className="engine-icon" aria-hidden="true">🗃️</span>
+                  <span className="engine-label">SQLite</span>
+                </button>
+              </div>
+            </div>
+
             {/* Security Guarantee Notice */}
             <div className="profile-security-banner">
               <span className="security-icon" aria-hidden="true">🔒</span>
               <div className="security-text">
-                <strong>Local Security Policy:</strong> Fixed to <strong>Microsoft SQL Server</strong> and{' '}
-                <strong>Windows Integrated Authentication</strong>. No SQL passwords or arbitrary connection strings permitted.
+                {fields.engineType === 'sqlite' ? (
+                  <>
+                    <strong>Local Security Policy:</strong> SQLite local file engine. Read-only authorizer and watchdog timeout enforced. No database file upload or remote queries permitted.
+                  </>
+                ) : (
+                  <>
+                    <strong>Local Security Policy:</strong> Fixed to <strong>Microsoft SQL Server</strong> and{' '}
+                    <strong>Windows Integrated Authentication</strong>. No SQL passwords or arbitrary connection strings permitted.
+                  </>
+                )}
               </div>
             </div>
 
@@ -355,7 +445,7 @@ export function ProfileOnboardingModal({
                   id="onboarding-profile-id"
                   type="text"
                   className={`profile-form-input ${fieldErrors.profileId ? 'input-error' : ''}`}
-                  placeholder="e.g. sales_db_local"
+                  placeholder={fields.engineType === 'sqlite' ? 'e.g. sales_sqlite_local' : 'e.g. sales_db_local'}
                   value={fields.profileId}
                   onChange={(e) => handleFieldChange('profileId', e.target.value)}
                   disabled={isSubmitting}
@@ -377,7 +467,7 @@ export function ProfileOnboardingModal({
                   id="onboarding-display-name"
                   type="text"
                   className={`profile-form-input ${fieldErrors.displayName ? 'input-error' : ''}`}
-                  placeholder="e.g. Local Sales Warehouse"
+                  placeholder={fields.engineType === 'sqlite' ? 'e.g. Local SQLite Store' : 'e.g. Local Sales Warehouse'}
                   value={fields.displayName}
                   onChange={(e) => handleFieldChange('displayName', e.target.value)}
                   disabled={isSubmitting}
@@ -389,70 +479,99 @@ export function ProfileOnboardingModal({
                 <span className="field-help-text">Human-readable label for UI selection (optional).</span>
               </div>
 
-              {/* Server Host/Instance */}
-              <div className="profile-form-group">
-                <label htmlFor="onboarding-server" className="profile-form-label">
-                  SQL Server Host / Instance <span className="required-star">*</span>
-                </label>
-                <input
-                  id="onboarding-server"
-                  type="text"
-                  className={`profile-form-input ${fieldErrors.server ? 'input-error' : ''}`}
-                  placeholder="e.g. localhost or localhost\SQLEXPRESS"
-                  value={fields.server}
-                  onChange={(e) => handleFieldChange('server', e.target.value)}
-                  disabled={isSubmitting}
-                  maxLength={255}
-                  required
-                />
-                {fieldErrors.server && (
-                  <span className="field-error-text" role="alert">{fieldErrors.server}</span>
-                )}
-                <span className="field-help-text">Must target local machine (localhost, 127.0.0.1, .\instance).</span>
-              </div>
+              {/* Engine-Specific Fields */}
+              {fields.engineType === 'mssql' ? (
+                <>
+                  {/* Server Host/Instance */}
+                  <div className="profile-form-group">
+                    <label htmlFor="onboarding-server" className="profile-form-label">
+                      SQL Server Host / Instance <span className="required-star">*</span>
+                    </label>
+                    <input
+                      id="onboarding-server"
+                      type="text"
+                      className={`profile-form-input ${fieldErrors.server ? 'input-error' : ''}`}
+                      placeholder="e.g. localhost or localhost\SQLEXPRESS"
+                      value={fields.server}
+                      onChange={(e) => handleFieldChange('server', e.target.value)}
+                      disabled={isSubmitting}
+                      maxLength={255}
+                      required
+                    />
+                    {fieldErrors.server && (
+                      <span className="field-error-text" role="alert">{fieldErrors.server}</span>
+                    )}
+                    <span className="field-help-text">Must target local machine (localhost, 127.0.0.1, .\instance).</span>
+                  </div>
 
-              {/* Database Name */}
-              <div className="profile-form-group">
-                <label htmlFor="onboarding-database" className="profile-form-label">
-                  Database Name <span className="required-star">*</span>
-                </label>
-                <input
-                  id="onboarding-database"
-                  type="text"
-                  className={`profile-form-input ${fieldErrors.databaseName ? 'input-error' : ''}`}
-                  placeholder="e.g. SalesAnalytics"
-                  value={fields.databaseName}
-                  onChange={(e) => handleFieldChange('databaseName', e.target.value)}
-                  disabled={isSubmitting}
-                  maxLength={128}
-                  required
-                />
-                {fieldErrors.databaseName && (
-                  <span className="field-error-text" role="alert">{fieldErrors.databaseName}</span>
-                )}
-                <span className="field-help-text">Target SQL Server database name.</span>
-              </div>
+                  {/* Database Name */}
+                  <div className="profile-form-group">
+                    <label htmlFor="onboarding-database" className="profile-form-label">
+                      Database Name <span className="required-star">*</span>
+                    </label>
+                    <input
+                      id="onboarding-database"
+                      type="text"
+                      className={`profile-form-input ${fieldErrors.databaseName ? 'input-error' : ''}`}
+                      placeholder="e.g. SalesAnalytics"
+                      value={fields.databaseName}
+                      onChange={(e) => handleFieldChange('databaseName', e.target.value)}
+                      disabled={isSubmitting}
+                      maxLength={128}
+                      required
+                    />
+                    {fieldErrors.databaseName && (
+                      <span className="field-error-text" role="alert">{fieldErrors.databaseName}</span>
+                    )}
+                    <span className="field-help-text">Target SQL Server database name.</span>
+                  </div>
 
-              {/* Schema Name */}
-              <div className="profile-form-group">
-                <label htmlFor="onboarding-schema" className="profile-form-label">
-                  Default Schema
-                </label>
-                <input
-                  id="onboarding-schema"
-                  type="text"
-                  className={`profile-form-input ${fieldErrors.schemaName ? 'input-error' : ''}`}
-                  placeholder="dbo"
-                  value={fields.schemaName}
-                  onChange={(e) => handleFieldChange('schemaName', e.target.value)}
-                  disabled={isSubmitting}
-                  maxLength={128}
-                />
-                {fieldErrors.schemaName && (
-                  <span className="field-error-text" role="alert">{fieldErrors.schemaName}</span>
-                )}
-                <span className="field-help-text">Relational schema namespace (defaults to dbo).</span>
-              </div>
+                  {/* Schema Name */}
+                  <div className="profile-form-group">
+                    <label htmlFor="onboarding-schema" className="profile-form-label">
+                      Default Schema
+                    </label>
+                    <input
+                      id="onboarding-schema"
+                      type="text"
+                      className={`profile-form-input ${fieldErrors.schemaName ? 'input-error' : ''}`}
+                      placeholder="dbo"
+                      value={fields.schemaName}
+                      onChange={(e) => handleFieldChange('schemaName', e.target.value)}
+                      disabled={isSubmitting}
+                      maxLength={128}
+                    />
+                    {fieldErrors.schemaName && (
+                      <span className="field-error-text" role="alert">{fieldErrors.schemaName}</span>
+                    )}
+                    <span className="field-help-text">Relational schema namespace (defaults to dbo).</span>
+                  </div>
+                </>
+              ) : (
+                /* SQLite Database File Path */
+                <div className="profile-form-group profile-form-full-width">
+                  <label htmlFor="onboarding-database-path" className="profile-form-label">
+                    Database File Path <span className="required-star">*</span>
+                  </label>
+                  <input
+                    id="onboarding-database-path"
+                    type="text"
+                    className={`profile-form-input ${fieldErrors.databasePath ? 'input-error' : ''}`}
+                    placeholder="e.g. C:\sqlite\data\chinook.db or /var/data/chinook.db"
+                    value={fields.databasePath}
+                    onChange={(e) => handleFieldChange('databasePath', e.target.value)}
+                    disabled={isSubmitting}
+                    maxLength={1000}
+                    required
+                  />
+                  {fieldErrors.databasePath && (
+                    <span className="field-error-text" role="alert">{fieldErrors.databasePath}</span>
+                  )}
+                  <span className="field-help-text">
+                    Absolute local filesystem path to an existing SQLite database file. No files are uploaded to the browser or cloud.
+                  </span>
+                </div>
+              )}
 
               {/* Timeout & Max Row Limit row */}
               <div className="profile-form-group">
@@ -498,18 +617,37 @@ export function ProfileOnboardingModal({
 
             {/* Locked security attributes summary */}
             <div className="profile-locked-attributes" aria-label="Fixed Security Configuration">
-              <span className="locked-badge">
-                <span className="locked-icon" aria-hidden="true">🔒</span>
-                Engine: <strong>MSSQL</strong>
-              </span>
-              <span className="locked-badge">
-                <span className="locked-icon" aria-hidden="true">🔒</span>
-                Auth: <strong>Windows Integrated</strong>
-              </span>
-              <span className="locked-badge">
-                <span className="locked-icon" aria-hidden="true">🔒</span>
-                Driver: <strong>ODBC Driver 17 for SQL Server</strong>
-              </span>
+              {fields.engineType === 'sqlite' ? (
+                <>
+                  <span className="locked-badge">
+                    <span className="locked-icon" aria-hidden="true">🔒</span>
+                    Engine: <strong>SQLite</strong>
+                  </span>
+                  <span className="locked-badge">
+                    <span className="locked-icon" aria-hidden="true">🔒</span>
+                    Mode: <strong>Read-Only Authorizer</strong>
+                  </span>
+                  <span className="locked-badge">
+                    <span className="locked-icon" aria-hidden="true">🔒</span>
+                    Schema: <strong>main</strong>
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="locked-badge">
+                    <span className="locked-icon" aria-hidden="true">🔒</span>
+                    Engine: <strong>MSSQL</strong>
+                  </span>
+                  <span className="locked-badge">
+                    <span className="locked-icon" aria-hidden="true">🔒</span>
+                    Auth: <strong>Windows Integrated</strong>
+                  </span>
+                  <span className="locked-badge">
+                    <span className="locked-icon" aria-hidden="true">🔒</span>
+                    Driver: <strong>ODBC Driver 17 for SQL Server</strong>
+                  </span>
+                </>
+              )}
             </div>
 
             {/* Set as Default Profile Checkbox */}
@@ -572,28 +710,48 @@ export function ProfileOnboardingModal({
 
             <div className="saved-meta-summary">
               <div className="meta-row">
-                <span className="meta-row-label">Server Target:</span>
-                <span className="meta-row-value">{fields.server}</span>
+                <span className="meta-row-label">Engine:</span>
+                <span className="meta-row-value">{fields.engineType === 'sqlite' ? 'SQLite' : 'Microsoft SQL Server'}</span>
               </div>
-              <div className="meta-row">
-                <span className="meta-row-label">Target Database:</span>
-                <span className="meta-row-value">{fields.databaseName}</span>
-              </div>
-              <div className="meta-row">
-                <span className="meta-row-label">Schema:</span>
-                <span className="meta-row-value">{savedProfile.schema_name || 'dbo'}</span>
-              </div>
-              <div className="meta-row">
-                <span className="meta-row-label">Authentication:</span>
-                <span className="meta-row-value">Windows Integrated (Trusted Connection)</span>
-              </div>
+              {fields.engineType === 'mssql' ? (
+                <>
+                  <div className="meta-row">
+                    <span className="meta-row-label">Server Target:</span>
+                    <span className="meta-row-value">{fields.server}</span>
+                  </div>
+                  <div className="meta-row">
+                    <span className="meta-row-label">Target Database:</span>
+                    <span className="meta-row-value">{fields.databaseName}</span>
+                  </div>
+                  <div className="meta-row">
+                    <span className="meta-row-label">Schema:</span>
+                    <span className="meta-row-value">{savedProfile.schema_name || 'dbo'}</span>
+                  </div>
+                  <div className="meta-row">
+                    <span className="meta-row-label">Authentication:</span>
+                    <span className="meta-row-value">Windows Integrated (Trusted Connection)</span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="meta-row">
+                    <span className="meta-row-label">Schema:</span>
+                    <span className="meta-row-value">{savedProfile.schema_name || 'main'}</span>
+                  </div>
+                  <div className="meta-row">
+                    <span className="meta-row-label">Security Policy:</span>
+                    <span className="meta-row-value">Read-Only Authorizer & Watchdog Timer</span>
+                  </div>
+                </>
+              )}
             </div>
 
             <div className="connection-test-section">
               <h4 className="conn-test-title">Explicit Database Connectivity Test</h4>
               <p className="conn-test-desc">
-                Execute an isolated, bounded query (<code>SELECT DB_NAME()</code>) to verify that QueryPilot
-                can communicate with your local SQL Server database.
+                {fields.engineType === 'sqlite'
+                  ? 'Execute an isolated, bounded probe to verify that QueryPilot can access and query the local SQLite database file.'
+                  : 'Execute an isolated, bounded query (SELECT DB_NAME()) to verify that QueryPilot can communicate with your local SQL Server database.'}
               </p>
 
               {connectionTestResult && (
@@ -615,7 +773,7 @@ export function ProfileOnboardingModal({
                   </div>
                   <p className="test-result-message">
                     {connectionTestResult.connected
-                      ? `Verified database: ${connectionTestResult.database_name || fields.databaseName}`
+                      ? `Verified database: ${connectionTestResult.database_name || fields.displayName || savedProfile.profile_id}`
                       : mapFailureCodeToFriendlyMessage(
                           connectionTestResult.failure_code,
                           connectionTestResult.message
@@ -645,7 +803,7 @@ export function ProfileOnboardingModal({
                   {isTestingConnection ? (
                     <>
                       <span className="spinner-inline" aria-hidden="true" />
-                      <span>Testing SQL Server Connection...</span>
+                      <span>{fields.engineType === 'sqlite' ? 'Testing SQLite Connection...' : 'Testing SQL Server Connection...'}</span>
                     </>
                   ) : connectionTestResult ? (
                     'Re-test Connection'

@@ -50,6 +50,33 @@ FORBIDDEN_ROWSET_FUNCTIONS: frozenset[str] = frozenset({
     "openxml",
 })
 
+# Supported SQL dialects and their normalized canonical names
+SUPPORTED_DIALECTS: dict[str, str] = {
+    "tsql": "tsql",
+    "t-sql": "tsql",
+    "mssql": "tsql",
+    "sqlite": "sqlite",
+    "sqlite3": "sqlite",
+}
+
+
+def normalize_dialect(dialect: Optional[str]) -> str:
+    """Normalize a dialect alias to its canonical dialect name ('tsql' or 'sqlite').
+
+    Defaults omitted or empty values to 'tsql'.
+    Normalizes 'mssql' and 't-sql' to 'tsql', 'sqlite3' to 'sqlite'.
+    Raises ValueError for unsupported dialects.
+    """
+    if dialect is None or not str(dialect).strip():
+        return "tsql"
+    cleaned = str(dialect).strip().lower()
+    if cleaned in SUPPORTED_DIALECTS:
+        return SUPPORTED_DIALECTS[cleaned]
+    raise ValueError(
+        f"Unsupported SQL dialect '{dialect}'. "
+        f"Supported dialects are 'tsql' and 'sqlite'."
+    )
+
 
 class SQLValidator:
     """Deterministic validator enforcing security and schema policy on SQL queries."""
@@ -60,6 +87,7 @@ class SQLValidator:
         settings: Optional[DatabaseSettings] = None,
         policy: Optional[SensitiveColumnPolicy] = None,
         max_rows: Optional[int] = None,
+        dialect: Optional[str] = "tsql",
     ):
         """Initialize the validator with model-facing schema and configuration.
 
@@ -68,11 +96,16 @@ class SQLValidator:
             settings: DatabaseSettings for defaults (defaults to cached settings).
             policy: SensitiveColumnPolicy for credential detection.
             max_rows: Maximum allowed rows for explicit LIMIT/TOP checks.
+            dialect: SQL dialect for parsing and normalization ('tsql' or 'sqlite', default 'tsql').
+
+        Raises:
+            ValueError: If an explicitly supplied dialect is not supported.
         """
         self.schema = schema
         self.settings = settings or get_db_settings()
         self.policy = policy or SensitiveColumnPolicy()
         self.max_rows = max_rows if max_rows is not None else self.settings.DB_MAX_ROW_LIMIT
+        self.dialect = normalize_dialect(dialect)
 
     def validate(self, sql: str) -> ValidationResult:
         """Inspect and validate a SQL query deterministically without executing it.
@@ -97,7 +130,7 @@ class SQLValidator:
 
         # 2. Syntax & Parsing via sqlglot
         try:
-            parsed = sqlglot.parse(sql, read="tsql")
+            parsed = sqlglot.parse(sql, read=self.dialect)
         except Exception as exc:
             return ValidationResult(
                 allowed=False,
@@ -478,7 +511,7 @@ class SQLValidator:
 
         # 8. Deterministic Normalization
         try:
-            normalized_sql = stmt.sql(dialect="tsql")
+            normalized_sql = stmt.sql(dialect=self.dialect)
         except Exception:
             normalized_sql = sql.strip()
 
@@ -497,6 +530,7 @@ def validate_sql(
     settings: Optional[DatabaseSettings] = None,
     policy: Optional[SensitiveColumnPolicy] = None,
     max_rows: Optional[int] = None,
+    dialect: Optional[str] = "tsql",
 ) -> ValidationResult:
     """Validate a SQL query against the model-facing schema and security policy.
 
@@ -506,6 +540,7 @@ def validate_sql(
         settings: Optional DatabaseSettings.
         policy: Optional SensitiveColumnPolicy.
         max_rows: Optional row limit override.
+        dialect: SQL dialect ('tsql' or 'sqlite', default 'tsql').
 
     Returns:
         ValidationResult with allowed status, reasons, and referenced objects.
@@ -515,5 +550,6 @@ def validate_sql(
         settings=settings,
         policy=policy,
         max_rows=max_rows,
+        dialect=dialect,
     )
     return validator.validate(sql)

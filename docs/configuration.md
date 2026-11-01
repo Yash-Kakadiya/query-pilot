@@ -293,12 +293,39 @@ The browser onboarding workflow strictly enforces a decoupled 5-stage lifecycle:
 | :--- | :--- | :---: | :--- |
 | `profile_id` | Profile ID | **Yes** | 1–64 characters; letters, numbers, underscores, and hyphens (`^[a-zA-Z0-9_-]+$`). Must be unique. |
 | `display_name` | Display Name | No | 1–128 characters human-readable label (defaults to `profile_id` if omitted). |
-| `server` | SQL Server Host / Instance | **Yes** | 1–255 characters. Must target local machine (`localhost`, `127.0.0.1`, `[::1]`, `.\INSTANCE`, `localhost\INSTANCE`). |
-| `database_name` | Database Name | **Yes** | 1–128 characters. System databases (`master`, `model`, `msdb`, `tempdb`) are strictly rejected. |
-| `schema_name` | Default Schema | No | Relational namespace (1–128 characters; defaults to `dbo`). |
+| `engine_type` | Database Engine | No | `'mssql'` (default) or `'sqlite'`. Determines dialect routing and execution factory. |
+| `database_path` | SQLite Database Path | **Yes (for SQLite)** | Absolute, canonical filesystem path to an existing regular SQLite file. Rejects UNC/extended paths, device names, and protected OS/QueryPilot paths (`.query_pilot`, `.env*`, `.git`). |
+| `server` | SQL Server Host / Instance | **Yes (for MSSQL)** | 1–255 characters. Must target local machine (`localhost`, `127.0.0.1`, `[::1]`, `.\INSTANCE`, `localhost\INSTANCE`). |
+| `database_name` | Database Name | **Yes (for MSSQL)** | 1–128 characters. System databases (`master`, `model`, `msdb`, `tempdb`) are strictly rejected. (In SQLite, defaults to database filename stem). |
+| `schema_name` | Default Schema | No | Relational namespace (1–128 characters; defaults to `dbo` for MSSQL, `main` for SQLite). |
 | `timeout_seconds` | Timeout (seconds) | No | Bounded execution ceiling: 1 to 15 seconds (default: 15s). |
 | `max_row_limit` | Max Row Limit | No | Bounded result ceiling: 1 to 100 rows (default: 100 rows). |
 | `set_as_default` | Set as Default | No | Boolean flag; designates this profile as the initial active profile. |
+
+#### SQLite Profile Configuration & Path Validation Policy
+
+For SQLite profiles (`engine_type: "sqlite"`), QueryPilot enforces dedicated filesystem and driver-level security boundaries:
+
+1. **Existing-File Requirement**:
+   - The targeted database path must already exist on the local agent host filesystem as a regular file (`stat.S_ISREG`).
+   - QueryPilot **never** creates missing databases or uses fallback writable paths.
+2. **Canonical Path Validation**:
+   - User home paths (`~`) are safely expanded. Symlinks and canonical targets are resolved.
+   - UNC network paths (`\\server\share`), Windows extended paths (`\\?\`), and Windows device names (`CON`, `PRN`, `AUX`, `NUL`) are strictly rejected.
+   - Protected locations (such as `~/.query_pilot`, `.env*`, `.git`, `C:\Windows`, `/etc`, `/sys`, `/proc`) fail closed with validation errors.
+3. **Manual Path Entry Limitation**:
+   - Standard browser sandboxes prevent JavaScript from inspecting absolute local filesystem paths via file input pickers (`<input type="file">`). Users must manually enter or paste the local file path into the onboarding input field.
+4. **Read-Only URI Enforcement**:
+   - Connections open exclusively via SQLite URI `file:<path>?mode=ro&uri=true` with `PRAGMA query_only = ON`.
+   - Never uses `immutable=1` (preserving compatibility with active WAL databases).
+5. **Physical Connection Authorizers**:
+   - Physical connections install an authorizer callback denying `SQLITE_INSERT`, `SQLITE_UPDATE`, `SQLITE_DELETE`, `SQLITE_PRAGMA`, `SQLITE_ATTACH`, `SQLITE_DETACH`, and schema mutations (DDL).
+   - Introspection and candidate execution use separate physical connections; authorizer policies are never toggled on shared connections.
+6. **WAL Sidecar Considerations**:
+   - If SQLite operates in Write-Ahead Logging (`WAL`) mode, the process opening the database in read-only mode may attempt to open or create shared memory sidecars (`-shm`, `-wal`). The directory containing the SQLite database must grant local read permissions.
+7. **Profile Engine Identification**:
+   - The local agent exposes `engine_type: "sqlite" | "mssql"` and `database_name` in safe profile summaries (`GET /agent/v1/profiles`), while strictly excluding `database_path` and raw server hostnames.
+   - Explicit `engine_type` metadata takes strict precedence in the frontend, ensuring profile badges (`[SQLite]` vs `[MSSQL]`) accurately reflect the local engine without ambiguous inference.
 
 #### Lifecycle Invariants
 
@@ -393,6 +420,25 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8001/api/health" -Method GET
 # 3. Verify frontend UI availability
 # Navigate to http://127.0.0.1:8001/app/ in your browser
 ```
+
+### 6.1 Business Metrics, Schema Documentation & Visualization Budgets
+
+Starting in Milestones B21 and B22, QueryPilot enforces deterministic operational budgets for business metrics, schema documentation retrieval, and client-side data visualizations:
+
+| Capability | Config / Validation Boundary | Hard Ceiling / Limit | Enforcement Mechanism |
+| :--- | :--- | :--- | :--- |
+| **Business Metric Definitions** | Client modal & API request payload | Max 5 definitions | Form submission blocks adding > 5 metrics |
+| **Metric Name Length** | `BusinessMetricDefinition.name` | 1–100 characters | Pydantic model validation & UI character counter |
+| **Metric Description Length** | `BusinessMetricDefinition.description` | 1–500 characters | Pydantic model validation & UI character counter |
+| **Metric Formula Length** | `BusinessMetricDefinition.calculation_formula` | <= 500 characters | Pydantic model validation & UI character counter |
+| **Applicable Tables per Metric** | `BusinessMetricDefinition.applicable_tables` | Max 10 tables | Checked against active projected schema |
+| **Aggregate Metric Payload** | `GenerateSQLRequest.business_metrics` | <= 8,192 UTF-8 bytes | `TextEncoder.encode()` check before dispatch |
+| **Metric Retrieval Top-K** | `MAX_SELECTED_METRICS` | Max 3 metrics | `match_business_metrics()` deterministic top-k |
+| **Rendered Metric Guidance** | `MAX_RENDERED_METRICS_CHARS` | Max 1,200 characters | `render_business_metrics_context()` omission guard |
+| **Formatted Schema Context** | `MAX_FORMATTED_SCHEMA_BYTES` | <= 49,152 UTF-8 bytes (48 KB) | `format_schema_context()` deterministic pruning |
+| **Line / Scatter Chart Points** | `MAX_POINTS_LINE`, `MAX_POINTS_SCATTER` | 200 points | Deterministic uniform stride sampling (`sampleUniformStride`) |
+| **Bar Chart Categories** | `MAX_POINTS_BAR` | 100 categories | Deterministic uniform stride sampling across full range |
+| **Conversation History Capacity**| `MAX_CONVERSATION_TURNS` | Max 3 prior turns | Sliding FIFO window; wipes on New Topic / Profile Switch |
 
 ---
 

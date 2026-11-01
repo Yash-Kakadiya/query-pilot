@@ -30,6 +30,7 @@ from typing import Any, Callable, Dict, Optional, Union
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 import httpx
+from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlalchemy.pool import NullPool
 
@@ -68,7 +69,9 @@ from query_pilot.api.security import StreamingPayloadSizeMiddleware
 from query_pilot.db.connection import (
     DatabaseConnectionError,
     DatabaseSecurityError,
+    create_profile_sqlite_engine,
     verify_database_context,
+    verify_sqlite_database_context,
 )
 from query_pilot.db.executor import QueryTimeoutError, UnsafeQueryError
 from query_pilot.db.factory import ProfileConnectionFactory
@@ -360,7 +363,9 @@ def create_agent_app(
                 ProfileSummary(
                     profile_id=profile.profile_id,
                     display_name=profile.display_name,
-                    schema_name=profile.schema_name or "dbo",
+                    engine_type=profile.engine_type,
+                    database_name=profile.database_name,
+                    schema_name=profile.schema_name or ("dbo" if profile.engine_type == "mssql" else "main"),
                     timeout_seconds=profile.timeout_seconds,
                     max_row_limit=profile.max_row_limit,
                     has_allowlist=profile.allowed_tables is not None,
@@ -444,9 +449,10 @@ def create_agent_app(
             display_name=body.display_name,
             server=body.server,
             database_name=body.database_name,
+            database_path=body.database_path,
             driver=body.driver,
             engine_type=body.engine_type,
-            use_trusted_connection=body.use_trusted_connection,
+            use_trusted_connection=body.use_trusted_connection if body.engine_type == "mssql" else True,
             timeout_seconds=body.timeout_seconds,
             max_row_limit=body.max_row_limit,
             allowed_tables=tuple(body.allowed_tables) if body.allowed_tables is not None else None,
@@ -528,7 +534,9 @@ def create_agent_app(
         summary = ProfileSummary(
             profile_id=new_profile.profile_id,
             display_name=new_profile.display_name,
-            schema_name=new_profile.schema_name or "dbo",
+            engine_type=new_profile.engine_type,
+            database_name=new_profile.database_name,
+            schema_name=new_profile.schema_name or ("dbo" if new_profile.engine_type == "mssql" else "main"),
             timeout_seconds=new_profile.timeout_seconds,
             max_row_limit=new_profile.max_row_limit,
             has_allowlist=new_profile.allowed_tables is not None,
@@ -578,6 +586,69 @@ def create_agent_app(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Profile '{profile_id}' not found.",
             )
+
+        if profile.engine_type == "sqlite":
+            temp_engine = None
+            start_time = time.perf_counter()
+            try:
+                temp_engine = create_profile_sqlite_engine(
+                    profile,
+                    mode="introspection",
+                    poolclass=NullPool,
+                )
+                with temp_engine.connect() as conn:
+                    verify_sqlite_database_context(conn, expected_path=profile.database_path or "")
+                    conn.execute(text("SELECT count(*) FROM sqlite_master;"))
+                    elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+                    return TestConnectionResponse(
+                        connected=True,
+                        database_name=profile.database_name,
+                        latency_ms=round(elapsed_ms, 2),
+                        message="Connection established and database context verified successfully.",
+                        failure_code=None,
+                    )
+            except DatabaseSecurityError:
+                elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+                return TestConnectionResponse(
+                    connected=False,
+                    database_name=None,
+                    latency_ms=round(elapsed_ms, 2),
+                    message="Connected database did not match the expected canonical path configured on this profile.",
+                    failure_code="DATABASE_MISMATCH",
+                )
+            except Exception as exc:
+                logger.exception("Test connection failed for profile '%s': %s", profile_id, exc)
+                elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+                err_str = str(exc).lower()
+                if "unable to open database file" in err_str or "does not exist" in err_str or "no such file" in err_str:
+                    failure_code = "FILE_NOT_FOUND"
+                    msg = "Unable to open SQLite database file. File may be missing or inaccessible."
+                elif any(s in err_str for s in ("file is not a database", "not a database", "corrupt", "malformed", "unrecognized file format")):
+                    failure_code = "CORRUPTED_DATABASE"
+                    msg = "SQLite database file is corrupted or not a valid SQLite database."
+                elif "database is locked" in err_str or "busy" in err_str:
+                    failure_code = "DATABASE_LOCKED"
+                    msg = "SQLite database is locked by another process."
+                elif "timeout" in err_str or "timed out" in err_str:
+                    failure_code = "TIMEOUT"
+                    msg = "Connection attempt timed out waiting for database lock."
+                else:
+                    failure_code = "CONNECTION_FAILED"
+                    msg = "Failed to establish a database connection."
+
+                return TestConnectionResponse(
+                    connected=False,
+                    database_name=None,
+                    latency_ms=round(elapsed_ms, 2),
+                    message=msg,
+                    failure_code=failure_code,
+                )
+            finally:
+                if temp_engine is not None:
+                    try:
+                        temp_engine.dispose()
+                    except Exception:
+                        pass
 
         temp_engine = None
         start_time = time.perf_counter()
@@ -675,6 +746,7 @@ def create_agent_app(
         engine = resolved_engine_mgr.get_or_create_engine(
             profile_id=profile_id,
             caller_engine=caller_engine,
+            mode="introspection",
         )
 
         introspector = ProfileDatabaseIntrospector(
@@ -754,6 +826,7 @@ def create_agent_app(
         engine = resolved_engine_mgr.get_or_create_engine(
             profile_id=profile_id,
             caller_engine=caller_engine,
+            mode="execution",
         )
 
         # Resolve active schema strictly bound to this profile
@@ -779,9 +852,14 @@ def create_agent_app(
 
         if active_schema is None:
             try:
+                introspect_engine = resolved_engine_mgr.get_or_create_engine(
+                    profile_id=profile_id,
+                    caller_engine=caller_engine,
+                    mode="introspection",
+                )
                 introspector = ProfileDatabaseIntrospector(
                     config=profile,
-                    engine=engine,
+                    engine=introspect_engine,
                     factory=resolved_factory,
                 )
                 active_schema = introspector.introspect_model_facing()

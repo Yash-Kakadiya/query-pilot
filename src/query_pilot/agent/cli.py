@@ -179,13 +179,15 @@ def build_parser() -> argparse.ArgumentParser:
     profile_subparsers = profile_parser.add_subparsers(dest="profile_action", help="Profile actions.")
 
     # profile add
-    add_parser = profile_subparsers.add_parser("add", help="Register an approved SQL Server database profile.")
+    add_parser = profile_subparsers.add_parser("add", help="Register an approved database profile.")
     add_parser.add_argument("--id", "--profile-id", dest="profile_id", type=str, required=False, help="Unique profile ID.")
     add_parser.add_argument("--name", "--display-name", dest="display_name", type=str, required=False, help="Human-readable display name.")
-    add_parser.add_argument("--server", type=str, required=False, default=None, help="SQL Server instance (default: localhost\\SQLEXPRESS).")
+    add_parser.add_argument("--engine", "--engine-type", dest="engine_type", type=str, required=False, default="mssql", choices=["mssql", "sqlite"], help="Database engine type ('mssql' or 'sqlite', default: mssql).")
+    add_parser.add_argument("--path", "--database-path", dest="database_path", type=str, required=False, default=None, help="Path to SQLite database file (required for --engine sqlite).")
+    add_parser.add_argument("--server", type=str, required=False, default=None, help="SQL Server instance (default: localhost\\SQLEXPRESS for mssql).")
     add_parser.add_argument("--database", "--database-name", dest="database_name", type=str, required=False, default=None, help="Target database name.")
-    add_parser.add_argument("--driver", type=str, required=False, default=None, help="ODBC Driver (default: ODBC Driver 17 for SQL Server).")
-    add_parser.add_argument("--schema", "--schema-name", dest="schema_name", type=str, required=False, default="dbo", help="Default schema (default: dbo).")
+    add_parser.add_argument("--driver", type=str, required=False, default=None, help="ODBC Driver (default: ODBC Driver 17 for SQL Server for mssql).")
+    add_parser.add_argument("--schema", "--schema-name", dest="schema_name", type=str, required=False, default=None, help="Default schema (default: dbo for mssql, main for sqlite).")
     add_parser.add_argument("--timeout", "--timeout-seconds", dest="timeout_seconds", type=int, required=False, default=15, help="Query timeout seconds (1-15, default: 15).")
     add_parser.add_argument("--max-rows", "--max-row-limit", dest="max_row_limit", type=int, required=False, default=100, help="Max row limit (1-100, default: 100).")
     add_parser.add_argument("--auth", "--auth-mode", dest="auth_mode", type=str, required=False, default="windows", help="Authentication mode (only 'windows' / Windows Integrated Authentication is supported).")
@@ -231,17 +233,29 @@ def handle_profile_list(args: argparse.Namespace) -> int:
     default_id = store.default_profile_id
     for pid, profile in store.profiles.items():
         is_default_marker = " [DEFAULT]" if pid == default_id else ""
+        engine = getattr(profile, "engine_type", "mssql")
         sys.stdout.write(
             f"Profile ID:    {profile.profile_id}{is_default_marker}\n"
             f"Display Name:  {profile.display_name}\n"
-            f"Engine Type:   {getattr(profile, 'engine_type', 'mssql')}\n"
-            f"Server:        {profile.server}\n"
-            f"Database Name: {profile.database_name}\n"
-            f"ODBC Driver:   {profile.driver}\n"
-            f"Trusted Auth:  Windows Integrated Authentication (trusted_connection=True)\n"
-            f"Timeout:       {profile.timeout_seconds}s (max limit: 15s)\n"
-            f"Max Rows:      {profile.max_row_limit} (max limit: 100)\n"
+            f"Engine Type:   {engine}\n"
         )
+        if engine == "sqlite":
+            sys.stdout.write(
+                f"Database Path: {profile.database_path}\n"
+                f"Database Name: {profile.database_name}\n"
+                f"Schema Name:   {profile.schema_name or 'main'}\n"
+                f"Timeout:       {profile.timeout_seconds}s (max limit: 15s)\n"
+                f"Max Rows:      {profile.max_row_limit} (max limit: 100)\n"
+            )
+        else:
+            sys.stdout.write(
+                f"Server:        {profile.server}\n"
+                f"Database Name: {profile.database_name}\n"
+                f"ODBC Driver:   {profile.driver}\n"
+                f"Trusted Auth:  Windows Integrated Authentication (trusted_connection=True)\n"
+                f"Timeout:       {profile.timeout_seconds}s (max limit: 15s)\n"
+                f"Max Rows:      {profile.max_row_limit} (max limit: 100)\n"
+            )
         if profile.allowed_tables:
             sys.stdout.write(f"Allowed Tables: {', '.join(profile.allowed_tables)}\n")
         sys.stdout.write("-" * 75 + "\n")
@@ -276,38 +290,69 @@ def handle_profile_add(args: argparse.Namespace) -> int:
     """Handle 'querypilot-agent profile add' command."""
     profiles_path = args.profiles_file or get_default_profiles_file()
 
+    engine_type = (getattr(args, "engine_type", None) or "mssql").strip().lower()
     profile_id = (args.profile_id or "").strip()
     display_name = (args.display_name or "").strip()
-    server = (args.server or "").strip() or r"localhost\SQLEXPRESS"
-    database_name = (args.database_name or "").strip()
-    driver = (args.driver or "").strip() or "ODBC Driver 17 for SQL Server"
-    schema_name = (args.schema_name or "dbo").strip() or "dbo"
+    database_path = (getattr(args, "database_path", None) or "").strip() or None
+    server = (args.server or "").strip() or None
+    database_name = (args.database_name or "").strip() or None
+    driver = (args.driver or "").strip() or None
+    schema_name = (args.schema_name or "").strip() or None
 
-    # Prompt interactively if missing required arguments in an interactive terminal
-    if not profile_id:
-        if sys.stdin.isatty():
-            profile_id = input("Enter unique profile ID (e.g. 'local_db'): ").strip()
+    if engine_type == "sqlite":
+        if not database_path:
+            if sys.stdin.isatty():
+                database_path = input("Enter SQLite database file path: ").strip()
+            if not database_path:
+                sys.stderr.write("ERROR: --path / database_path is required for SQLite profiles.\n")
+                return 1
+
         if not profile_id:
-            sys.stderr.write("ERROR: --id / profile_id is required.\n")
-            return 1
+            if sys.stdin.isatty():
+                profile_id = input("Enter unique profile ID (e.g. 'local_sqlite'): ").strip()
+            if not profile_id:
+                sys.stderr.write("ERROR: --id / profile_id is required.\n")
+                return 1
 
-    if not database_name:
-        if sys.stdin.isatty():
-            database_name = input("Enter SQL Server database name: ").strip()
         if not database_name:
-            sys.stderr.write("ERROR: --database / database_name is required.\n")
+            database_name = Path(database_path).stem
+
+        if not display_name:
+            display_name = f"SQLite ({Path(database_path).name})"
+
+        schema_name = schema_name or "main"
+    elif engine_type == "mssql":
+        server = server or r"localhost\SQLEXPRESS"
+        driver = driver or "ODBC Driver 17 for SQL Server"
+        schema_name = schema_name or "dbo"
+
+        if not profile_id:
+            if sys.stdin.isatty():
+                profile_id = input("Enter unique profile ID (e.g. 'local_db'): ").strip()
+            if not profile_id:
+                sys.stderr.write("ERROR: --id / profile_id is required.\n")
+                return 1
+
+        if not database_name:
+            if sys.stdin.isatty():
+                database_name = input("Enter SQL Server database name: ").strip()
+            if not database_name:
+                sys.stderr.write("ERROR: --database / database_name is required.\n")
+                return 1
+
+        if not display_name:
+            display_name = f"SQL Server ({database_name})"
+
+        auth_mode = (getattr(args, "auth_mode", "windows") or "windows").strip().lower()
+        if auth_mode not in {"windows", "integrated"}:
+            sys.stderr.write(
+                "CONFIGURATION ERROR: Invalid profile parameters: SECURITY REJECTION: "
+                f"Unsupported authentication mode '{auth_mode}'. "
+                "QueryPilot currently requires Windows Integrated Authentication (use_trusted_connection=True).\n"
+            )
             return 1
-
-    if not display_name:
-        display_name = f"SQL Server ({database_name})"
-
-    auth_mode = (getattr(args, "auth_mode", "windows") or "windows").strip().lower()
-    if auth_mode not in {"windows", "integrated"}:
-        sys.stderr.write(
-            "CONFIGURATION ERROR: Invalid profile parameters: SECURITY REJECTION: "
-            f"Unsupported authentication mode '{auth_mode}'. "
-            "QueryPilot currently requires Windows Integrated Authentication (use_trusted_connection=True).\n"
-        )
+    else:
+        sys.stderr.write(f"CONFIGURATION ERROR: Invalid profile parameters: Unsupported engine_type '{engine_type}'.\n")
         return 1
 
     timeout_seconds = getattr(args, "timeout_seconds", 15)
@@ -325,11 +370,12 @@ def handle_profile_add(args: argparse.Namespace) -> int:
         validated_req = ValidateProfileConfigRequest(
             profile_id=profile_id,
             display_name=display_name,
+            engine_type=engine_type,
+            database_path=database_path,
             server=server,
             database_name=database_name,
             schema_name=schema_name,
             driver=driver,
-            engine_type="mssql",
             use_trusted_connection=True,
             timeout_seconds=timeout_seconds,
             max_row_limit=max_row_limit,
@@ -347,33 +393,42 @@ def handle_profile_add(args: argparse.Namespace) -> int:
         sys.stderr.write(f"CONFIGURATION ERROR: Invalid profile parameters: {exc}\n")
         return 1
 
-    new_profile = ConnectionProfile(
-        profile_id=validated_req.profile_id,
-        display_name=validated_req.display_name,
-        engine_type="mssql",
-        server=validated_req.server,
-        database_name=validated_req.database_name,
-        driver=validated_req.driver,
-        use_trusted_connection=True,
-        timeout_seconds=validated_req.timeout_seconds,
-        max_row_limit=validated_req.max_row_limit,
-        schema_name=validated_req.schema_name,
-        allowed_tables=tuple(validated_req.allowed_tables) if validated_req.allowed_tables is not None else None,
-        sensitive_columns=tuple(validated_req.sensitive_columns) if validated_req.sensitive_columns is not None else None,
-    )
+    try:
+        new_profile = ConnectionProfile(
+            profile_id=validated_req.profile_id,
+            display_name=validated_req.display_name,
+            engine_type=validated_req.engine_type,
+            database_path=validated_req.database_path,
+            server=validated_req.server,
+            database_name=validated_req.database_name,
+            driver=validated_req.driver,
+            use_trusted_connection=True,
+            timeout_seconds=validated_req.timeout_seconds,
+            max_row_limit=validated_req.max_row_limit,
+            schema_name=validated_req.schema_name,
+            allowed_tables=tuple(validated_req.allowed_tables) if validated_req.allowed_tables is not None else None,
+            sensitive_columns=tuple(validated_req.sensitive_columns) if validated_req.sensitive_columns is not None else None,
+        )
+    except Exception as exc:
+        sys.stderr.write(f"CONFIGURATION ERROR: Invalid profile parameters: {exc}\n")
+        return 1
 
     # Require explicit confirmation unless --yes is passed
     if not getattr(args, "yes", False):
         if sys.stdin.isatty():
+            sys.stdout.write(f"\nProposed Profile Configuration:\n")
+            sys.stdout.write(f"  Profile ID:    {new_profile.profile_id}\n")
+            sys.stdout.write(f"  Display Name:  {new_profile.display_name}\n")
+            sys.stdout.write(f"  Engine Type:   {new_profile.engine_type}\n")
+            if new_profile.engine_type == "sqlite":
+                sys.stdout.write(f"  Database Path: {new_profile.database_path}\n")
+                sys.stdout.write(f"  Schema Name:   {new_profile.schema_name}\n")
+            else:
+                sys.stdout.write(f"  Server:        {new_profile.server}\n")
+                sys.stdout.write(f"  Database Name: {new_profile.database_name}\n")
+                sys.stdout.write(f"  ODBC Driver:   {new_profile.driver}\n")
+                sys.stdout.write(f"  Auth:          Windows Integrated Authentication (trusted_connection=True)\n")
             sys.stdout.write(
-                f"\nProposed Profile Configuration:\n"
-                f"  Profile ID:    {new_profile.profile_id}\n"
-                f"  Display Name:  {new_profile.display_name}\n"
-                f"  Engine Type:   {new_profile.engine_type}\n"
-                f"  Server:        {new_profile.server}\n"
-                f"  Database Name: {new_profile.database_name}\n"
-                f"  ODBC Driver:   {new_profile.driver}\n"
-                f"  Auth:          Windows Integrated Authentication (trusted_connection=True)\n"
                 f"  Timeout:       {new_profile.timeout_seconds}s\n"
                 f"  Max Rows:      {new_profile.max_row_limit}\n"
                 f"Target file:     {profiles_path}\n\n"

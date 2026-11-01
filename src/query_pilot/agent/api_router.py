@@ -25,6 +25,7 @@ Security & Guardrails:
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Dict, Optional, Set
 
@@ -33,6 +34,7 @@ from fastapi.responses import JSONResponse
 import httpx
 
 from query_pilot.agent.config import AgentConfig
+from query_pilot.sql.validator import normalize_dialect
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +98,11 @@ def _extract_forward_headers(request: Request) -> Dict[str, str]:
     return forward_headers
 
 
-async def _forward_post_request(request: Request, upstream_path: str) -> Response:
+async def _forward_post_request(
+    request: Request,
+    upstream_path: str,
+    custom_body_bytes: Optional[bytes] = None,
+) -> Response:
     """Forward a POST request to the trusted upstream API within resource and timeout bounds."""
     config: AgentConfig = request.app.state.config
     client = get_upstream_client(request)
@@ -104,7 +110,11 @@ async def _forward_post_request(request: Request, upstream_path: str) -> Respons
     timeout = config.upstream_timeout_seconds
 
     forward_headers = _extract_forward_headers(request)
-    body_bytes = await request.body()
+    if custom_body_bytes is not None:
+        body_bytes = custom_body_bytes
+        forward_headers = {k: v for k, v in forward_headers.items() if k.lower() != "content-length"}
+    else:
+        body_bytes = await request.body()
 
     try:
         upstream_resp = await client.post(
@@ -201,8 +211,73 @@ async def proxy_health(request: Request) -> Response:
 
 @api_router.post("/v1/generate-sql")
 async def proxy_generate_sql(request: Request) -> Response:
-    """Proxy unexecuted candidate SQL generation to trusted upstream API."""
-    return await _forward_post_request(request, "/api/v1/generate-sql")
+    """Proxy unexecuted candidate SQL generation to trusted upstream API with authoritative dialect injection."""
+    body_bytes = await request.body()
+    if not body_bytes:
+        return await _forward_post_request(request, "/api/v1/generate-sql")
+
+    try:
+        payload = json.loads(body_bytes.decode("utf-8"))
+        if not isinstance(payload, dict):
+            return await _forward_post_request(request, "/api/v1/generate-sql")
+    except Exception:
+        # Invalid JSON payload, forward to upstream or let standard validation handle it
+        return await _forward_post_request(request, "/api/v1/generate-sql")
+
+    # Authoritative profile resolution: header > query param > body
+    profile_id = (
+        request.headers.get("x-profile-id")
+        or request.query_params.get("profile_id")
+        or payload.get("profile_id")
+    )
+
+    store = getattr(request.app.state, "store", None)
+    profile = None
+
+    if profile_id:
+        if store is not None and store.has_profile(str(profile_id)):
+            profile = store.get_profile(str(profile_id))
+        elif store is not None:
+            return JSONResponse(
+                status_code=status.HTTP_404_NOT_FOUND,
+                content={"detail": f"Profile '{profile_id}' not found in trusted local store."},
+            )
+    elif store is not None and getattr(store, "default_profile_id", None):
+        if store.has_profile(store.default_profile_id):
+            profile = store.get_profile(store.default_profile_id)
+
+    if profile is not None:
+        effective_dialect = profile.get_dialect()
+    else:
+        raw_dialect = payload.get("dialect")
+        try:
+            effective_dialect = normalize_dialect(raw_dialect)
+        except ValueError as err:
+            return JSONResponse(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                content={"detail": str(err)},
+            )
+
+    # Clean and inject authoritative dialect into payload
+    payload["dialect"] = effective_dialect
+    # Strip local identifiers and secrets to maintain strict boundary
+    for sensitive_key in (
+        "profile_id",
+        "database_path",
+        "server",
+        "driver",
+        "user",
+        "password",
+        "connection_string",
+    ):
+        payload.pop(sensitive_key, None)
+
+    modified_bytes = json.dumps(payload).encode("utf-8")
+    return await _forward_post_request(
+        request,
+        "/api/v1/generate-sql",
+        custom_body_bytes=modified_bytes,
+    )
 
 
 @api_router.post("/v1/synthesize-answer")

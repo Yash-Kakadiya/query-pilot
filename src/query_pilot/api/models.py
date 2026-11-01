@@ -13,7 +13,7 @@ Defines:
 from enum import Enum
 import json
 import re
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Set, Union
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from query_pilot.pipeline import PipelineResult, PipelineStatus
@@ -522,6 +522,15 @@ MAX_IDENTIFIER_LENGTH: int = 128
 MAX_DESCRIPTION_LENGTH: int = 250
 MAX_SCHEMA_PAYLOAD_BYTES: int = 48 * 1024  # 49,152 bytes (48 KB)
 
+MAX_BUSINESS_METRICS: int = 5
+MAX_BUSINESS_METRIC_NAME_LENGTH: int = 100
+MAX_BUSINESS_METRIC_DESCRIPTION_LENGTH: int = 500
+MAX_BUSINESS_METRIC_FORMULA_LENGTH: int = 500
+MAX_APPLICABLE_TABLES_PER_METRIC: int = 10
+MAX_APPLICABLE_TABLE_NAME_LENGTH: int = 64
+MAX_BUSINESS_METRICS_PAYLOAD_BYTES: int = 8192  # 8,192 bytes (8 KB)
+METRIC_NAME_REGEX = re.compile(r"^[a-zA-Z0-9_#$\s\-\(\)\%\/\.\,\:\&\+\*\'\"<>=]+$")
+
 
 def normalize_data_type(v: str) -> str:
     """Validate and normalize untrusted column data type metadata.
@@ -768,6 +777,7 @@ class ModelFacingSchemaContext(BaseModel):
                     columns=col_meta_list,
                     primary_keys=list(tbl.primary_keys),
                     foreign_keys=fk_meta_list,
+                    comment=tbl.description,
                 )
             )
         return DatabaseSchema(
@@ -775,6 +785,119 @@ class ModelFacingSchemaContext(BaseModel):
             tables=table_meta_list,
             is_model_facing=True,
         )
+
+
+class BusinessMetricDefinition(BaseModel):
+    """Untrusted client-provided business metric or calculation rule."""
+
+    model_config = {"extra": "forbid"}
+
+    name: str = Field(
+        ...,
+        description="Metric name or business label (1-100 characters).",
+    )
+    description: str = Field(
+        ...,
+        description="Plain-text explanation of the business metric (1-500 characters).",
+    )
+    calculation_formula: Optional[str] = Field(
+        default=None,
+        description="Optional calculation formula or expression (max 500 characters).",
+    )
+    applicable_tables: List[str] = Field(
+        default_factory=list,
+        description="Optional schema table names to which this metric applies (at most 10 tables).",
+    )
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        if not isinstance(v, str):
+            raise TypeError("Metric name must be a string.")
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("Metric name cannot be empty or whitespace.")
+        if len(cleaned) > MAX_BUSINESS_METRIC_NAME_LENGTH:
+            raise ValueError(
+                f"Metric name exceeds maximum length of {MAX_BUSINESS_METRIC_NAME_LENGTH} characters ({len(cleaned)} chars)."
+            )
+        if any(ord(ch) < 32 or ord(ch) == 127 for ch in cleaned):
+            raise ValueError("Metric name cannot contain control characters.")
+        if not METRIC_NAME_REGEX.match(cleaned):
+            raise ValueError(
+                f"Invalid characters in metric name {v!r}. Must contain only alphanumeric characters, spaces, and standard business label punctuation."
+            )
+        return cleaned
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, v: str) -> str:
+        if not isinstance(v, str):
+            raise TypeError("Metric description must be a string.")
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("Metric description cannot be empty or whitespace.")
+        if len(cleaned) > MAX_BUSINESS_METRIC_DESCRIPTION_LENGTH:
+            raise ValueError(
+                f"Metric description exceeds maximum length of {MAX_BUSINESS_METRIC_DESCRIPTION_LENGTH} characters ({len(cleaned)} chars)."
+            )
+        if any((ord(ch) < 32 and ch not in ("\t", "\n", "\r")) or ord(ch) == 127 for ch in cleaned):
+            raise ValueError("Metric description cannot contain control characters.")
+        return cleaned
+
+    @field_validator("calculation_formula")
+    @classmethod
+    def validate_calculation_formula(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            raise TypeError("calculation_formula must be a string.")
+        cleaned = v.strip()
+        if not cleaned:
+            return None
+        if len(cleaned) > MAX_BUSINESS_METRIC_FORMULA_LENGTH:
+            raise ValueError(
+                f"calculation_formula exceeds maximum length of {MAX_BUSINESS_METRIC_FORMULA_LENGTH} characters ({len(cleaned)} chars)."
+            )
+        if any((ord(ch) < 32 and ch not in ("\t", "\n", "\r")) or ord(ch) == 127 for ch in cleaned):
+            raise ValueError("calculation_formula cannot contain control characters.")
+        return cleaned
+
+    @field_validator("applicable_tables")
+    @classmethod
+    def validate_applicable_tables(cls, v: Optional[List[str]]) -> List[str]:
+        if v is None:
+            return []
+        if not isinstance(v, list):
+            raise TypeError("applicable_tables must be a list.")
+        if len(v) > MAX_APPLICABLE_TABLES_PER_METRIC:
+            raise ValueError(
+                f"applicable_tables cannot exceed {MAX_APPLICABLE_TABLES_PER_METRIC} entries, received {len(v)}."
+            )
+        cleaned_tables: List[str] = []
+        seen_lower: Set[str] = set()
+        for tbl in v:
+            if not isinstance(tbl, str):
+                raise TypeError("applicable_tables entries must be strings.")
+            cleaned = tbl.strip()
+            if not cleaned:
+                raise ValueError("applicable_tables entries cannot be empty or whitespace.")
+            if len(cleaned) > MAX_APPLICABLE_TABLE_NAME_LENGTH:
+                raise ValueError(
+                    f"applicable_tables entry {tbl!r} exceeds maximum length of {MAX_APPLICABLE_TABLE_NAME_LENGTH} characters."
+                )
+            if not IDENTIFIER_REGEX.match(cleaned):
+                raise ValueError(
+                    f"Invalid table identifier {tbl!r} in applicable_tables. Must match regex {IDENTIFIER_REGEX.pattern}."
+                )
+            lower = cleaned.lower()
+            if lower in seen_lower:
+                raise ValueError(
+                    f"Duplicate applicable table name {tbl!r} in business metric (case-insensitive)."
+                )
+            seen_lower.add(lower)
+            cleaned_tables.append(cleaned)
+        return cleaned_tables
 
 
 class GenerateSQLRequest(BaseModel):
@@ -798,6 +921,22 @@ class GenerateSQLRequest(BaseModel):
         max_length=500,
         description="Optional sanitized execution error feedback to guide query repair (max 500 characters).",
     )
+    business_metrics: Optional[List[BusinessMetricDefinition]] = Field(
+        default=None,
+        description="Optional bounded client-supplied business metrics and calculation formulas (at most 5 metrics).",
+    )
+    dialect: Optional[str] = Field(
+        default="tsql",
+        description="Target SQL dialect: 'tsql' (default) or 'sqlite'.",
+    )
+
+    @field_validator("dialect", mode="before")
+    @classmethod
+    def validate_dialect(cls, v: Any) -> str:
+        """Validate and normalize SQL dialect."""
+        from query_pilot.sql.validator import normalize_dialect
+
+        return normalize_dialect(v)
 
     @field_validator("question")
     @classmethod
@@ -836,6 +975,48 @@ class GenerateSQLRequest(BaseModel):
             raise ValueError(f"diagnostic_feedback exceeds maximum length of 500 characters ({len(cleaned)} chars).")
         return cleaned
 
+    @field_validator("business_metrics")
+    @classmethod
+    def validate_business_metrics(
+        cls, v: Optional[List[BusinessMetricDefinition]]
+    ) -> Optional[List[BusinessMetricDefinition]]:
+        if v is None:
+            return None
+        if len(v) > MAX_BUSINESS_METRICS:
+            raise ValueError(
+                f"business_metrics cannot exceed {MAX_BUSINESS_METRICS} entries, received {len(v)}."
+            )
+        seen_names: Set[str] = set()
+        for metric in v:
+            lower_name = metric.name.lower()
+            if lower_name in seen_names:
+                raise ValueError(
+                    f"Duplicate business metric name {metric.name!r} in business_metrics (case-insensitive)."
+                )
+            seen_names.add(lower_name)
+
+        raw_bytes = len(json.dumps([m.model_dump() for m in v], separators=(",", ":")).encode("utf-8"))
+        if raw_bytes > MAX_BUSINESS_METRICS_PAYLOAD_BYTES:
+            raise ValueError(
+                f"business_metrics payload exceeds maximum allowed size of {MAX_BUSINESS_METRICS_PAYLOAD_BYTES} bytes (8 KB), "
+                f"received {raw_bytes} bytes."
+            )
+        return v
+
+    @model_validator(mode="after")
+    def validate_business_metrics_cross_schema(self) -> "GenerateSQLRequest":
+        if not self.business_metrics:
+            return self
+        schema_tables = {t.table_name.lower() for t in self.schema_context.tables}
+        for metric in self.business_metrics:
+            for tbl in metric.applicable_tables:
+                if tbl.lower() not in schema_tables:
+                    raise ValueError(
+                        f"Business metric {metric.name!r} references unknown applicable table {tbl!r} "
+                        f"not present in schema_context."
+                    )
+        return self
+
 
 class GenerateSQLResponse(BaseModel):
     """Safe response model for candidate SQL generation."""
@@ -845,7 +1026,11 @@ class GenerateSQLResponse(BaseModel):
     candidate_sql: Optional[str] = Field(
         default=None,
         max_length=10000,
-        description="Generated read-only T-SQL candidate (max 10,000 chars). Present ONLY when status == 'generated'.",
+        description="Generated read-only candidate SQL (max 10,000 chars). Present ONLY when status == 'generated'.",
+    )
+    dialect: Optional[str] = Field(
+        default="tsql",
+        description="Target SQL dialect of candidate_sql ('tsql' or 'sqlite').",
     )
     status: GenerationStatus = Field(
         ...,

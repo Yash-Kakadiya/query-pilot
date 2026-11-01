@@ -645,21 +645,22 @@ def test_create_profile_summary_privacy(agent_fixture):
     data = resp.json()
     profile_summary = data["profile"]
 
-    # Allowed fields in ProfileSummary
+    # Allowed safe metadata in ProfileSummary
     assert profile_summary["profile_id"] == "privacy_test"
     assert profile_summary["display_name"] == "Privacy Test Profile"
+    assert profile_summary["engine_type"] == "mssql"
+    assert profile_summary["database_name"] == "ConfidentialDB"
     assert profile_summary["schema_name"] == "finance"
     assert profile_summary["timeout_seconds"] == 12
     assert profile_summary["max_row_limit"] == 75
     assert profile_summary["has_allowlist"] is True
     assert profile_summary["allowed_tables"] == ["Ledger", "Accounts"]
 
-    # Forbidden fields MUST NOT be in profile summary
+    # Forbidden fields MUST NOT be in profile summary (zero secrets, paths, server hostnames, or driver details)
     forbidden_keys = {
         "server",
-        "database_name",
+        "database_path",
         "driver",
-        "engine_type",
         "use_trusted_connection",
         "password",
         "user",

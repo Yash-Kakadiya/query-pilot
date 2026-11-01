@@ -503,8 +503,14 @@ class BootstrapTokenManager:
                     or ace_trustee_lower == short_trustee
                     or ace_trustee_lower.endswith("\\" + short_trustee)
                 )
+                is_system_or_session = (
+                    ace_trustee_lower in ("nt authority\\system", "system")
+                    or ace_trustee_lower.startswith("nt authority\\logonsessionid")
+                )
                 if is_active_user:
                     user_confirmed = True
+                elif is_system_or_session:
+                    pass
                 else:
                     # Disallow foreign explicit ACEs
                     raise BootstrapTokenProvisioningError(

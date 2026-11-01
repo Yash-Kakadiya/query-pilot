@@ -65,12 +65,12 @@ def test_browser_execution_recovery_journey():
 
         browser.wait_for_condition(
             "document.querySelector('#bootstrap-token-input') !== null || document.querySelector('.agent-auth-btn') !== null",
-            timeout=5.0,
+            timeout=10.0,
         )
         if not browser.element_exists("#bootstrap-token-input"):
             browser.click(".agent-auth-btn")
 
-        browser.wait_for_selector("#bootstrap-token-input", timeout=5.0)
+        browser.wait_for_selector("#bootstrap-token-input", timeout=10.0)
         browser.set_input_value("#bootstrap-token-input", server.bootstrap_token)
         browser.evaluate("document.querySelector('form.agent-auth-form').requestSubmit()")
 

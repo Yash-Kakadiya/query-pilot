@@ -1,9 +1,10 @@
-import React, { useMemo } from 'react'
+import React, { useMemo, useState } from 'react'
 import type { ExecuteQueryResponse } from '../types/api.ts'
 import {
   synthesizeDeterministicAnswer,
   resolveCellPresentation,
 } from '../services/answerSynthesis.ts'
+const ResultVisualizer = React.lazy(() => import('./ResultVisualizer.tsx'))
 import './LocalExecutionResults.css'
 
 export interface LocalExecutionResultsProps {
@@ -66,6 +67,8 @@ export function LocalExecutionResults({
   repairHint = null,
   repairError = null,
 }: LocalExecutionResultsProps) {
+  const [viewMode, setViewMode] = useState<'table' | 'chart'>('table')
+
   const synthesizedAnswer = useMemo(() => {
     if (isLoading) {
       return null
@@ -289,8 +292,42 @@ export function LocalExecutionResults({
             </div>
           )}
 
-          {/* Data Table */}
-          {result.rows.length > 0 ? (
+          {/* Presentation Mode Toggle (Table / Chart) */}
+          {result.rows.length > 0 && (
+            <div className="local-results-view-toggle-bar">
+              <div className="local-view-toggle" role="group" aria-label="Result presentation mode">
+                <button
+                  type="button"
+                  className={`local-view-toggle-btn ${viewMode === 'table' ? 'active' : ''}`}
+                  onClick={() => setViewMode('table')}
+                  aria-pressed={viewMode === 'table'}
+                >
+                  📄 Table View
+                </button>
+                <button
+                  type="button"
+                  className={`local-view-toggle-btn ${viewMode === 'chart' ? 'active' : ''}`}
+                  onClick={() => setViewMode('chart')}
+                  aria-pressed={viewMode === 'chart'}
+                >
+                  📈 Interactive Chart
+                </button>
+              </div>
+            </div>
+          )}
+
+          {viewMode === 'chart' && result.rows.length > 0 ? (
+            <React.Suspense
+              fallback={
+                <div className="local-executing-indicator" role="status">
+                  <span className="spinner" aria-hidden="true" />
+                  <span>Loading interactive visualization...</span>
+                </div>
+              }
+            >
+              <ResultVisualizer result={result} />
+            </React.Suspense>
+          ) : result.rows.length > 0 ? (
             <div className="local-table-wrapper" tabIndex={0} aria-label="Query result data table">
               <table className="local-data-table">
                 <thead>

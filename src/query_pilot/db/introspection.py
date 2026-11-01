@@ -7,8 +7,8 @@ model-facing representations where sensitive columns (e.g., PasswordHash) are re
 
 from collections.abc import Iterable
 import logging
-from typing import List, Optional, Set
-from sqlalchemy import inspect
+from typing import Any, Dict, List, Optional, Set, Tuple
+from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 
 from query_pilot.db.connection import get_connection, verify_database_context
@@ -91,6 +91,68 @@ class DatabaseIntrospector:
         self.engine = engine
         self.policy = policy or SensitiveColumnPolicy()
 
+    def _retrieve_comments(
+        self,
+        conn: Any,
+        schema_name: Optional[str],
+    ) -> Tuple[Dict[Tuple[str, str], str], Dict[Tuple[str, str, str], str]]:
+        """Retrieve table and column descriptions safely across SQL Server and other dialects.
+
+        Returns:
+            Tuple of (table_comments_dict, column_comments_dict) keyed case-insensitively
+            by (schema, table) and (schema, table, column).
+        """
+        table_comments: Dict[Tuple[str, str], str] = {}
+        col_comments: Dict[Tuple[str, str, str], str] = {}
+
+        # 1. SQL Server extended properties (MS_Description)
+        dialect_name = getattr(self.engine.dialect, "name", "").lower()
+        if dialect_name == "mssql":
+            try:
+                tbl_sql = """
+                SELECT
+                    s.name AS schema_name,
+                    t.name AS table_name,
+                    CAST(ep.value AS NVARCHAR(MAX)) AS comment
+                FROM sys.extended_properties ep
+                JOIN sys.tables t ON ep.major_id = t.object_id
+                JOIN sys.schemas s ON t.schema_id = s.schema_id
+                WHERE ep.class = 1 AND ep.minor_id = 0 AND ep.name = 'MS_Description'
+                """
+                params: Dict[str, Any] = {}
+                if schema_name:
+                    tbl_sql += " AND s.name = :schema_name"
+                    params["schema_name"] = schema_name
+
+                for row in conn.execute(text(tbl_sql), params):
+                    s_name, t_name, val = row[0], row[1], row[2]
+                    if val is not None and str(val).strip():
+                        table_comments[(str(s_name).strip().lower(), str(t_name).strip().lower())] = str(val).strip()
+
+                col_sql = """
+                SELECT
+                    s.name AS schema_name,
+                    t.name AS table_name,
+                    c.name AS column_name,
+                    CAST(ep.value AS NVARCHAR(MAX)) AS comment
+                FROM sys.extended_properties ep
+                JOIN sys.tables t ON ep.major_id = t.object_id
+                JOIN sys.schemas s ON t.schema_id = s.schema_id
+                JOIN sys.columns c ON ep.major_id = c.object_id AND ep.minor_id = c.column_id
+                WHERE ep.class = 1 AND ep.minor_id > 0 AND ep.name = 'MS_Description'
+                """
+                if schema_name:
+                    col_sql += " AND s.name = :schema_name"
+
+                for row in conn.execute(text(col_sql), params):
+                    s_name, t_name, c_name, val = row[0], row[1], row[2], row[3]
+                    if val is not None and str(val).strip():
+                        col_comments[(str(s_name).strip().lower(), str(t_name).strip().lower(), str(c_name).strip().lower())] = str(val).strip()
+            except Exception as ex:
+                logger.warning("Could not query SQL Server extended properties for schema %s: %s", schema_name, ex)
+
+        return table_comments, col_comments
+
     def introspect_raw(self, schema_name: Optional[str] = "dbo") -> DatabaseSchema:
         """Discover complete database schema including all raw columns.
         
@@ -107,10 +169,36 @@ class DatabaseIntrospector:
             db_name = verify_database_context(conn)
             inspector = inspect(conn)
 
+            table_comments, col_comments = self._retrieve_comments(conn, schema_name)
             table_names = sorted(inspector.get_table_names(schema=schema_name))
             tables: List[TableMetadata] = []
 
             for tbl_name in table_names:
+                effective_schema = schema_name or getattr(inspector, "default_schema_name", None) or "dbo"
+                s_key = effective_schema.strip().lower()
+                t_key = tbl_name.strip().lower()
+
+                # Table-level comment
+                tbl_comment = table_comments.get((s_key, t_key))
+                if tbl_comment is None and schema_name is None:
+                    for (sk, tk), v in table_comments.items():
+                        if tk == t_key:
+                            tbl_comment = v
+                            break
+
+                if tbl_comment is None:
+                    try:
+                        res = inspector.get_table_comment(tbl_name, schema=schema_name)
+                        if isinstance(res, dict) and res.get("text"):
+                            tbl_comment = str(res["text"]).strip()
+                    except Exception:
+                        tbl_comment = None
+
+                if tbl_comment:
+                    tbl_comment = tbl_comment[:300].rstrip()
+                    if not tbl_comment:
+                        tbl_comment = None
+
                 # Primary keys
                 pk_constraint = inspector.get_pk_constraint(tbl_name, schema=schema_name) or {}
                 pk_columns = pk_constraint.get("constrained_columns", [])
@@ -121,11 +209,28 @@ class DatabaseIntrospector:
                 columns: List[ColumnMetadata] = []
                 for c in raw_columns:
                     col_name = c["name"]
+                    c_key = col_name.strip().lower()
                     data_type = str(c["type"])
                     nullable = bool(c.get("nullable", True))
                     is_pk = col_name in pk_set or bool(c.get("primary_key", False))
                     default_val = str(c["default"]) if c.get("default") is not None else None
                     is_ident = bool(c.get("identity", False))
+
+                    col_comment = col_comments.get((s_key, t_key, c_key))
+                    if col_comment is None and schema_name is None:
+                        for (sk, tk, ck), v in col_comments.items():
+                            if tk == t_key and ck == c_key:
+                                col_comment = v
+                                break
+                    if col_comment is None:
+                        raw_c_comment = c.get("comment")
+                        if raw_c_comment is not None and str(raw_c_comment).strip():
+                            col_comment = str(raw_c_comment).strip()
+
+                    if col_comment:
+                        col_comment = col_comment[:150].rstrip()
+                        if not col_comment:
+                            col_comment = None
 
                     columns.append(
                         ColumnMetadata(
@@ -135,6 +240,7 @@ class DatabaseIntrospector:
                             primary_key=is_pk,
                             default=default_val,
                             is_identity=is_ident,
+                            comment=col_comment,
                         )
                     )
 
@@ -206,6 +312,7 @@ class DatabaseIntrospector:
                         foreign_keys=foreign_keys,
                         indexes=indexes,
                         unique_constraints=unique_constraints,
+                        comment=tbl_comment,
                     )
                 )
 
@@ -241,6 +348,7 @@ class DatabaseIntrospector:
                     foreign_keys=tbl.foreign_keys,
                     indexes=tbl.indexes,
                     unique_constraints=tbl.unique_constraints,
+                    comment=tbl.comment,
                 )
             )
 

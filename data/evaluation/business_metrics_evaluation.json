@@ -1,0 +1,72 @@
+{
+  "timestamp": "2026-11-01T02:36:34.571662+00:00",
+  "total_scenarios": 10,
+  "passed_scenarios": 10,
+  "pass_rate": 1.0,
+  "scenarios": [
+    {
+      "id": "BM-01",
+      "name": "Exact metric name match",
+      "passed": true,
+      "matched": [
+        "At-Risk Attendance"
+      ]
+    },
+    {
+      "id": "BM-02",
+      "name": "Substantive description match",
+      "passed": true,
+      "matched": [
+        "Dean's Honors"
+      ]
+    },
+    {
+      "id": "BM-03",
+      "name": "Conversational follow-up continuity",
+      "passed": true,
+      "matched": [
+        "At-Risk Attendance"
+      ]
+    },
+    {
+      "id": "BM-04",
+      "name": "Topic change anti-bleeding",
+      "passed": true,
+      "matched": []
+    },
+    {
+      "id": "BM-05",
+      "name": "Entity incompatibility blocking",
+      "passed": true,
+      "matched": []
+    },
+    {
+      "id": "BM-06",
+      "name": "Top-3 metric selection budget cap",
+      "passed": true,
+      "count": 3
+    },
+    {
+      "id": "BM-07",
+      "name": "1,200-char rendered prompt budget cap",
+      "passed": true,
+      "rendered_chars": 775
+    },
+    {
+      "id": "BM-08",
+      "name": "48 KB formatted schema budget enforcement on oversized schema",
+      "passed": true,
+      "utf8_bytes": 29538
+    },
+    {
+      "id": "BM-09",
+      "name": "Formula literal text safety",
+      "passed": true
+    },
+    {
+      "id": "BM-10",
+      "name": "Request isolation on empty/none metrics",
+      "passed": true
+    }
+  ]
+}

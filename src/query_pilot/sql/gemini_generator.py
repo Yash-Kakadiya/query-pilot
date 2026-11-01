@@ -28,7 +28,11 @@ from query_pilot.sql.generation import (
     SQLGenerationStatus,
     SQLGenerator,
 )
-from query_pilot.sql.prompt import SYSTEM_INSTRUCTION, build_sql_generation_prompt
+from query_pilot.sql.prompt import (
+    SYSTEM_INSTRUCTION,
+    build_sql_generation_prompt,
+    get_system_instruction,
+)
 from query_pilot.tracing import trace_gemini_call
 
 logger = logging.getLogger(__name__)
@@ -250,10 +254,36 @@ class GeminiSQLGenerator(SQLGenerator):
             if results:
                 domain_guidance = self.retriever.render_context(results)
 
-        prompt = build_sql_generation_prompt(request, domain_context=domain_guidance)
+        # Resolve request-scoped business metrics if supplied in the request
+        business_metrics_guidance = None
+        if getattr(request, "business_metrics", None):
+            from query_pilot.rag.metrics_matcher import (
+                match_business_metrics,
+                render_business_metrics_context,
+            )
+
+            intent = None
+            if request.conversation_context:
+                last_turn = request.conversation_context[-1]
+                if last_turn.resolved_intent:
+                    intent = last_turn.resolved_intent
+            matched_metrics = match_business_metrics(
+                metrics=request.business_metrics,
+                question=request.question,
+                schema=request.schema_context,
+                resolved_intent=intent,
+            )
+            if matched_metrics:
+                business_metrics_guidance = render_business_metrics_context(matched_metrics)
+
+        prompt = build_sql_generation_prompt(
+            request,
+            domain_context=domain_guidance,
+            business_metrics_context=business_metrics_guidance,
+        )
 
         config_kwargs: dict = {
-            "system_instruction": SYSTEM_INSTRUCTION,
+            "system_instruction": get_system_instruction(request.dialect),
             "response_mime_type": "application/json",
             "response_schema": _GeminiSQLPayloadSchema,
         }

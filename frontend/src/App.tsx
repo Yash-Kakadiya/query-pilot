@@ -20,6 +20,9 @@ import {
   useQueryExecution,
 } from './services/queryExecution'
 import { LocalExecutionResults } from './components/LocalExecutionResults'
+import { MetricConfigModal } from './components/MetricConfigModal'
+import { ConversationHistoryDrawer } from './components/ConversationHistoryDrawer'
+import { synthesizeDeterministicAnswer } from './services/answerSynthesis'
 import { classifyExecutionError, canAttemptRepair } from './services/errorClassification'
 import { getHealth, postQuery } from './services/apiClient'
 import type { ExecutionMode, HealthResponse, QueryResponse } from './types/api'
@@ -48,6 +51,8 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator }: 
   // 2. Local Agent session coordinator
   const { state: agentSession, coordinator } = useAgentSession(agentCoordinator)
   const [isOnboardingOpen, setIsOnboardingOpen] = useState<boolean>(false)
+  const [isMetricModalOpen, setIsMetricModalOpen] = useState<boolean>(false)
+  const [isHistoryDrawerOpen, setIsHistoryDrawerOpen] = useState<boolean>(false)
 
   // 3. Decoupled SQL Generation coordinator (Phase 7.3 / F28-A9-B6)
   const { state: sqlGenState, coordinator: sqlGenCoordinator } = useSqlGeneration(sqlCoordinator)
@@ -103,6 +108,7 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator }: 
       activeRepairTokenRef.current = null
       sqlGenCoordinator.clearCandidate()
       sqlGenCoordinator.clearConversationContext()
+      sqlGenCoordinator.clearBusinessMetrics()
       execCoordinator.clearResult()
       setRepairedCandidateIds({})
       setIsRepairing(false)
@@ -114,6 +120,7 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator }: 
       activeRepairTokenRef.current = null
       sqlGenCoordinator.clearCandidate()
       sqlGenCoordinator.clearConversationContext()
+      sqlGenCoordinator.clearBusinessMetrics()
       execCoordinator.clearResult()
       setRepairedCandidateIds({})
       setIsRepairing(false)
@@ -430,10 +437,23 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator }: 
         profileForThisCandidate === agentSession.selectedProfileId &&
         agentSession.status === 'authenticated'
       ) {
+        let safeSummary: string | null = null
+        try {
+          const synthesized = synthesizeDeterministicAnswer(result)
+          safeSummary = synthesized?.text || null
+        } catch {
+          safeSummary = null
+        }
+
         sqlGenCoordinator.recordCompletedTurn(
           questionForThisCandidate,
           result.columns || [],
-          { candidateId: candidateIdForThisCandidate }
+          {
+            candidateId: candidateIdForThisCandidate,
+            synthesizedSummary: safeSummary,
+            rowCount: result.row_count,
+            executionStatus: 'succeeded',
+          }
         )
       }
     } catch {
@@ -612,6 +632,43 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator }: 
                 className="candidate-sql-section"
                 aria-label="Candidate SQL Generation, Review and Execution"
               >
+                <div className="metric-config-bar">
+                  <button
+                    type="button"
+                    className="metric-config-trigger-btn"
+                    onClick={() => setIsMetricModalOpen(true)}
+                    aria-label="Configure business metrics"
+                  >
+                    📐 Business Metrics {sqlGenState.businessMetrics.length > 0 ? `(${sqlGenState.businessMetrics.length})` : ''}
+                  </button>
+
+                  <button
+                    type="button"
+                    className="metric-config-trigger-btn"
+                    onClick={() => setIsHistoryDrawerOpen(true)}
+                    aria-label="View conversation history drawer"
+                  >
+                    📜 Conversation History {sqlGenState.conversationHistory.length > 0 ? `(${sqlGenState.conversationHistory.length})` : ''}
+                  </button>
+
+                  {sqlGenState.conversationHistory.length > 0 && (
+                    <button
+                      type="button"
+                      className="history-quick-reset-btn"
+                      onClick={handleResetConversation}
+                      title="Clear conversation context and start new topic"
+                    >
+                      + New Topic
+                    </button>
+                  )}
+
+                  {sqlGenState.businessMetrics.length > 0 && (
+                    <span className="metric-config-active-hint">
+                      {sqlGenState.businessMetrics.length} active metric definition{sqlGenState.businessMetrics.length === 1 ? '' : 's'} attached
+                    </span>
+                  )}
+                </div>
+
                 <CandidateSqlReview
                   question={sqlGenState.question}
                   isLoading={sqlGenState.isLoading}
@@ -736,6 +793,34 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator }: 
         onUseProfile={(profileId) => {
           void coordinator.selectProfile(profileId)
         }}
+      />
+
+      {/* Business Metric Configuration Dialog (Milestone B22-C) */}
+      <MetricConfigModal
+        isOpen={isMetricModalOpen}
+        onClose={() => setIsMetricModalOpen(false)}
+        metrics={sqlGenState.businessMetrics}
+        availableTables={
+          agentSession.rawSchema?.tables?.map((t) => t.table_name) ||
+          agentSession.schemaContext?.tables?.map((t) => t.table_name) ||
+          []
+        }
+        onSaveMetrics={(updatedMetrics) => {
+          sqlGenCoordinator.setBusinessMetrics(updatedMetrics)
+        }}
+      />
+
+      {/* Conversation History Drawer (Milestone B22-B) */}
+      <ConversationHistoryDrawer
+        isOpen={isHistoryDrawerOpen}
+        onClose={() => setIsHistoryDrawerOpen(false)}
+        history={sqlGenState.conversationHistory}
+        onRestoreTurn={(turnIdx) => {
+          sqlGenCoordinator.restoreTurn(turnIdx)
+          execCoordinator.clearResult()
+          setReviewedSql('')
+        }}
+        onNewTopic={handleResetConversation}
       />
     </div>
   )

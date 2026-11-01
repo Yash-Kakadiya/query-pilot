@@ -21,6 +21,7 @@
 import { useSyncExternalStore, useMemo } from 'react'
 import { generateSql } from './v1ApiClient.ts'
 import type {
+  BusinessMetricDefinition,
   ClarificationOption,
   ConversationTurnContext,
   GenerateSQLRequest,
@@ -62,6 +63,18 @@ export function deriveClarifiedQuestion(
   return safeOriginal
 }
 
+export interface ConversationHistoryTurn {
+  turnId: string
+  turnNumber: number
+  question: string
+  resolvedIntent?: string | null
+  synthesizedSummary?: string | null
+  resultColumns?: string[]
+  rowCount?: number
+  executionStatus?: string
+  timestamp: string
+}
+
 export interface SqlGenerationState {
   question: string
   isLoading: boolean
@@ -72,7 +85,9 @@ export interface SqlGenerationState {
   candidateId: string | null
   isStale: boolean
   conversationContext: ConversationTurnContext[]
+  conversationHistory: ConversationHistoryTurn[]
   lastRecordedCandidateId: string | null
+  businessMetrics: BusinessMetricDefinition[]
 }
 
 export interface GenerateCandidateOptions extends RequestOptions {
@@ -85,6 +100,7 @@ export interface GenerateCandidateResult extends GenerateSQLResponse {
 
 export class SqlGenerationCoordinator {
   static readonly MAX_CONVERSATION_TURNS = 3
+  static readonly MAX_BUSINESS_METRICS = 5
 
   /**
    * Normalizes question text using standard trimming consistent with candidate generation.
@@ -109,7 +125,9 @@ export class SqlGenerationCoordinator {
       candidateId: null,
       isStale: false,
       conversationContext: [],
+      conversationHistory: [],
       lastRecordedCandidateId: null,
+      businessMetrics: [],
       ...initialState,
     }
   }
@@ -251,10 +269,14 @@ export class SqlGenerationCoordinator {
         ...(options?.diagnosticFeedback && options.diagnosticFeedback.trim()
           ? { diagnostic_feedback: options.diagnosticFeedback.trim() }
           : {}),
+        ...(this.state.businessMetrics && this.state.businessMetrics.length > 0
+          ? { business_metrics: this.state.businessMetrics }
+          : {}),
       }
 
       const res = await generateSql(request, {
         ...options,
+        profileId: profileId || undefined,
         signal: controller.signal,
       })
 
@@ -333,15 +355,30 @@ export class SqlGenerationCoordinator {
   recordCompletedTurn(
     question: string,
     resultColumns: string[],
-    optionsOrIntent?: string | null | { candidateId?: string | null; resolvedIntent?: string | null },
+    optionsOrIntent?:
+      | string
+      | null
+      | {
+          candidateId?: string | null
+          resolvedIntent?: string | null
+          synthesizedSummary?: string | null
+          rowCount?: number
+          executionStatus?: string
+        },
     candidateId?: string | null
   ): void {
     let resolvedIntentStr: string | null = null
     let candidateIdStr: string | null = null
+    let synthesizedSummaryStr: string | null = null
+    let rowCountNum: number | undefined = undefined
+    let executionStatusStr: string = 'succeeded'
 
     if (optionsOrIntent && typeof optionsOrIntent === 'object') {
       resolvedIntentStr = optionsOrIntent.resolvedIntent ?? null
       candidateIdStr = optionsOrIntent.candidateId ?? null
+      synthesizedSummaryStr = optionsOrIntent.synthesizedSummary ?? null
+      rowCountNum = optionsOrIntent.rowCount
+      executionStatusStr = optionsOrIntent.executionStatus || 'succeeded'
     } else {
       resolvedIntentStr = optionsOrIntent ?? null
       candidateIdStr = candidateId ?? null
@@ -377,20 +414,113 @@ export class SqlGenerationCoordinator {
       -SqlGenerationCoordinator.MAX_CONVERSATION_TURNS
     )
 
+    const lastTurn = this.state.conversationHistory[this.state.conversationHistory.length - 1]
+    const nextTurnNumber = lastTurn ? lastTurn.turnNumber + 1 : 1
+
+    const historyItem: ConversationHistoryTurn = {
+      turnId: `turn-${Date.now()}-${this.generation}`,
+      turnNumber: nextTurnNumber,
+      question: trimmedQuestion.slice(0, 1000),
+      resolvedIntent: resolvedIntentStr ? resolvedIntentStr.trim().slice(0, 1000) : null,
+      synthesizedSummary: synthesizedSummaryStr ? synthesizedSummaryStr.trim().slice(0, 500) : null,
+      resultColumns: safeColumns,
+      rowCount: rowCountNum,
+      executionStatus: executionStatusStr,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    }
+
+    const updatedHistory = [...this.state.conversationHistory, historyItem].slice(
+      -SqlGenerationCoordinator.MAX_CONVERSATION_TURNS
+    )
+
     this.setState({
       conversationContext: updated,
+      conversationHistory: updatedHistory,
       lastRecordedCandidateId: candidateIdStr || this.state.lastRecordedCandidateId,
     })
   }
 
   /**
-   * Explicitly clears all prior conversation context.
+   * Explicitly clears all prior conversation context and history.
    */
   clearConversationContext(): void {
     this.setState({
       conversationContext: [],
+      conversationHistory: [],
       lastRecordedCandidateId: null,
     })
+  }
+
+  /**
+   * Restores an earlier turn from conversation history.
+   * Truncates subsequent context to preserve bounded chronological sequence.
+   */
+  restoreTurn(turnIndex: number): void {
+    const history = this.state.conversationHistory
+    if (turnIndex < 0 || turnIndex >= history.length) {
+      return
+    }
+    const targetTurn = history[turnIndex]
+    // Truncate context to strictly prior turns preceding this turn
+    const truncatedContext = this.state.conversationContext.slice(0, turnIndex)
+    const truncatedHistory = history.slice(0, turnIndex + 1)
+
+    this.generation++
+    if (this.activeAbortController) {
+      this.activeAbortController.abort()
+      this.activeAbortController = null
+    }
+
+    this.setState({
+      question: targetTurn.question,
+      response: null,
+      error: null,
+      lastGeneratedQuestion: null,
+      lastGeneratedProfileId: null,
+      candidateId: null,
+      isStale: false,
+      conversationContext: truncatedContext,
+      conversationHistory: truncatedHistory,
+      lastRecordedCandidateId: null,
+    })
+  }
+
+  /**
+   * Configures active request-scoped business metrics.
+   * Enforces the hard ceiling of at most 5 definitions.
+   */
+  setBusinessMetrics(metrics: BusinessMetricDefinition[]): void {
+    const bounded = Array.isArray(metrics)
+      ? metrics.slice(0, SqlGenerationCoordinator.MAX_BUSINESS_METRICS)
+      : []
+    this.setState({ businessMetrics: bounded })
+  }
+
+  /**
+   * Adds a single business metric definition if limit has not been reached.
+   */
+  addBusinessMetric(metric: BusinessMetricDefinition): void {
+    if (this.state.businessMetrics.length >= SqlGenerationCoordinator.MAX_BUSINESS_METRICS) {
+      throw new Error(
+        `Cannot configure more than ${SqlGenerationCoordinator.MAX_BUSINESS_METRICS} business metrics.`
+      )
+    }
+    this.setState({ businessMetrics: [...this.state.businessMetrics, metric] })
+  }
+
+  /**
+   * Removes a business metric definition by array index.
+   */
+  removeBusinessMetric(index: number): void {
+    const updated = this.state.businessMetrics.filter((_, idx) => idx !== index)
+    this.setState({ businessMetrics: updated })
+  }
+
+  /**
+   * Clears all request-scoped business metrics.
+   */
+  clearBusinessMetrics(): void {
+    this.setState({ businessMetrics: [] })
   }
 
   /**
@@ -434,7 +564,9 @@ export class SqlGenerationCoordinator {
       isStale: false,
       isLoading: false,
       conversationContext: [],
+      conversationHistory: [],
       lastRecordedCandidateId: null,
+      businessMetrics: [],
     })
   }
 }

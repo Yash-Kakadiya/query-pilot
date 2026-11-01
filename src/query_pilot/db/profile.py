@@ -182,6 +182,26 @@ def escape_odbc_value(value: str) -> str:
     return value
 
 
+def format_sqlite_uri(database_path: str) -> str:
+    """Safely format a SQLite database path into a read-only URI URL for SQLAlchemy.
+
+    Performs double percent-encoding:
+    1. First encode: encodes reserved URI characters (#, ?, %, &, =, spaces, non-ASCII)
+       so SQLite's URI parser interprets them as literal path characters rather than
+       URI fragments (#) or query parameters (?).
+    2. Second encode: protects percent-encoded sequences (%23, %20, etc.) from being
+       prematurely unquoted by SQLAlchemy's make_url parser before delivery to sqlite3.
+
+    Always enforces `mode=ro` and `uri=true`.
+    """
+    if not database_path or not str(database_path).strip():
+        raise ProfileConfigurationError("SQLite database path cannot be empty.")
+    norm_path = str(database_path).strip().replace("\\", "/")
+    q1 = urllib.parse.quote(norm_path, safe="/:")
+    q2 = urllib.parse.quote(q1, safe="/:")
+    return f"sqlite:///file:{q2}?mode=ro&uri=true"
+
+
 def enforce_global_timeout_ceiling(timeout_seconds: int) -> int:
     """Sanitize and enforce the hard global timeout ceiling (15 seconds)."""
     return min(max(1, timeout_seconds), GLOBAL_MAX_TIMEOUT_SECONDS)
@@ -456,24 +476,25 @@ class ConnectionProfile(BaseModel):
         min_length=1,
         max_length=128,
     )
-    server: str = Field(
-        ...,
-        description="SQL Server instance/host (e.g. 'localhost\\SQLEXPRESS').",
-        min_length=1,
+    server: Optional[str] = Field(
+        default=None,
+        description="SQL Server instance/host (e.g. 'localhost\\SQLEXPRESS'). Required for mssql.",
     )
-    database_name: str = Field(
-        ...,
-        description="Expected target database name. Verified via SELECT DB_NAME().",
-        min_length=1,
+    database_name: Optional[str] = Field(
+        default=None,
+        description="Expected target database name. Required for mssql.",
     )
-    driver: str = Field(
+    database_path: Optional[str] = Field(
+        default=None,
+        description="Path to local SQLite database file. Required for sqlite.",
+    )
+    driver: Optional[str] = Field(
         default="ODBC Driver 17 for SQL Server",
         description="Installed ODBC driver for SQL Server.",
-        min_length=1,
     )
     engine_type: str = Field(
         default="mssql",
-        description="Database engine type (e.g. 'mssql').",
+        description="Database engine type ('mssql' or 'sqlite').",
     )
     use_trusted_connection: bool = Field(
         default=True,
@@ -507,10 +528,9 @@ class ConnectionProfile(BaseModel):
         default=None,
         description="Optional custom sensitive column denylist (additive to canonical denylist).",
     )
-    schema_name: str = Field(
-        default="dbo",
-        description="Default schema name for SQL Server.",
-        min_length=1,
+    schema_name: Optional[str] = Field(
+        default=None,
+        description="Default schema name ('dbo' for mssql, 'main' for sqlite).",
     )
 
     @field_validator("allowed_tables", "sensitive_columns", mode="before")
@@ -544,29 +564,62 @@ class ConnectionProfile(BaseModel):
 
     @field_validator("engine_type")
     @classmethod
-    def validate_engine_type(cls, v: str) -> str:
+    def validate_engine_type(cls, v: Optional[str]) -> str:
+        if v is None:
+            return "mssql"
         clean = v.strip().lower()
-        if clean != "mssql":
+        if clean not in ("mssql", "sqlite"):
             raise ValueError(
-                f"Unsupported engine_type '{v}'. QueryPilot only supports 'mssql' in this milestone."
+                f"Unsupported engine_type '{v}'. QueryPilot supports 'mssql' and 'sqlite'."
             )
         return clean
 
-    @field_validator("server", "database_name", "driver", "display_name", "schema_name")
+    @field_validator("display_name")
     @classmethod
-    def validate_non_blank_strings(cls, v: str) -> str:
+    def validate_display_name(cls, v: str) -> str:
+        trimmed = v.strip()
+        if not trimmed:
+            raise ValueError("display_name cannot be blank or whitespace.")
+        return trimmed
+
+    @field_validator("server", "database_name", "driver", "schema_name", "database_path")
+    @classmethod
+    def validate_optional_non_blank_strings(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
         trimmed = v.strip()
         if not trimmed:
             raise ValueError("Value cannot be blank or whitespace.")
         return trimmed
 
     @model_validator(mode="after")
-    def validate_auth_configuration(self) -> ConnectionProfile:
-        if not self.use_trusted_connection:
-            if not self.user or not self.user.strip():
-                raise ValueError("user must be specified when use_trusted_connection is False.")
-            if not self.password or not self.password.get_secret_value():
-                raise ValueError("password must be specified when use_trusted_connection is False.")
+    def validate_engine_and_auth(self) -> ConnectionProfile:
+        if self.engine_type == "mssql":
+            if not self.server or not self.server.strip():
+                raise ValueError("server must be specified for mssql profiles.")
+            if not self.database_name or not self.database_name.strip():
+                raise ValueError("database_name must be specified for mssql profiles.")
+            if not self.driver or not self.driver.strip():
+                object.__setattr__(self, "driver", "ODBC Driver 17 for SQL Server")
+            if not self.schema_name or not self.schema_name.strip():
+                object.__setattr__(self, "schema_name", "dbo")
+            if not self.use_trusted_connection:
+                if not self.user or not self.user.strip():
+                    raise ValueError("user must be specified when use_trusted_connection is False.")
+                if not self.password or not self.password.get_secret_value():
+                    raise ValueError("password must be specified when use_trusted_connection is False.")
+        elif self.engine_type == "sqlite":
+            if not self.database_path or not self.database_path.strip():
+                raise ValueError("database_path must be specified for sqlite profiles.")
+            from query_pilot.db.sqlite_path import validate_sqlite_database_path
+            canonical_path = validate_sqlite_database_path(self.database_path)
+            object.__setattr__(self, "database_path", canonical_path)
+            object.__setattr__(self, "server", None)
+            object.__setattr__(self, "driver", None)
+            if not self.database_name or not self.database_name.strip():
+                object.__setattr__(self, "database_name", Path(canonical_path).stem)
+            if not self.schema_name or not self.schema_name.strip():
+                object.__setattr__(self, "schema_name", "main")
         return self
 
     @property
@@ -612,6 +665,11 @@ class ConnectionProfile(BaseModel):
         Args:
             hide_password: If True, masks the password field (safe for logging).
         """
+        if self.engine_type == "sqlite":
+            raise ProfileConfigurationError(
+                "SQLite profiles do not use ODBC connection strings. "
+                "Attempting to generate an ODBC connection string for a SQLite profile is prohibited."
+            )
         parts = [
             f"DRIVER={{{self.driver}}}",
             f"SERVER={escape_odbc_value(self.server)}",
@@ -627,12 +685,34 @@ class ConnectionProfile(BaseModel):
                 parts.append(f"PWD={escape_odbc_value(self.password.get_secret_value())}")
         return ";".join(parts) + ";"
 
+    def get_dialect(self) -> str:
+        """Derive the canonical SQL dialect from the profile's authoritative engine_type.
+
+        Returns:
+            'sqlite' if engine_type is 'sqlite' or 'sqlite3'.
+            'tsql' if engine_type is 'mssql', 'tsql', omitted, or empty.
+        """
+        engine = (self.engine_type or "mssql").strip().lower()
+        if engine in ("sqlite", "sqlite3"):
+            return "sqlite"
+        return "tsql"
+
     def get_sqlalchemy_url(self, hide_password: bool = False) -> str:
-        """Construct a SQLAlchemy URL using the mssql+pyodbc dialect.
+        """Construct a SQLAlchemy URL.
+
+        For MSSQL: uses the mssql+pyodbc dialect.
+        For SQLite: uses read-only URI mode (mode=ro&uri=true).
 
         Args:
             hide_password: If True, masks credentials for safe logging and error reporting.
         """
+        if self.engine_type == "sqlite":
+            if not self.database_path:
+                raise ProfileConfigurationError(
+                    f"SQLite profile '{self.profile_id}' is missing required 'database_path'."
+                )
+            return format_sqlite_uri(self.database_path)
+
         odbc_str = self.get_odbc_connection_string(hide_password=hide_password)
         params = urllib.parse.quote_plus(odbc_str)
         return f"mssql+pyodbc:///?odbc_connect={params}"
@@ -668,9 +748,10 @@ class ConnectionProfile(BaseModel):
 
     def to_safe_summary(self) -> Dict[str, Any]:
         """Return safe, model/UI-facing metadata without secrets or connection details."""
-        return {
+        summary: Dict[str, Any] = {
             "profile_id": self.profile_id,
             "display_name": self.display_name,
+            "engine_type": self.engine_type,
             "database_name": self.database_name,
             "timeout_seconds": self.timeout_seconds,
             "max_row_limit": self.max_row_limit,
@@ -679,6 +760,7 @@ class ConnectionProfile(BaseModel):
                 len(self.allowed_tables) if self.allowed_tables is not None else None
             ),
         }
+        return summary
 
 
 class ProfileStore:
@@ -1123,21 +1205,21 @@ def validate_safe_profile_data(data: Dict[str, Any]) -> None:
     # 1. Normalize and recursively reject any password or username credentials at any depth
     _inspect_forbidden_keys_recursive(data)
 
-    # 2. Reject use_trusted_connection=False (normalized keys and values)
     norm_dict = {str(k).strip().lower(): v for k, v in data.items() if isinstance(k, str)}
-    trusted = norm_dict.get("use_trusted_connection", norm_dict.get("trusted_connection", True))
-    if trusted is False or str(trusted).strip().lower() in {"false", "0", "no"}:
+    engine = str(norm_dict.get("engine_type", "mssql")).strip().lower()
+
+    if engine not in ("mssql", "sqlite"):
         raise ProfileConfigurationError(
-            "SECURITY REJECTION: SQL-authenticated profiles (trusted_connection=False) are rejected. "
-            "QueryPilot currently requires Windows Integrated Authentication (use_trusted_connection=True)."
+            f"Unsupported engine_type '{engine}'. Only 'mssql' and 'sqlite' are supported in this milestone."
         )
 
-    # 3. Reject unsupported engine_type (normalized)
-    engine = norm_dict.get("engine_type", "mssql")
-    if engine and str(engine).strip().lower() != "mssql":
-        raise ProfileConfigurationError(
-            f"Unsupported engine_type '{engine}'. Only 'mssql' is supported in this milestone."
-        )
+    if engine == "mssql":
+        trusted = norm_dict.get("use_trusted_connection", norm_dict.get("trusted_connection", True))
+        if trusted is False or str(trusted).strip().lower() in {"false", "0", "no"}:
+            raise ProfileConfigurationError(
+                "SECURITY REJECTION: SQL-authenticated profiles (trusted_connection=False) are rejected. "
+                "QueryPilot currently requires Windows Integrated Authentication (use_trusted_connection=True)."
+            )
 
 
 @contextmanager
@@ -1257,8 +1339,12 @@ def load_trusted_profiles_file(path: Path | str) -> ProfileStore:
         seen_ids.add(clean_id)
 
         # Standardize trusted connection and engine type
-        entry["use_trusted_connection"] = True
-        entry["engine_type"] = "mssql"
+        engine = entry.get("engine_type", "mssql")
+        if engine not in ("mssql", "sqlite"):
+            raise ProfileConfigurationError(f"Unsupported engine_type '{engine}'.")
+        entry["engine_type"] = engine
+        if engine == "mssql":
+            entry["use_trusted_connection"] = True
 
         try:
             profile = ConnectionProfile(**entry)
@@ -1332,25 +1418,33 @@ def save_trusted_profiles_file(
     # 3. Serialize trusted profile data (strictly non-secret, Windows Integrated Auth only)
     profiles_dict: Dict[str, Any] = {}
     for pid, profile in store.profiles.items():
-        if not profile.use_trusted_connection:
+        if profile.engine_type == "mssql" and not profile.use_trusted_connection:
             raise ProfileConfigurationError(
                 f"Cannot serialize profile '{pid}': SQL authentication is prohibited."
             )
-        entry = {
+        entry: Dict[str, Any] = {
             "profile_id": profile.profile_id,
             "display_name": profile.display_name,
-            "engine_type": getattr(profile, "engine_type", "mssql"),
-            "server": profile.server,
-            "database_name": profile.database_name,
-            "driver": profile.driver,
-            "use_trusted_connection": True,
+            "engine_type": profile.engine_type,
             "timeout_seconds": profile.timeout_seconds,
             "max_row_limit": profile.max_row_limit,
-            "schema_name": profile.schema_name or "dbo",
         }
-        if profile.allowed_tables:
+        if profile.engine_type == "sqlite":
+            entry["database_path"] = profile.database_path
+            entry["database_name"] = profile.database_name
+            if profile.schema_name:
+                entry["schema_name"] = profile.schema_name
+        else:
+            entry.update({
+                "server": profile.server,
+                "database_name": profile.database_name,
+                "driver": profile.driver,
+                "use_trusted_connection": True,
+                "schema_name": profile.schema_name or "dbo",
+            })
+        if profile.allowed_tables is not None:
             entry["allowed_tables"] = list(profile.allowed_tables)
-        if profile.sensitive_columns:
+        if profile.sensitive_columns is not None:
             entry["sensitive_columns"] = list(profile.sensitive_columns)
         profiles_dict[pid] = entry
 

@@ -23,6 +23,9 @@ export interface ProfileSelectorProps {
   connectionTestResult?: TestConnectionResponse | null
 }
 
+import { getProfileEngine } from '../utils/profileUtils.ts'
+export { getProfileEngine }
+
 /**
  * Accessible database connection profile selector and schema introspection component.
  *
@@ -80,7 +83,7 @@ export function ProfileSelector({
           <div className="empty-alert-body">
             <span>
               No database profiles configured in local agent. Define profiles in{' '}
-              <code>~/.query_pilot/profiles.json</code> or click <strong>Add Profile</strong> to configure a local SQL Server profile.
+              <code>~/.query_pilot/profiles.json</code> or click <strong>Add Profile</strong> to configure a local SQL Server or SQLite profile.
             </span>
             {onOpenOnboarding && (
               <button
@@ -107,11 +110,15 @@ export function ProfileSelector({
             aria-describedby="profile-meta-info"
           >
             <option value="">-- Choose a database profile --</option>
-            {profiles.map((p) => (
-              <option key={p.profile_id} value={p.profile_id}>
-                {p.display_name} ({p.profile_id})
-              </option>
-            ))}
+            {profiles.map((p) => {
+              const engine = getProfileEngine(p)
+              const engineTag = engine === 'sqlite' ? 'SQLite' : 'MSSQL'
+              return (
+                <option key={p.profile_id} value={p.profile_id}>
+                  {p.display_name} ({p.profile_id}) [{engineTag}]
+                </option>
+              )
+            })}
           </select>
 
           {selectedProfileId && onTestConnection && (
@@ -167,8 +174,18 @@ export function ProfileSelector({
             <code>{selectedProfile.profile_id}</code>
           </span>
           <span className="meta-pill">
+            <span className="meta-pill-label">Engine:</span>
+            <strong>{getProfileEngine(selectedProfile) === 'sqlite' ? 'SQLite' : 'SQL Server'}</strong>
+          </span>
+          {(selectedProfile.database_name || schemaContext?.database_name) && (
+            <span className="meta-pill">
+              <span className="meta-pill-label">Database:</span>
+              <strong>{selectedProfile.database_name || schemaContext?.database_name}</strong>
+            </span>
+          )}
+          <span className="meta-pill">
             <span className="meta-pill-label">Default Schema:</span>
-            {selectedProfile.schema_name || 'dbo'}
+            {selectedProfile.schema_name || (getProfileEngine(selectedProfile) === 'sqlite' ? 'main' : 'dbo')}
           </span>
           <span className="meta-pill">
             <span className="meta-pill-label">Timeout:</span>

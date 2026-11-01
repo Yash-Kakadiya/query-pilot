@@ -18,13 +18,16 @@ from sqlalchemy.exc import SQLAlchemyError
 from query_pilot.db.connection import (
     DatabaseConnectionError,
     DatabaseSecurityError,
+    create_profile_sqlite_engine,
     verify_database_context,
+    verify_sqlite_database_context,
 )
 from query_pilot.db.profile import (
     GLOBAL_MAX_ROW_LIMIT,
     GLOBAL_MAX_TIMEOUT_SECONDS,
     ConnectionProfile,
     ConnectionTargetOverrideError,
+    ProfileConfigurationError,
     ProfileStore,
     UnknownProfileError,
     enforce_global_row_limit_ceiling,
@@ -73,6 +76,8 @@ class ProfileEngineConfiguration:
     allowed_tables: Optional[Tuple[str, ...]]
     sensitive_columns: Tuple[str, ...]
     schema_name: str
+    engine_type: str = "mssql"
+    database_path: Optional[str] = None
 
 
 class ProfileConnectionFactory:
@@ -154,15 +159,22 @@ class ProfileConnectionFactory:
         timeout = profile.clamp_timeout()
         max_rows = profile.clamp_row_limit()
 
-        # Build engine_kwargs: connect_args["timeout"] configures driver connection login timeout
-        engine_kwargs = {
-            "pool_pre_ping": True,
-            "connect_args": {"timeout": timeout},
-        }
-
         # Build sensitive column tuple (canonical + profile-specific)
         policy = profile.get_sensitive_column_policy()
         sensitive_cols = tuple(sorted(policy.denylist))
+
+        if profile.engine_type == "sqlite":
+            engine_kwargs = {
+                "poolclass": sqlalchemy.pool.NullPool,
+            }
+            schema_name = profile.schema_name or "main"
+        else:
+            # Build engine_kwargs: connect_args["timeout"] configures driver connection login timeout
+            engine_kwargs = {
+                "pool_pre_ping": True,
+                "connect_args": {"timeout": timeout},
+            }
+            schema_name = profile.schema_name
 
         return ProfileEngineConfiguration(
             profile_id=profile.profile_id,
@@ -175,7 +187,9 @@ class ProfileConnectionFactory:
             max_row_limit=max_rows,
             allowed_tables=profile.allowed_tables,
             sensitive_columns=sensitive_cols,
-            schema_name=profile.schema_name,
+            schema_name=schema_name,
+            engine_type=profile.engine_type,
+            database_path=profile.database_path,
         )
 
     def create_engine(
@@ -210,6 +224,10 @@ class ProfileConnectionFactory:
                 f"Creating engine for profile '{config.profile_id}' "
                 f"targeting database '{config.expected_db}'"
             )
+            if config.engine_type == "sqlite" and self._engine_creator is sqlalchemy.create_engine:
+                mode = merged_kwargs.pop("mode", "execution")
+                profile = self.resolve_profile(profile_id, client_request=client_request)
+                return create_profile_sqlite_engine(profile, mode=mode, **merged_kwargs)
             return self._engine_creator(config.sqlalchemy_url, **merged_kwargs)
         except Exception as exc:
             raise DatabaseConnectionError(
@@ -250,7 +268,10 @@ class ProfileConnectionFactory:
             ) from exc
 
         try:
-            verify_database_context(conn, expected_db=config.expected_db)
+            if config.engine_type == "sqlite":
+                verify_sqlite_database_context(conn, expected_path=config.database_path or "")
+            else:
+                verify_database_context(conn, expected_db=config.expected_db)
             yield conn
         finally:
             conn.close()

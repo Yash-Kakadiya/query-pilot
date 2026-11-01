@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from query_pilot.db.profile import (
     validate_local_server_target_policy,
@@ -67,13 +67,21 @@ class ProfileSummary(BaseModel):
     """Safe, redacted summary of an approved local database connection profile.
 
     Security Guarantee: Never exposes database credentials, passwords, raw
-    connection strings, driver configurations, or server hostnames.
+    connection strings, driver configurations, server hostnames, or local database paths.
     """
 
     model_config = {"extra": "forbid"}
 
     profile_id: str = Field(description="Unique identifier of the approved connection profile.")
     display_name: str = Field(description="Human-readable display name for UI dropdown selection.")
+    engine_type: str = Field(
+        default="mssql",
+        description="Database engine type: 'mssql' or 'sqlite'.",
+    )
+    database_name: Optional[str] = Field(
+        default=None,
+        description="Logical database catalog name (for MSSQL). Never contains local filesystem paths.",
+    )
     schema_name: Optional[str] = Field(
         default="dbo",
         description="Target relational schema name configured on the profile.",
@@ -193,37 +201,37 @@ class ValidateProfileConfigRequest(BaseModel):
         max_length=128,
         description="Human-readable label for UI selection.",
     )
-    server: str = Field(
-        ...,
-        min_length=1,
+    server: Optional[str] = Field(
+        default=None,
         max_length=255,
-        description="Local SQL Server instance target (e.g. 'localhost\\SQLEXPRESS' or '.\\SQLEXPRESS').",
+        description="Local SQL Server instance target (e.g. 'localhost\\SQLEXPRESS' or '.\\SQLEXPRESS'). Required for mssql.",
     )
-    database_name: str = Field(
-        ...,
-        min_length=1,
+    database_name: Optional[str] = Field(
+        default=None,
         max_length=128,
-        description="Target database identifier.",
+        description="Target database identifier. Required for mssql.",
     )
-    schema_name: str = Field(
-        default="dbo",
-        min_length=1,
-        max_length=128,
-        description="Default relational schema name.",
+    database_path: Optional[str] = Field(
+        default=None,
+        description="Path to local SQLite database file. Required for sqlite.",
     )
-    driver: str = Field(
-        default="ODBC Driver 17 for SQL Server",
-        min_length=1,
+    schema_name: Optional[str] = Field(
+        default=None,
         max_length=128,
-        description="Installed ODBC driver name.",
+        description="Default relational schema name ('dbo' for mssql, 'main' for sqlite).",
+    )
+    driver: Optional[str] = Field(
+        default=None,
+        max_length=128,
+        description="Installed ODBC driver name for SQL Server.",
     )
     engine_type: str = Field(
         default="mssql",
-        description="Database engine type (must be 'mssql').",
+        description="Database engine type ('mssql' or 'sqlite').",
     )
-    use_trusted_connection: bool = Field(
+    use_trusted_connection: Optional[bool] = Field(
         default=True,
-        description="Must be True (Windows Integrated Authentication).",
+        description="Must be True (Windows Integrated Authentication) for mssql.",
     )
     timeout_seconds: int = Field(
         default=15,
@@ -265,22 +273,30 @@ class ValidateProfileConfigRequest(BaseModel):
 
     @field_validator("server")
     @classmethod
-    def validate_srv(cls, v: str) -> str:
-        return validate_local_server_target_policy(v)
+    def validate_srv(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            return validate_local_server_target_policy(v)
+        return None
 
     @field_validator("database_name")
     @classmethod
-    def validate_dbname(cls, v: str) -> str:
-        return validate_safe_database_identifier(v)
+    def validate_dbname(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            return validate_safe_database_identifier(v)
+        return None
 
     @field_validator("schema_name")
     @classmethod
-    def validate_sname(cls, v: str) -> str:
-        return validate_safe_schema_identifier(v)
+    def validate_sname(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            return validate_safe_schema_identifier(v)
+        return None
 
     @field_validator("driver")
     @classmethod
-    def validate_drv(cls, v: str) -> str:
+    def validate_drv(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
         trimmed = v.strip()
         if not trimmed:
             raise ValueError("driver cannot be blank or whitespace only.")
@@ -292,21 +308,53 @@ class ValidateProfileConfigRequest(BaseModel):
 
     @field_validator("engine_type")
     @classmethod
-    def validate_engine(cls, v: str) -> str:
+    def validate_engine(cls, v: Optional[str]) -> str:
+        if v is None:
+            return "mssql"
         clean = v.strip().lower()
-        if clean != "mssql":
-            raise ValueError(f"Unsupported engine_type '{v}'. QueryPilot only supports 'mssql' in this milestone.")
+        if clean not in ("mssql", "sqlite"):
+            raise ValueError(f"Unsupported engine_type '{v}'. QueryPilot supports 'mssql' and 'sqlite'.")
         return clean
 
     @field_validator("use_trusted_connection")
     @classmethod
-    def validate_trusted_auth(cls, v: bool) -> bool:
-        if v is not True:
+    def validate_trusted_auth(cls, v: Optional[bool]) -> Optional[bool]:
+        if v is False:
             raise ValueError(
                 "SECURITY REJECTION: SQL-authenticated profiles (use_trusted_connection=False) are rejected. "
                 "QueryPilot currently requires Windows Integrated Authentication (use_trusted_connection=True)."
             )
         return True
+
+    @model_validator(mode="after")
+    def validate_engine_and_fields(self) -> ValidateProfileConfigRequest:
+        if self.engine_type == "mssql":
+            if not self.server or not self.server.strip():
+                raise ValueError("server must be specified for mssql profiles.")
+            if not self.database_name or not self.database_name.strip():
+                raise ValueError("database_name must be specified for mssql profiles.")
+            if not self.driver or not self.driver.strip():
+                self.driver = "ODBC Driver 17 for SQL Server"
+            if not self.schema_name or not self.schema_name.strip():
+                self.schema_name = "dbo"
+            if not self.use_trusted_connection:
+                raise ValueError(
+                    "SECURITY REJECTION: SQL-authenticated profiles (use_trusted_connection=False) are rejected. "
+                    "QueryPilot currently requires Windows Integrated Authentication (use_trusted_connection=True)."
+                )
+        elif self.engine_type == "sqlite":
+            if not self.database_path or not self.database_path.strip():
+                raise ValueError("database_path must be specified for sqlite profiles.")
+            from query_pilot.db.sqlite_path import validate_sqlite_database_path
+            self.database_path = validate_sqlite_database_path(self.database_path)
+            self.server = None
+            self.driver = None
+            if not self.database_name or not self.database_name.strip():
+                from pathlib import Path
+                self.database_name = Path(self.database_path).stem
+            if not self.schema_name or not self.schema_name.strip():
+                self.schema_name = "main"
+        return self
 
     @field_validator("allowed_tables")
     @classmethod

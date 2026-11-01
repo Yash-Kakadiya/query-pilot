@@ -63,3 +63,10 @@ Thumbs.db
 
 # Scratch and log files
 *.log
+
+# SQLite sidecars and transient lockfiles
+*.db-journal
+*.db-wal
+*.db-shm
+*.token
+*.lock

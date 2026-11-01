@@ -22,8 +22,8 @@ Translates a natural-language question and model-facing schema context into a re
 * **Service:** Generation API (`querypilot-api :8000`)
 * **Database Boundary:** **Zero database access.** The service never connects to customer databases and does not execute SQL queries.
 * **Authentication:** Optional `X-QueryPilot-Access-Key: <string>` when configured on backend. No session cookie required.
-* **Proxy Exposure:** Proxied on local agent daemon at `/api/v1/generate-sql` via the agent's proxy allowlist (`/api/health`, `/api/v1/generate-sql`, `/api/v1/synthesize-answer`, `/api/query`). Upstream proxy forwards `Content-Type`, `Accept`, `X-Request-ID`, and `X-QueryPilot-Access-Key`, stripping cookies and agent-specific headers.
-* **Headers:** `Content-Type: application/json`, optional `X-Request-ID: <string>`, optional `X-QueryPilot-Access-Key: <string>`.
+* **Proxy Exposure:** Proxied on local agent daemon at `/api/v1/generate-sql` via the agent's proxy allowlist (`/api/health`, `/api/v1/generate-sql`, `/api/v1/synthesize-answer`, `/api/query`). Upstream proxy forwards `Content-Type`, `Accept`, `X-Request-ID`, and `X-QueryPilot-Access-Key`, stripping cookies and agent-specific headers. When proxied through the local agent, the dialect is authoritatively derived from the selected local connection profile's `engine_type` (`mssql` -> `tsql`, `sqlite` -> `sqlite`), overriding any frontend-supplied dialect. Local profile IDs, file paths, and database credentials are strictly stripped before upstream dispatch.
+* **Headers:** `Content-Type: application/json`, optional `X-Request-ID: <string>`, optional `X-QueryPilot-Access-Key: <string>`, optional `X-Profile-ID: <string>` (local agent proxy only).
 
 #### Request Model (`GenerateSQLRequest` — `extra = "forbid"`)
 
@@ -31,6 +31,7 @@ Translates a natural-language question and model-facing schema context into a re
 | :--- | :--- | :---: | :--- |
 | `question` | `string` | **Yes** | Natural-language query question (1–1,000 characters). Transmitted to Google Gemini. |
 | `schema_context` | `object` | **Yes** | Model-facing database schema (`database_name`, list of `tables` with normalized `columns`). Transmitted to Google Gemini. |
+| `dialect` | `string` | No | Target SQL dialect (default: `"tsql"`). Supported: `"tsql"`, `"sqlite"` (with clean alias normalization: `"mssql"`, `"t-sql"`, `"sqlite3"`). Unsupported dialects are rejected with HTTP 422. |
 | `conversation_context` | `array[ConversationTurnContext]` | No | Optional list of prior user conversation turns (maximum 3 turns). Sub-model detailed below. |
 | `request_id` | `string` | No | Optional client tracking correlation ID (maximum 128 characters). |
 
@@ -52,8 +53,9 @@ Translates a natural-language question and model-facing schema context into a re
 
 | Field | Type | Description |
 | :--- | :--- | :--- |
-| `candidate_sql` | `string \| null` | Generated read-only T-SQL candidate query. Present only when `status == "generated"`. |
+| `candidate_sql` | `string \| null` | Generated read-only candidate query (T-SQL or SQLite based on target dialect). Present only when `status == "generated"`. |
 | `status` | `string` | Generation outcome (`"generated"`, `"clarification_needed"`, `"unsupported"`, `"generation_failed"`). |
+| `dialect` | `string \| null` | The SQL dialect used for generation and AST validation (`"tsql"` or `"sqlite"`). |
 | `clarification_prompt` | `string \| null` | Clarification question when status is `"clarification_needed"`. |
 | `clarification_options` | `array[object]` | Structured candidate interpretation choices (each with `option_id`, `description`, and optional `suggested_question`). Default: `[]`. |
 | `unsupported_reason` | `string \| null` | Refusal explanation when status is `"unsupported"`. |

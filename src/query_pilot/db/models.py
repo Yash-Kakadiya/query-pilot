@@ -66,6 +66,7 @@ class TableMetadata:
     foreign_keys: List[ForeignKeyMetadata] = field(default_factory=list)
     indexes: List[IndexMetadata] = field(default_factory=list)
     unique_constraints: List[Dict[str, Any]] = field(default_factory=list)
+    comment: Optional[str] = None
 
     @property
     def column_names(self) -> List[str]:
@@ -90,6 +91,7 @@ class TableMetadata:
             "foreign_keys": [fk.to_dict() for fk in self.foreign_keys],
             "indexes": [idx.to_dict() for idx in self.indexes],
             "unique_constraints": list(self.unique_constraints),
+            "comment": self.comment,
         }
 
 

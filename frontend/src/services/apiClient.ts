@@ -16,6 +16,8 @@ export interface RequestOptions {
   requestId?: string
   /** Optional explicit prototype access key override. */
   accessKey?: string
+  /** Optional active database profile identifier for local agent routing. */
+  profileId?: string
 }
 
 export const ACCESS_KEY_STORAGE_KEY = 'querypilot_access_key'

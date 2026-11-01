@@ -23,6 +23,18 @@ from query_pilot.db.profile_introspector import (
     ProfileIntrospectionError,
     ProfileSchemaIntrospector,
 )
+from query_pilot.db.sqlite_security import (
+    ALLOWED_EXECUTION_FUNCTIONS,
+    ALLOWED_INTROSPECTION_PRAGMAS,
+    SQLiteSecurityError,
+    configure_sqlite_connection,
+    create_execution_authorizer,
+    create_introspection_authorizer,
+)
+from query_pilot.db.sqlite_path import (
+    DOS_DEVICE_NAMES,
+    validate_sqlite_database_path,
+)
 from query_pilot.db.models import (
     ColumnMetadata,
     DatabaseSchema,
@@ -85,10 +97,16 @@ __all__ = [
     "ProfileSchemaIntrospector",
     "ProfileStore",
     "SQLSERVER_SYSTEM_DATABASES",
+    "SQLiteSecurityError",
     "TableMetadata",
     "UnknownProfileError",
+    "configure_sqlite_connection",
     "create_db_engine",
+    "create_execution_authorizer",
+    "create_introspection_authorizer",
     "create_profile_db_engine",
+    "ALLOWED_EXECUTION_FUNCTIONS",
+    "ALLOWED_INTROSPECTION_PRAGMAS",
     "enforce_global_row_limit_ceiling",
     "enforce_global_timeout_ceiling",
     "escape_odbc_value",
@@ -105,5 +123,6 @@ __all__ = [
     "validate_safe_profile_path",
     "validate_safe_schema_identifier",
     "validate_server_target_syntax",
+    "validate_sqlite_database_path",
     "verify_database_context",
 ]

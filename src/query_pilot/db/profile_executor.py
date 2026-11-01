@@ -14,17 +14,21 @@ future database query execution adheres strictly to:
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import DBAPIError, OperationalError, SQLAlchemyError
+from sqlalchemy.pool import NullPool
 
 from query_pilot.db.connection import (
     DatabaseConnectionError,
     DatabaseSecurityError,
+    create_profile_sqlite_engine,
     verify_database_context,
+    verify_sqlite_database_context,
 )
 from query_pilot.db.executor import (
     QueryExecutionError,
@@ -132,10 +136,17 @@ class ProfileExecutionBoundary:
             # Derive immutable ProfileEngineConfiguration from ConnectionProfile
             timeout = config.clamp_timeout()
             max_rows = config.clamp_row_limit()
-            engine_kwargs = {
-                "pool_pre_ping": True,
-                "connect_args": {"timeout": timeout},
-            }
+            if config.engine_type == "sqlite":
+                engine_kwargs = {
+                    "poolclass": NullPool,
+                }
+                schema_name = config.schema_name or "main"
+            else:
+                engine_kwargs = {
+                    "pool_pre_ping": True,
+                    "connect_args": {"timeout": timeout},
+                }
+                schema_name = config.schema_name or "dbo"
             policy = config.get_sensitive_column_policy()
             self._config = ProfileEngineConfiguration(
                 profile_id=config.profile_id,
@@ -148,7 +159,9 @@ class ProfileExecutionBoundary:
                 max_row_limit=max_rows,
                 allowed_tables=config.allowed_tables,
                 sensitive_columns=tuple(sorted(list(policy.denylist))),
-                schema_name=config.schema_name,
+                schema_name=schema_name,
+                engine_type=config.engine_type,
+                database_path=config.database_path,
             )
         elif isinstance(config, ProfileEngineConfiguration):
             self._config = config
@@ -213,7 +226,7 @@ class ProfileExecutionBoundary:
 
         if self._factory is not None:
             try:
-                eng = self._factory.create_engine(self._config.profile_id)
+                eng = self._factory.create_engine(self._config.profile_id, mode="execution")
                 return eng.connect()
             except SQLAlchemyError as exc:
                 sanitized = sanitize_message(str(exc))
@@ -223,6 +236,23 @@ class ProfileExecutionBoundary:
 
         # Create engine lazily from profile config URL and engine_kwargs
         try:
+            if self._config.engine_type == "sqlite" and self._config.database_path:
+                from query_pilot.db.profile import ConnectionProfile
+                ephemeral_profile = ConnectionProfile(
+                    profile_id=self._config.profile_id,
+                    display_name=self._config.display_name,
+                    engine_type="sqlite",
+                    database_path=self._config.database_path,
+                    database_name=self._config.expected_db,
+                    schema_name=self._config.schema_name or "main",
+                    timeout_seconds=self._config.timeout_seconds,
+                    max_row_limit=self._config.max_row_limit,
+                    allowed_tables=self._config.allowed_tables,
+                    sensitive_columns=self._config.sensitive_columns,
+                )
+                eng = create_profile_sqlite_engine(ephemeral_profile, mode="execution")
+                return eng.connect()
+
             eng = create_engine(self._config.sqlalchemy_url, **self._config.engine_kwargs)
             return eng.connect()
         except Exception as exc:
@@ -309,11 +339,13 @@ class ProfileExecutionBoundary:
 
         # Step 4: Pre-execution SQL Validation
         sensitive_policy = self.get_sensitive_column_policy()
+        dialect = "sqlite" if self._config.engine_type == "sqlite" else "tsql"
         val_result = validate_sql(
             sql=sql,
             schema=active_schema,
             policy=sensitive_policy,
             max_rows=effective_rows,
+            dialect=dialect,
         )
         if not val_result.allowed:
             reasons_str = "; ".join(f"{r.code.value}: {r.message}" for r in val_result.reasons)
@@ -332,56 +364,171 @@ class ProfileExecutionBoundary:
 
         # Step 6: Acquire connection, verify database identity, and apply statement timeout
         conn = self._acquire_connection()
+        timed_out_flag = threading.Event()
         try:
-            # Runtime identity verification: SELECT DB_NAME()
-            verify_database_context(conn, expected_db=self._config.expected_db)
+            if self._config.engine_type == "sqlite":
+                # Runtime identity verification: PRAGMA database_list against database_path
+                verify_sqlite_database_context(conn, expected_path=self._config.database_path or "")
 
-            # Statement execution timeout applied at DBAPI level
-            raw_conn = getattr(conn.connection, "dbapi_connection", None)
-            if raw_conn is None or not hasattr(raw_conn, "timeout"):
-                raise ProfileExecutionError(
-                    "Hard driver-level query timeout enforcement is unavailable for this connection."
+                raw_conn = getattr(conn.connection, "dbapi_connection", None)
+                if raw_conn is None or not hasattr(raw_conn, "interrupt"):
+                    raise ProfileExecutionError(
+                        "Hard SQLite interrupt enforcement is unavailable for this connection."
+                    )
+
+                deadline = time.perf_counter() + effective_timeout
+                finished_event = threading.Event()
+                state_lock = threading.Lock()
+                execution_state = ["RUNNING"]  # Transitions: RUNNING -> COMPLETED or RUNNING -> TIMED_OUT
+                active_conn = [raw_conn]
+                watchdog_started = False
+
+                def progress_handler() -> int:
+                    if time.perf_counter() >= deadline:
+                        with state_lock:
+                            if execution_state[0] == "RUNNING":
+                                execution_state[0] = "TIMED_OUT"
+                                timed_out_flag.set()
+                        return 1
+                    return 0
+
+                def watchdog():
+                    remaining = deadline - time.perf_counter()
+                    if remaining > 0:
+                        finished_event.wait(remaining)
+                    if time.perf_counter() >= deadline:
+                        with state_lock:
+                            if execution_state[0] == "RUNNING" and active_conn[0] is not None:
+                                execution_state[0] = "TIMED_OUT"
+                                timed_out_flag.set()
+                                try:
+                                    active_conn[0].interrupt()
+                                except Exception:
+                                    pass
+
+                watchdog_thread = threading.Thread(
+                    target=watchdog,
+                    daemon=True,
+                    name=f"qp-sqlite-watchdog-{id(raw_conn)}",
                 )
-            try:
-                raw_conn.timeout = effective_timeout
-            except Exception as exc:
-                raise ProfileExecutionError(
-                    f"Failed to set driver-level query timeout: {sanitize_message(str(exc))}"
-                ) from None
-
-            start_time = time.perf_counter()
-            try:
-                cursor_result = conn.execution_options(
-                    timeout=effective_timeout,
-                    yield_per=effective_rows,
-                ).execute(text(val_result.normalized_sql), params or {})
-
                 try:
-                    columns = list(cursor_result.keys())
-                    raw_rows = cursor_result.fetchmany(effective_rows + 1)
-                    truncated = len(raw_rows) > effective_rows
-                    if truncated:
-                        raw_rows = raw_rows[:effective_rows]
+                    raw_conn.set_progress_handler(progress_handler, 1000)
+                    watchdog_thread.start()
+                    watchdog_started = True
+
+                    start_time = time.perf_counter()
+                    cursor_result = conn.execute(text(val_result.normalized_sql), params or {})
+                    try:
+                        columns = list(cursor_result.keys())
+                        raw_rows = cursor_result.fetchmany(effective_rows + 1)
+                        truncated = len(raw_rows) > effective_rows
+                        if truncated:
+                            raw_rows = raw_rows[:effective_rows]
+                    finally:
+                        cursor_result.close()
+
+                    elapsed_ms = (time.perf_counter() - start_time) * 1000.0
                 finally:
-                    cursor_result.close()
+                    # 1. Atomic state transition and connection disassociation under lock
+                    with state_lock:
+                        if execution_state[0] == "RUNNING":
+                            execution_state[0] = "COMPLETED"
+                        active_conn[0] = None
+                    # 2. Wake watchdog thread immediately
+                    finished_event.set()
+                    # 3. Detach progress handler
+                    try:
+                        raw_conn.set_progress_handler(None, 0)
+                    except Exception:
+                        pass
+                    # 4. Synchronize watchdog termination completely before connection release
+                    if watchdog_started:
+                        watchdog_thread.join()
 
-                elapsed_ms = (time.perf_counter() - start_time) * 1000.0
-
-            except OperationalError as exc:
-                err_msg = str(exc).lower()
-                if "timeout" in err_msg or "hyt00" in err_msg:
+                # Check if execution was interrupted by timeout before COMPLETED was committed
+                if execution_state[0] == "TIMED_OUT" or timed_out_flag.is_set():
                     raise QueryTimeoutError(
                         f"Query execution timed out after {effective_timeout} seconds."
+                    )
+
+            else:
+                # MSSQL runtime verification: SELECT DB_NAME()
+                verify_database_context(conn, expected_db=self._config.expected_db)
+
+                # Statement execution timeout applied at DBAPI level
+                raw_conn = getattr(conn.connection, "dbapi_connection", None)
+                if raw_conn is None or not hasattr(raw_conn, "timeout"):
+                    raise ProfileExecutionError(
+                        "Hard driver-level query timeout enforcement is unavailable for this connection."
+                    )
+                try:
+                    raw_conn.timeout = effective_timeout
+                except Exception as exc:
+                    raise ProfileExecutionError(
+                        f"Failed to set driver-level query timeout: {sanitize_message(str(exc))}"
                     ) from None
-                sanitized_err = sanitize_message(str(exc))
-                raise ProfileExecutionError(
-                    f"Database operational error: {sanitized_err}"
+
+                start_time = time.perf_counter()
+                try:
+                    cursor_result = conn.execution_options(
+                        timeout=effective_timeout,
+                        yield_per=effective_rows,
+                    ).execute(text(val_result.normalized_sql), params or {})
+
+                    try:
+                        columns = list(cursor_result.keys())
+                        raw_rows = cursor_result.fetchmany(effective_rows + 1)
+                        truncated = len(raw_rows) > effective_rows
+                        if truncated:
+                            raw_rows = raw_rows[:effective_rows]
+                    finally:
+                        cursor_result.close()
+
+                    elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+                except OperationalError as exc:
+                    err_msg = str(exc).lower()
+                    if "timeout" in err_msg or "hyt00" in err_msg:
+                        raise QueryTimeoutError(
+                            f"Query execution timed out after {effective_timeout} seconds."
+                        ) from None
+                    sanitized_err = sanitize_message(str(exc))
+                    raise ProfileExecutionError(
+                        f"Database operational error: {sanitized_err}"
+                    ) from None
+                except SQLAlchemyError as exc:
+                    sanitized_err = sanitize_message(str(exc))
+                    raise ProfileExecutionError(
+                        f"Database execution error: {sanitized_err}"
+                    ) from None
+
+        except (OperationalError, DBAPIError) as exc:
+            err_msg = str(exc).lower()
+            if timed_out_flag.is_set() or "interrupted" in err_msg or "timeout" in err_msg or "hyt00" in err_msg:
+                raise QueryTimeoutError(
+                    f"Query execution timed out after {effective_timeout} seconds."
                 ) from None
-            except SQLAlchemyError as exc:
-                sanitized_err = sanitize_message(str(exc))
-                raise ProfileExecutionError(
-                    f"Database execution error: {sanitized_err}"
+            if "not authorized" in err_msg or "authorization denied" in err_msg:
+                raise UnsafeQueryError(
+                    f"Database authorization denied query execution: {sanitize_message(str(exc))}"
                 ) from None
+            sanitized_err = sanitize_message(str(exc))
+            raise ProfileExecutionError(
+                f"Database operational error: {sanitized_err}"
+            ) from None
+        except SQLAlchemyError as exc:
+            err_msg = str(exc).lower()
+            if timed_out_flag.is_set() or "interrupted" in err_msg:
+                raise QueryTimeoutError(
+                    f"Query execution timed out after {effective_timeout} seconds."
+                ) from None
+            if "not authorized" in err_msg or "authorization denied" in err_msg:
+                raise UnsafeQueryError(
+                    f"Database authorization denied query execution: {sanitize_message(str(exc))}"
+                ) from None
+            sanitized_err = sanitize_message(str(exc))
+            raise ProfileExecutionError(
+                f"Database execution error: {sanitized_err}"
+            ) from None
 
         finally:
             conn.close()

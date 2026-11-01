@@ -76,6 +76,9 @@ If any scenario fails, the CLI runner prints a failure diagnostic to `stderr` an
    - Location: [`tests/eval_multi_turn.py`](../tests/eval_multi_turn.py), [`scripts/run_multi_turn_evaluation.py`](../scripts/run_multi_turn_evaluation.py).
    - Artifacts: [`data/evaluation/multi_turn_evaluation.json`](../data/evaluation/multi_turn_evaluation.json), [`data/evaluation/multi_turn_evaluation_report.md`](../data/evaluation/multi_turn_evaluation_report.md).
    - Scope: Evaluates conversational context bounding ($\le 3$ turns), FIFO sliding-window eviction across 5 turns, topic reset boundaries, and prohibited data exclusion across 10 scenarios (`MT-01` to `MT-10`).
+   - Metric Definitions:
+     - `context_violations_prevented` (22): Programmatic count of schema boundary violations intercepted across scenarios MT-02, MT-03, MT-04, MT-05, MT-06, MT-07, MT-08, and MT-10 (e.g. unapproved candidates, stale callbacks, topic leakage).
+     - `data_leak_attempts_blocked` (14): Specific Pydantic validation rejections in MT-05 blocking 14 synthetic test injections of prohibited fields (4 SQL fields, 4 raw data/row payload fields, 4 invalid assistant/system roles, 1 empty question, 1 oversized column list). These are deterministic unit validation checks, not measurements of live network penetration attempts.
 
 2. **Result Explanation & Faithfulness Benchmark (`B13-EVAL2`)**:
    - Location: [`tests/eval_explanation.py`](../tests/eval_explanation.py), [`scripts/run_explanation_evaluation.py`](../scripts/run_explanation_evaluation.py).
@@ -85,3 +88,9 @@ If any scenario fails, the CLI runner prints a failure diagnostic to `stderr` an
 3. **Baseline Text-to-SQL Benchmark Dataset**:
    - Location: [`data/evaluation/baseline_questions.json`](../data/evaluation/baseline_questions.json), [`data/evaluation/README.md`](../data/evaluation/README.md).
    - Scope: 34 curated test cases covering single-table projections, multi-table joins, aggregations, semantic traps (`Q028`–`Q030`), safety validation fixtures (`S001`, `S002`), and single-turn clarification prompts (`C001`, `C002`).
+
+4. **Business Metrics & Schema Retrieval Benchmark (`B23-A`)**:
+   - Location: [`scripts/run_business_metrics_evaluation.py`](../scripts/run_business_metrics_evaluation.py).
+   - Artifacts: [`data/evaluation/business_metrics_evaluation.json`](../data/evaluation/business_metrics_evaluation.json), [`data/evaluation/business_metrics_evaluation_report.md`](../data/evaluation/business_metrics_evaluation_report.md).
+   - Scope: Evaluates deterministic business metric matching, entity compatibility, follow-up gating ("them", "those"), top-3 budget caps, 1,200-character rendered prompt limits, 48 KB (49,152 UTF-8 bytes) schema context budget enforcement, formula inertness, and request isolation across 10 scenarios (`BM-01` to `BM-10`).
+   - Critical Methodological Distinction: Verifies deterministic retrieval contracts, ranking order, anti-bleeding gates, and memory isolation using pure offline functional fixtures. It does not measure live generative accuracy of LLMs executing complex analytical metrics.

@@ -6,6 +6,7 @@ structured response validation. The LLM layer never executes SQL.
 """
 
 from enum import Enum
+import re
 from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -51,6 +52,9 @@ class EmptySQLError(SQLGenerationError):
 
 MAX_CONVERSATION_TURNS: int = 3
 MAX_CLARIFICATION_OPTIONS: int = 5
+MAX_TABLE_COMMENT_LENGTH: int = 300
+MAX_COLUMN_COMMENT_LENGTH: int = 150
+MAX_SCHEMA_CONTEXT_BYTES: int = 49152  # 48 KB UTF-8 ceiling
 ALLOWED_ROLES: tuple[str, ...] = ("user",)
 FORBIDDEN_SQL_FIELDS: tuple[str, ...] = ("executed_sql", "sql", "query", "candidate_sql")
 
@@ -274,6 +278,21 @@ class SQLGenerationRequest(BaseModel):
         default_factory=list,
         description="Bounded semantic context from recent conversation turns (at most 3).",
     )
+    business_metrics: Optional[List[Any]] = Field(
+        default=None,
+        description="Optional caller-supplied business metrics (at most 5 entries).",
+    )
+
+    @field_validator("dialect", mode="before")
+    @classmethod
+    def validate_dialect(cls, v: Any) -> str:
+        """Validate and normalize SQL dialect."""
+        from query_pilot.sql.validator import normalize_dialect
+
+        norm = normalize_dialect(v)
+        if norm == "tsql" and (v == "T-SQL" or str(v).upper() == "T-SQL"):
+            return "T-SQL"
+        return norm
 
     @field_validator("question")
     @classmethod
@@ -313,6 +332,23 @@ class SQLGenerationRequest(BaseModel):
             raise ValueError(
                 f"conversation_context cannot exceed {MAX_CONVERSATION_TURNS} turns, received {len(v)}."
             )
+        return v
+
+    @field_validator("business_metrics")
+    @classmethod
+    def validate_business_metrics(cls, v: Optional[List[Any]]) -> Optional[List[Any]]:
+        """Validate caller-supplied business metrics count and type safety."""
+        if v is None:
+            return None
+        if len(v) > 5:
+            raise ValueError(f"business_metrics cannot exceed 5 entries, received {len(v)}.")
+        from query_pilot.api.models import BusinessMetricDefinition
+        for idx, item in enumerate(v):
+            if not isinstance(item, BusinessMetricDefinition):
+                raise TypeError(
+                    f"All business_metrics entries must be BusinessMetricDefinition instances, "
+                    f"got {type(item).__name__} at index {idx}."
+                )
         return v
 
 
@@ -460,19 +496,41 @@ class SQLGenerator(Protocol):
 # Deterministic Schema Context Formatter
 # ==============================================================================
 
-def format_schema_context(schema: DatabaseSchema, dialect: str = "T-SQL") -> str:
-    """Format a model-facing DatabaseSchema into a stable, deterministic textual context.
+MAX_TABLE_COMMENT_LENGTH: int = 300
+MAX_COLUMN_COMMENT_LENGTH: int = 150
 
-    Includes tables, model-facing columns, data types, primary keys, and foreign-key
-    relationships. Strictly excludes sensitive columns, row data, and credentials.
 
-    Args:
-        schema: Model-facing DatabaseSchema.
-        dialect: SQL dialect name (default: T-SQL).
+def _clean_schema_comment(comment: Optional[str], max_length: int) -> str:
+    """Normalize, sanitize, and bound table or column comments for prompt formatting.
 
-    Returns:
-        Deterministic formatted string suitable for LLM prompt context.
+    Preserves informational domain descriptions while collapsing newlines, neutralizing
+    potential prompt delimiter sequences (e.g. ===), and enforcing max character length.
     """
+    if not comment:
+        return ""
+    cleaned = re.sub(r"[\r\n\t]+", " ", comment).strip()
+    cleaned = re.sub(r"={3,}", "---", cleaned)
+    if not cleaned:
+        return ""
+    if len(cleaned) > max_length:
+        cleaned = cleaned[:max_length].rstrip()
+    return cleaned
+
+
+def _measure_utf8_bytes(text: str) -> int:
+    """Return the exact length of a text string in UTF-8 encoded bytes."""
+    return len(text.encode("utf-8"))
+
+
+def _build_schema_context_text(
+    schema: DatabaseSchema,
+    dialect: str = "T-SQL",
+    include_table_comments: bool = True,
+    include_column_comments: bool = True,
+    include_relationships: bool = True,
+    max_tables: Optional[int] = None,
+    max_columns_per_table: Optional[Dict[str, int]] = None,
+) -> str:
     lines: List[str] = [
         f"DATABASE DIALECT: {dialect}",
         f"DATABASE NAME: {schema.database_name}",
@@ -480,36 +538,190 @@ def format_schema_context(schema: DatabaseSchema, dialect: str = "T-SQL") -> str
         "TABLES AND COLUMNS:",
     ]
 
-    # Deterministic table ordering by table_name
     sorted_tables = sorted(schema.tables, key=lambda t: t.table_name.lower())
+    if max_tables is not None:
+        sorted_tables = sorted_tables[:max_tables]
 
     all_relationships: List[str] = []
 
     for table in sorted_tables:
-        lines.append(f"TABLE [{table.table_name}]:")
+        clean_tbl_comment = ""
+        if include_table_comments:
+            clean_tbl_comment = _clean_schema_comment(
+                getattr(table, "comment", None), MAX_TABLE_COMMENT_LENGTH
+            )
+        tbl_comment_tag = f" -- {clean_tbl_comment}" if clean_tbl_comment else ""
+        lines.append(f"TABLE [{table.table_name}]:{tbl_comment_tag}")
         pk_set = {pk.lower() for pk in table.primary_keys}
 
-        # Deterministic column ordering as inspected
-        for col in table.columns:
+        cols = table.columns
+        if max_columns_per_table and table.table_name in max_columns_per_table:
+            cols = cols[: max_columns_per_table[table.table_name]]
+
+        for col in cols:
             pk_tag = " (PRIMARY KEY)" if col.name.lower() in pk_set or col.primary_key else ""
             null_tag = " NULL" if col.nullable else " NOT NULL"
-            comment_tag = f" -- {col.comment.strip()}" if col.comment and col.comment.strip() else ""
+            clean_col_comment = ""
+            if include_column_comments:
+                clean_col_comment = _clean_schema_comment(
+                    col.comment, MAX_COLUMN_COMMENT_LENGTH
+                )
+            comment_tag = f" -- {clean_col_comment}" if clean_col_comment else ""
             lines.append(f"  - [{col.name}] ({col.data_type}{null_tag}{pk_tag}){comment_tag}")
 
-        # Collect foreign keys
-        for fk in table.foreign_keys:
-            all_relationships.append(
-                f"[{fk.source_table}].[{fk.source_column}] -> [{fk.target_table}].[{fk.target_column}]"
-            )
+        if include_relationships:
+            for fk in table.foreign_keys:
+                all_relationships.append(
+                    f"[{fk.source_table}].[{fk.source_column}] -> [{fk.target_table}].[{fk.target_column}]"
+                )
 
         lines.append("")
 
-    # Relationships section (sorted deterministically)
     lines.append("RELATIONSHIPS (FOREIGN KEYS):")
-    if all_relationships:
+    if include_relationships and all_relationships:
         for rel in sorted(all_relationships):
             lines.append(f"  - {rel}")
     else:
         lines.append("  (No foreign-key relationships defined)")
 
     return "\n".join(lines).strip()
+
+
+def format_schema_context(
+    schema: DatabaseSchema,
+    dialect: str = "T-SQL",
+    max_bytes: int = MAX_SCHEMA_CONTEXT_BYTES,
+) -> str:
+    """Format a model-facing DatabaseSchema into a stable, deterministic textual context
+    strictly bounded by max_bytes (default 49,152 UTF-8 bytes).
+
+    Deterministic Pruning Hierarchy:
+      Tier 0: Full schema (table comments, column comments, foreign keys).
+      Tier 1: Prune all column comments (retain table comments, structural schema, FKs).
+      Tier 2: Prune all table comments (retain structural schema, FKs).
+      Tier 3: Prune foreign-key relationships (retain structural tables and columns).
+      Tier 4: Bounded table and column inclusion in deterministic alphabetical order,
+              ensuring no table or column definition is truncated midway.
+
+    Args:
+        schema: Model-facing DatabaseSchema.
+        dialect: SQL dialect name (default: T-SQL).
+        max_bytes: Maximum allowed UTF-8 bytes for the formatted schema string.
+
+    Returns:
+        Deterministic formatted string suitable for LLM prompt context, strictly
+        guaranteed to not exceed max_bytes.
+    """
+    # Tier 0: Full schema
+    candidate = _build_schema_context_text(
+        schema,
+        dialect=dialect,
+        include_table_comments=True,
+        include_column_comments=True,
+        include_relationships=True,
+    )
+    if _measure_utf8_bytes(candidate) <= max_bytes:
+        return candidate
+
+    # Tier 1: Prune column comments
+    candidate = _build_schema_context_text(
+        schema,
+        dialect=dialect,
+        include_table_comments=True,
+        include_column_comments=False,
+        include_relationships=True,
+    )
+    if _measure_utf8_bytes(candidate) <= max_bytes:
+        return candidate
+
+    # Tier 2: Prune table comments
+    candidate = _build_schema_context_text(
+        schema,
+        dialect=dialect,
+        include_table_comments=False,
+        include_column_comments=False,
+        include_relationships=True,
+    )
+    if _measure_utf8_bytes(candidate) <= max_bytes:
+        return candidate
+
+    # Tier 3: Prune foreign keys
+    candidate = _build_schema_context_text(
+        schema,
+        dialect=dialect,
+        include_table_comments=False,
+        include_column_comments=False,
+        include_relationships=False,
+    )
+    if _measure_utf8_bytes(candidate) <= max_bytes:
+        return candidate
+
+    # Tier 4: Bounded table/column inclusion
+    sorted_tables = sorted(schema.tables, key=lambda t: t.table_name.lower())
+    if not sorted_tables:
+        return candidate
+
+    low, high = 1, len(sorted_tables)
+    best_table_count = 0
+    while low <= high:
+        mid = (low + high) // 2
+        trial = _build_schema_context_text(
+            schema,
+            dialect=dialect,
+            include_table_comments=False,
+            include_column_comments=False,
+            include_relationships=False,
+            max_tables=mid,
+        )
+        if _measure_utf8_bytes(trial) <= max_bytes:
+            best_table_count = mid
+            low = mid + 1
+        else:
+            high = mid - 1
+
+    if best_table_count > 0:
+        return _build_schema_context_text(
+            schema,
+            dialect=dialect,
+            include_table_comments=False,
+            include_column_comments=False,
+            include_relationships=False,
+            max_tables=best_table_count,
+        )
+
+    # Single unusually large table exceeding budget: include valid column lines up to budget
+    first_table = sorted_tables[0]
+    low_col, high_col = 1, len(first_table.columns)
+    best_col_count = 0
+    while low_col <= high_col:
+        mid_col = (low_col + high_col) // 2
+        trial = _build_schema_context_text(
+            schema,
+            dialect=dialect,
+            include_table_comments=False,
+            include_column_comments=False,
+            include_relationships=False,
+            max_tables=1,
+            max_columns_per_table={first_table.table_name: mid_col},
+        )
+        if _measure_utf8_bytes(trial) <= max_bytes:
+            best_col_count = mid_col
+            low_col = mid_col + 1
+        else:
+            high_col = mid_col - 1
+
+    if best_col_count > 0:
+        return _build_schema_context_text(
+            schema,
+            dialect=dialect,
+            include_table_comments=False,
+            include_column_comments=False,
+            include_relationships=False,
+            max_tables=1,
+            max_columns_per_table={first_table.table_name: best_col_count},
+        )
+
+    return (
+        f"DATABASE DIALECT: {dialect}\nDATABASE NAME: {schema.database_name}\n\n"
+        "TABLES AND COLUMNS:\n\nRELATIONSHIPS (FOREIGN KEYS):\n  (No foreign-key relationships defined)"
+    )
