@@ -167,8 +167,10 @@ async function sendV1Request<T>(
     if (err instanceof DOMException && err.name === 'AbortError') {
       throw err
     }
+    const configuredBase = getV1ApiBaseUrl()
+    const targetDesc = configuredBase ? `at ${configuredBase}` : 'QueryPilot Hosted API'
     throw new ApiClientError({
-      message: 'Failed to connect to QueryPilot Hosted API. Please check your network connection.',
+      message: `Failed to connect to ${targetDesc}. Please check your network connection or verify the service is running.`,
       kind: 'network',
       requestId: effectiveRequestId || null,
     })
@@ -214,16 +216,31 @@ async function sendV1Request<T>(
       }
     }
 
+    const configuredBase = getV1ApiBaseUrl()
+    const targetDesc = configuredBase ? ` (${configuredBase})` : ''
+
     if (!errorMessage) {
-      errorMessage = `Hosted API request failed with status HTTP ${response.status}.`
+      if (response.status === 401) {
+        errorMessage = 'Invalid or missing QueryPilot access key. Please verify your access key.'
+      } else if (response.status === 403) {
+        errorMessage = 'Access denied (HTTP 403). You do not have permission to access the QueryPilot service.'
+      } else if (response.status === 502) {
+        errorMessage = `Upstream backend service is unavailable or connection was refused${targetDesc}. Please check that the backend is running.`
+      } else if (response.status === 504) {
+        errorMessage = `Upstream gateway timed out while contacting backend service${targetDesc}. Please try again later.`
+      } else {
+        errorMessage = `Hosted API request failed with status HTTP ${response.status}.`
+      }
     }
 
     let kind: ApiClientError['kind'] = 'server'
     if (response.status === 400 || response.status === 422 || response.status === 413) {
       kind = 'validation'
-    } else if (response.status === 401) {
+    } else if (response.status === 401 || response.status === 403) {
       kind = 'unauthorized'
     } else if (response.status === 429) {
+      kind = 'server'
+    } else if (response.status === 502 || response.status === 504) {
       kind = 'server'
     }
 

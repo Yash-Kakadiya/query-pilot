@@ -567,6 +567,69 @@ test('Hosted V1 API Client - Error Handling', async (t) => {
         assert(err instanceof ApiClientError)
         assert.strictEqual(err.kind, 'unauthorized')
         assert.strictEqual(err.statusCode, 401)
+        assert(err.message.includes('access key'))
+        return true
+      }
+    )
+  })
+
+  await t.test('HTTP 403 maps to kind: "unauthorized" (Access Denied / Forbidden)', async () => {
+    globalThis.fetch = (async () => {
+      return new Response(
+        JSON.stringify({ detail: 'Access denied: insufficient permissions.' }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
+      )
+    }) as typeof fetch
+
+    await assert.rejects(
+      async () => generateSql({ question: 'Test query', schema_context: sampleSchema }),
+      (err: unknown) => {
+        assert(err instanceof ApiClientError)
+        assert.strictEqual(err.kind, 'unauthorized')
+        assert.strictEqual(err.statusCode, 403)
+        assert(err.message.includes('Access denied'))
+        return true
+      }
+    )
+  })
+
+  await t.test('HTTP 502 maps to kind: "server" with upstream-unavailable classification', async () => {
+    globalThis.fetch = (async () => {
+      return new Response(
+        JSON.stringify({ detail: 'Unable to connect to upstream API service.' }),
+        { status: 502, headers: { 'Content-Type': 'application/json' } }
+      )
+    }) as typeof fetch
+
+    await assert.rejects(
+      async () => generateSql({ question: 'Test query', schema_context: sampleSchema }),
+      (err: unknown) => {
+        assert(err instanceof ApiClientError)
+        assert.strictEqual(err.kind, 'server')
+        assert.strictEqual(err.statusCode, 502)
+        assert(err.message.includes('Unable to connect to upstream API service'))
+        assert(!err.message.toLowerCase().includes('access key'))
+        return true
+      }
+    )
+  })
+
+  await t.test('HTTP 504 maps to kind: "server" with gateway-timeout classification', async () => {
+    globalThis.fetch = (async () => {
+      return new Response(
+        JSON.stringify({ detail: 'Upstream API request timed out.' }),
+        { status: 504, headers: { 'Content-Type': 'application/json' } }
+      )
+    }) as typeof fetch
+
+    await assert.rejects(
+      async () => generateSql({ question: 'Test query', schema_context: sampleSchema }),
+      (err: unknown) => {
+        assert(err instanceof ApiClientError)
+        assert.strictEqual(err.kind, 'server')
+        assert.strictEqual(err.statusCode, 504)
+        assert(err.message.includes('timed out'))
+        assert(!err.message.toLowerCase().includes('access key'))
         return true
       }
     )

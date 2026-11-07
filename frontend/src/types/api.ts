@@ -169,6 +169,7 @@ export interface ProfileSummary {
   max_row_limit: number
   has_allowlist: boolean
   allowed_tables?: string[] | null
+  is_default?: boolean
 }
 
 export interface ProfileListResponse {
@@ -396,6 +397,19 @@ export interface GenerateSQLRequest {
   business_metrics?: BusinessMetricDefinition[] | null
 }
 
+export type GenerationFailureClassification =
+  | 'quota_exhausted'
+  | 'authentication_failed'
+  | 'provider_unavailable'
+  | 'network_error'
+  | 'unknown'
+
+export interface GenerationFailureDiagnostic {
+  classification: GenerationFailureClassification
+  message: string
+  retry_guidance?: string | null
+}
+
 export interface GenerateSQLResponse {
   candidate_sql: string | null
   status: GenerationStatus
@@ -405,6 +419,10 @@ export interface GenerateSQLResponse {
   unsupported_reason?: string | null
   execution_disclaimer: string
   request_id: string
+  failure_diagnostic?: GenerationFailureDiagnostic | null
+  failure_classification?: GenerationFailureClassification | null
+  failure_message?: string | null
+  retry_guidance?: string | null
 }
 
 export type AnswerGroundingStatus =

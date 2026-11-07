@@ -370,6 +370,10 @@ def create_agent_app(
                     max_row_limit=profile.max_row_limit,
                     has_allowlist=profile.allowed_tables is not None,
                     allowed_tables=list(profile.allowed_tables) if profile.allowed_tables is not None else None,
+                    is_default=(
+                        resolved_store.default_profile_id is not None
+                        and profile.profile_id == resolved_store.default_profile_id
+                    ),
                 )
             )
         return ProfileListResponse(profiles=summaries)
@@ -541,6 +545,7 @@ def create_agent_app(
             max_row_limit=new_profile.max_row_limit,
             has_allowlist=new_profile.allowed_tables is not None,
             allowed_tables=list(new_profile.allowed_tables) if new_profile.allowed_tables is not None else None,
+            is_default=is_default,
         )
         return CreateProfileResponse(
             profile=summary,

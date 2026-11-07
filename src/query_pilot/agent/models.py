@@ -99,6 +99,10 @@ class ProfileSummary(BaseModel):
         default=None,
         description="List of allowed table names, if an allowlist is configured.",
     )
+    is_default: bool = Field(
+        default=False,
+        description="True if this profile was designated as the default profile.",
+    )
 
 
 class ProfileListResponse(BaseModel):

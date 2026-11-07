@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { ClarificationOption, ConversationTurnContext, GenerateSQLResponse } from '../types/api.ts'
 import './CandidateSqlReview.css'
 
@@ -12,6 +12,8 @@ export interface CandidateSqlReviewProps {
   error: Error | null
   isStale: boolean
   activeProfileName?: string
+  engineType?: 'mssql' | 'sqlite'
+  dialect?: string | null
   onQuestionChange: (newQuestion: string) => void
   onSubmit: () => void
   onCancel: () => void
@@ -20,7 +22,7 @@ export interface CandidateSqlReviewProps {
   // Execution additions (Task 1.34-B1-F28-A9-B7)
   reviewedSql?: string
   onReviewedSqlChange?: (newSql: string) => void
-  onExecuteSql?: (sql: string) => void
+  onExecuteSql?: (sql: string, isManual?: boolean) => void
   onCancelExecute?: () => void
   isExecuting?: boolean
   canExecute?: boolean
@@ -31,6 +33,105 @@ export interface CandidateSqlReviewProps {
 
   // Clarification additions (Milestone B13-F13A)
   onSelectClarificationOption?: (option: ClarificationOption, clarifiedQuestion: string) => void
+
+  // Manual SQL workflow additions (Milestone B29-A)
+  isManualMode?: boolean
+  onManualModeChange?: (active: boolean) => void
+}
+
+/**
+ * Classifies generation errors for actionable user feedback.
+ */
+function getErrorClassificationInfo(err: Error | null): {
+  title: string
+  isAuth: boolean
+  isGateway: boolean
+  isNetwork: boolean
+} {
+  if (!err) {
+    return { title: 'Generation Failed', isAuth: false, isGateway: false, isNetwork: false }
+  }
+  const isApiErr = 'kind' in err
+  const statusCode = isApiErr ? (err as { statusCode?: number }).statusCode : undefined
+  const kind = isApiErr ? (err as { kind?: string }).kind : undefined
+
+  if (kind === 'unauthorized' || statusCode === 401 || statusCode === 403) {
+    return {
+      title: statusCode === 403 ? 'Access Denied (HTTP 403)' : 'Access Key Required (HTTP 401)',
+      isAuth: true,
+      isGateway: false,
+      isNetwork: false,
+    }
+  }
+  if (statusCode === 502) {
+    return {
+      title: 'Upstream Backend Unavailable (HTTP 502)',
+      isAuth: false,
+      isGateway: true,
+      isNetwork: false,
+    }
+  }
+  if (statusCode === 504) {
+    return {
+      title: 'Upstream Gateway Timeout (HTTP 504)',
+      isAuth: false,
+      isGateway: true,
+      isNetwork: false,
+    }
+  }
+  if (
+    kind === 'network' ||
+    err.message?.toLowerCase().includes('network') ||
+    err.message?.toLowerCase().includes('connect')
+  ) {
+    return {
+      title: 'Network Connection Error',
+      isAuth: false,
+      isGateway: false,
+      isNetwork: true,
+    }
+  }
+  if (statusCode) {
+    return {
+      title: `Server Error (HTTP ${statusCode})`,
+      isAuth: false,
+      isGateway: false,
+      isNetwork: false,
+    }
+  }
+  return {
+    title: 'Failed to generate candidate SQL',
+    isAuth: false,
+    isGateway: false,
+    isNetwork: false,
+  }
+}
+
+/**
+ * Resolve display label for SQL dialect based strictly on authoritative profile/response context.
+ */
+function resolveDialectLabel(
+  responseDialect?: string | null,
+  engineType?: 'mssql' | 'sqlite',
+): string {
+  // 1. Authoritative response dialect metadata
+  if (responseDialect) {
+    const d = responseDialect.trim().toLowerCase()
+    if (d === 'sqlite') {
+      return 'SQLite'
+    }
+    if (d === 'tsql' || d === 'mssql') {
+      return 'T-SQL'
+    }
+  }
+
+  // 2. Authoritative profile engine type
+  if (engineType === 'sqlite') {
+    return 'SQLite'
+  }
+
+  // 3. Fallback to T-SQL (preserving MSSQL and legacy profiles)
+  return 'T-SQL'
 }
 
 /**
@@ -50,6 +151,8 @@ export function CandidateSqlReview({
   error,
   isStale,
   activeProfileName,
+  engineType,
+  dialect,
   onQuestionChange,
   onSubmit,
   onCancel,
@@ -63,6 +166,8 @@ export function CandidateSqlReview({
   conversationContext = [],
   onResetConversation,
   onSelectClarificationOption,
+  isManualMode: propsIsManualMode,
+  onManualModeChange,
 }: CandidateSqlReviewProps) {
   const [copied, setCopied] = useState<boolean>(false)
   const [isEditing, setIsEditing] = useState<boolean>(false)
@@ -71,6 +176,37 @@ export function CandidateSqlReview({
   const [clarificationBaseQuestion, setClarificationBaseQuestion] = useState<string>(question)
   const [prevResponseRequestId, setPrevResponseRequestId] = useState<string | null | undefined>(response?.request_id)
   const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null)
+  const [isColdStartPending, setIsColdStartPending] = useState<boolean>(false)
+  const [manualMode, setManualMode] = useState<boolean>(false)
+
+  const isManualModeActive = propsIsManualMode !== undefined ? propsIsManualMode : manualMode
+
+  const setIsManualModeActive = (active: boolean) => {
+    setManualMode(active)
+    if (onManualModeChange) {
+      onManualModeChange(active)
+    }
+  }
+
+  // Cold-start detection for slow upstream hosted API (e.g. Render spin-up)
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null
+    if (isLoading) {
+      setIsColdStartPending(false)
+      timer = setTimeout(() => {
+        setIsColdStartPending(true)
+      }, 5000)
+    } else {
+      setIsColdStartPending(false)
+    }
+    return () => {
+      if (timer) {
+        clearTimeout(timer)
+      }
+    }
+  }, [isLoading])
+
+  const dialectLabel = resolveDialectLabel(response?.dialect || dialect, engineType)
 
   // Track response updates to capture original question baseline for clarification
   if (response?.request_id !== prevResponseRequestId) {
@@ -137,22 +273,27 @@ export function CandidateSqlReview({
   }
 
   const handleExecuteClick = () => {
-    if (onExecuteSql && currentSql.trim() && !isStale && !isExecuting) {
-      onExecuteSql(currentSql.trim())
+    if (onExecuteSql && currentSql.trim() && !isExecuting) {
+      if (isManualModeActive || (!isStale && response?.status === 'generated')) {
+        onExecuteSql(currentSql.trim(), isManualModeActive)
+      }
     }
   }
 
   const charCount = question.length
   const isOverLimit = charCount > 1000
 
-  // Execution enablement invariants
-  const canExecuteQuery =
-    canExecute &&
-    response?.status === 'generated' &&
-    !isStale &&
-    !isLoading &&
-    !isExecuting &&
-    currentSql.trim().length > 0
+  // Execution enablement invariants:
+  // In manual mode, execution requires valid SQL, connected profile, and no in-flight execution.
+  // In AI candidate mode, it additionally requires response.status === 'generated' and non-stale question.
+  const canExecuteQuery = isManualModeActive
+    ? canExecute && !isExecuting && currentSql.trim().length > 0
+    : canExecute &&
+      response?.status === 'generated' &&
+      !isStale &&
+      !isLoading &&
+      !isExecuting &&
+      currentSql.trim().length > 0
 
   return (
     <div
@@ -240,6 +381,16 @@ export function CandidateSqlReview({
         )}
 
         <div className="candidate-form-actions">
+          <button
+            type="button"
+            className={`candidate-manual-toggle-btn ${isManualModeActive ? 'active' : ''}`}
+            onClick={() => setIsManualModeActive(!isManualModeActive)}
+            disabled={isLoading || isExecuting}
+            aria-pressed={isManualModeActive}
+          >
+            {isManualModeActive ? 'Close Custom SQL' : 'Write Custom SQL'}
+          </button>
+
           {question.trim().length > 0 && !isLoading && !isExecuting && (
             <button
               type="button"
@@ -277,64 +428,131 @@ export function CandidateSqlReview({
         </div>
       </form>
 
-      {/* Generation Error Alert with Retry */}
-      {error && !isLoading && (
-        <div className="candidate-error-alert" role="alert">
-          <div className="candidate-error-text">
-            <span aria-hidden="true">⚠️</span>
-            <span>{error.message || 'Failed to generate candidate SQL.'}</span>
+      {/* Cold-Start / Slow Upstream Feedback Notice */}
+      {isLoading && isColdStartPending && (
+        <div className="candidate-coldstart-banner" role="status">
+          <span className="coldstart-spinner" aria-hidden="true">⏳</span>
+          <div className="coldstart-content">
+            <strong>Connecting to hosted backend service...</strong>
+            <span>
+              The hosted API service may be waking from an idle state (cold start typically takes 15–30 seconds). Request is active and still pending.
+            </span>
           </div>
-          <button
-            type="button"
-            className="candidate-retry-btn"
-            onClick={onSubmit}
-          >
-            Retry Generation
-          </button>
         </div>
       )}
 
-      {/* Candidate SQL Presentation Panel */}
-      {response && !isLoading && (
+      {/* Generation Error Alert with Retry & Manual Fallback */}
+      {error && !isLoading && (
+        <div className="candidate-error-alert" role="alert">
+          <div className="candidate-error-content">
+            <div className="candidate-error-header">
+              <span className="candidate-error-icon" aria-hidden="true">⚠️</span>
+              <strong className="candidate-error-title">{getErrorClassificationInfo(error).title}</strong>
+            </div>
+            <p className="candidate-error-text">{error.message || 'Failed to generate candidate SQL.'}</p>
+          </div>
+          <div className="candidate-error-actions">
+            <button
+              type="button"
+              className="candidate-retry-btn"
+              onClick={onSubmit}
+            >
+              Retry Generation
+            </button>
+            <button
+              type="button"
+              className="candidate-manual-entry-btn"
+              onClick={() => setIsManualModeActive(true)}
+              disabled={isExecuting}
+            >
+              Write Custom SQL
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Candidate SQL / Independent Manual SQL Presentation Panel */}
+      {(Boolean(response) || isManualModeActive) && !isLoading && (
         <div className="candidate-review-panel">
           <div className="candidate-review-header">
             <div className="candidate-badge-group">
-              {response.status === 'generated' && (
-                <span className="candidate-status-badge candidate-badge-generated">
-                  Candidate Generated
-                </span>
-              )}
-              {isSqlEdited && (
-                <span className="candidate-status-badge candidate-badge-edited">
-                  Edited SQL (User Modified)
-                </span>
-              )}
-              {response.status === 'clarification_needed' && (
-                <span className="candidate-status-badge candidate-badge-clarification">
-                  Clarification Needed
-                </span>
-              )}
-              {response.status === 'unsupported' && (
-                <span className="candidate-status-badge candidate-badge-unsupported">
-                  Unsupported Question
-                </span>
-              )}
-              {response.status === 'generation_failed' && (
-                <span className="candidate-status-badge candidate-badge-failed">
-                  Generation Failed
-                </span>
+              {isManualModeActive ? (
+                <>
+                  <span className="candidate-status-badge candidate-badge-manual">
+                    Manual SQL Statement
+                  </span>
+                  <span className="candidate-status-badge candidate-badge-unexecuted">
+                    Not Yet Executed
+                  </span>
+                </>
+              ) : (
+                <>
+                  {response?.status === 'generated' && (
+                    <span className="candidate-status-badge candidate-badge-generated">
+                      Candidate Generated
+                    </span>
+                  )}
+                  {isSqlEdited && (
+                    <span className="candidate-status-badge candidate-badge-edited">
+                      Edited SQL (User Modified)
+                    </span>
+                  )}
+                  {response?.status === 'clarification_needed' && (
+                    <span className="candidate-status-badge candidate-badge-clarification">
+                      Clarification Needed
+                    </span>
+                  )}
+                  {response?.status === 'unsupported' && (
+                    <span className="candidate-status-badge candidate-badge-unsupported">
+                      Unsupported Question
+                    </span>
+                  )}
+                  {response?.status === 'generation_failed' && (
+                    <span
+                      className={`candidate-status-badge ${
+                        (response.failure_diagnostic?.classification || response.failure_classification) === 'quota_exhausted'
+                          ? 'candidate-badge-quota'
+                          : (response.failure_diagnostic?.classification || response.failure_classification) === 'authentication_failed'
+                          ? 'candidate-badge-auth'
+                          : (response.failure_diagnostic?.classification || response.failure_classification) === 'provider_unavailable'
+                          ? 'candidate-badge-unavailable'
+                          : (response.failure_diagnostic?.classification || response.failure_classification) === 'network_error'
+                          ? 'candidate-badge-network'
+                          : 'candidate-badge-failed'
+                      }`}
+                    >
+                      {(response.failure_diagnostic?.classification || response.failure_classification) === 'quota_exhausted'
+                        ? 'Quota Exhausted'
+                        : (response.failure_diagnostic?.classification || response.failure_classification) === 'authentication_failed'
+                        ? 'Authentication Failed'
+                        : (response.failure_diagnostic?.classification || response.failure_classification) === 'provider_unavailable'
+                        ? 'Provider Unavailable'
+                        : (response.failure_diagnostic?.classification || response.failure_classification) === 'network_error'
+                        ? 'Network Error'
+                        : 'Generation Failed'}
+                    </span>
+                  )}
+                </>
               )}
             </div>
 
-            {response.request_id && (
+            {response?.request_id && !isManualModeActive && (
               <span className="candidate-request-id">
                 Request ID: <code>{response.request_id}</code>
               </span>
             )}
           </div>
 
-          {/* Prominent Safety Execution Boundary Disclaimer (only when candidate SQL exists) */}
-          {response.status === 'generated' && Boolean(currentSql) && (
+          {/* Prominent Safety Execution Boundary Disclaimer */}
+          {isManualModeActive ? (
+            <div className="candidate-disclaimer-box candidate-disclaimer-manual" role="note">
+              <span className="candidate-disclaimer-icon" aria-hidden="true">⚠️</span>
+              <div className="candidate-disclaimer-text">
+                <strong>STRICT EXECUTION BOUNDARY &bull; NOT YET EXECUTED</strong>
+                This SQL statement was entered manually and has NOT been executed against your database. Review the query carefully before executing.
+              </div>
+            </div>
+          ) : response?.status === 'generated' && Boolean(currentSql) ? (
             <div className="candidate-disclaimer-box" role="note">
               <span className="candidate-disclaimer-icon" aria-hidden="true">⚠️</span>
               <div className="candidate-disclaimer-text">
@@ -344,46 +562,107 @@ export function CandidateSqlReview({
                   : 'This candidate SQL statement was generated by AI and has NOT been executed against your database. Review the query carefully before executing.'}
               </div>
             </div>
-          )}
+          ) : null}
 
-          {/* Generated or Edited SQL Code Block */}
-          {response.status === 'generated' && currentSql && (
+          {/* Generated, Edited, or Manual SQL Code Block */}
+          {(isManualModeActive || (response?.status === 'generated' && Boolean(currentSql))) && (
             <div className="candidate-code-container">
               <div className="candidate-code-toolbar">
                 <span className="candidate-code-label">
-                  {isSqlEdited ? 'Edited SQL Statement:' : 'Candidate T-SQL Statement:'}
+                  {isManualModeActive
+                    ? `Manual ${dialectLabel} Statement:`
+                    : isSqlEdited
+                    ? `Edited ${dialectLabel} Statement:`
+                    : `Candidate ${dialectLabel} Statement:`}
                 </span>
                 <div className="candidate-code-actions">
-                  {isSqlEdited && (
-                    <button
-                      type="button"
-                      className="candidate-reset-sql-btn"
-                      onClick={handleResetSql}
-                      disabled={isExecuting}
-                    >
-                      Reset to AI Candidate
-                    </button>
+                  {isManualModeActive ? (
+                    <>
+                      {response?.candidate_sql && (
+                        <button
+                          type="button"
+                          className="candidate-reset-sql-btn"
+                          onClick={() => setIsManualModeActive(false)}
+                          disabled={isExecuting}
+                        >
+                          Switch to AI Candidate
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="candidate-clear-manual-btn"
+                        onClick={() => handleSqlTextChange('')}
+                        disabled={isExecuting || !currentSql}
+                      >
+                        Clear SQL
+                      </button>
+                      <button
+                        type="button"
+                        className="candidate-copy-btn"
+                        onClick={handleCopySql}
+                        aria-label="Copy manual SQL to clipboard"
+                      >
+                        {copied ? '✓ Copied!' : 'Copy SQL'}
+                      </button>
+                      <button
+                        type="button"
+                        className="candidate-close-manual-btn"
+                        onClick={() => setIsManualModeActive(false)}
+                        disabled={isExecuting}
+                      >
+                        Close Custom SQL
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      {isSqlEdited && (
+                        <button
+                          type="button"
+                          className="candidate-reset-sql-btn"
+                          onClick={handleResetSql}
+                          disabled={isExecuting}
+                        >
+                          Reset to AI Candidate
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="candidate-edit-toggle-btn"
+                        onClick={() => setIsEditing(!isEditing)}
+                        disabled={isExecuting}
+                      >
+                        {isEditing ? 'Done Editing' : 'Edit SQL'}
+                      </button>
+                      <button
+                        type="button"
+                        className="candidate-copy-btn"
+                        onClick={handleCopySql}
+                        aria-label="Copy candidate SQL to clipboard"
+                      >
+                        {copied ? '✓ Copied!' : 'Copy SQL'}
+                      </button>
+                    </>
                   )}
-                  <button
-                    type="button"
-                    className="candidate-edit-toggle-btn"
-                    onClick={() => setIsEditing(!isEditing)}
-                    disabled={isExecuting}
-                  >
-                    {isEditing ? 'Done Editing' : 'Edit SQL'}
-                  </button>
-                  <button
-                    type="button"
-                    className="candidate-copy-btn"
-                    onClick={handleCopySql}
-                    aria-label="Copy candidate SQL to clipboard"
-                  >
-                    {copied ? '✓ Copied!' : 'Copy SQL'}
-                  </button>
                 </div>
               </div>
 
-              {isEditing ? (
+              {isManualModeActive ? (
+                <div className="candidate-edit-area-wrapper">
+                  <textarea
+                    id="manual-sql-input"
+                    className="candidate-edit-textarea candidate-manual-textarea"
+                    value={currentSql}
+                    onChange={(e) => handleSqlTextChange(e.target.value)}
+                    disabled={isExecuting}
+                    rows={6}
+                    placeholder={`Enter a read-only ${dialectLabel} query (e.g. SELECT * FROM ...) ...`}
+                    aria-label={`Manual ${dialectLabel} SQL query`}
+                  />
+                  <span className="candidate-edit-hint">
+                    Manually entered queries will be validated for read-only safety by the local agent daemon before execution.
+                  </span>
+                </div>
+              ) : isEditing ? (
                 <div className="candidate-edit-area-wrapper">
                   <textarea
                     className="candidate-edit-textarea"
@@ -433,7 +712,7 @@ export function CandidateSqlReview({
                         <span>Execute Query on Database</span>
                       </button>
 
-                      {isStale && (
+                      {!isManualModeActive && isStale && (
                         <span className="candidate-execute-blocked-hint">
                           ⚠️ Execution blocked: question modified. Generate a new candidate first.
                         </span>
@@ -450,7 +729,7 @@ export function CandidateSqlReview({
           )}
 
           {/* Clarification Needed Message and Interactive Disambiguation Options */}
-          {response.status === 'clarification_needed' && (
+          {!isManualModeActive && response && response.status === 'clarification_needed' && (
             <div
               className="candidate-outcome-card candidate-outcome-clarification"
               role="region"
@@ -515,14 +794,74 @@ export function CandidateSqlReview({
           )}
 
           {/* Unsupported Question Message */}
-          {response.status === 'unsupported' && response.unsupported_reason && (
+          {!isManualModeActive && response && response.status === 'unsupported' && response.unsupported_reason && (
             <div className="candidate-outcome-card candidate-outcome-unsupported">
               <strong>Unsupported Query:</strong>
               <p>{response.unsupported_reason}</p>
             </div>
           )}
 
-          {response.status === 'generated' && response.execution_disclaimer && (
+          {/* Structured Generation Failure Outcome Card */}
+          {!isManualModeActive && response && response.status === 'generation_failed' && (
+            <div
+              className={`candidate-outcome-card candidate-outcome-failed ${
+                (response.failure_diagnostic?.classification || response.failure_classification) === 'quota_exhausted'
+                  ? 'candidate-outcome-quota'
+                  : ''
+              }`}
+              role="alert"
+              aria-label="Generation Failure Notice"
+            >
+              <div className="candidate-failure-header">
+                <span className="candidate-failure-icon" aria-hidden="true">
+                  {(response.failure_diagnostic?.classification || response.failure_classification) === 'quota_exhausted'
+                    ? '⏳'
+                    : '⚠️'}
+                </span>
+                <strong className="candidate-failure-title">
+                  {(response.failure_diagnostic?.classification || response.failure_classification) === 'quota_exhausted'
+                    ? 'AI Provider Quota Exhausted'
+                    : (response.failure_diagnostic?.classification || response.failure_classification) === 'authentication_failed'
+                    ? 'AI Provider Authentication Failed'
+                    : (response.failure_diagnostic?.classification || response.failure_classification) === 'provider_unavailable'
+                    ? 'AI Provider Temporarily Unavailable'
+                    : (response.failure_diagnostic?.classification || response.failure_classification) === 'network_error'
+                    ? 'Network Connection Error'
+                    : 'Candidate SQL Generation Failed'}
+                </strong>
+              </div>
+
+              <p className="candidate-failure-message">
+                {response.failure_diagnostic?.message ||
+                  response.failure_message ||
+                  'Candidate SQL generation could not be completed.'}
+              </p>
+
+              {(response.failure_diagnostic?.retry_guidance || response.retry_guidance) && (
+                <div className="candidate-retry-guidance" role="note">
+                  <span className="candidate-guidance-icon" aria-hidden="true">💡</span>
+                  <span className="candidate-guidance-text">
+                    <strong>Guidance:</strong>{' '}
+                    {response.failure_diagnostic?.retry_guidance || response.retry_guidance}
+                  </span>
+                </div>
+              )}
+
+              <div className="candidate-failure-actions">
+                <button
+                  type="button"
+                  className="candidate-retry-btn"
+                  onClick={onSubmit}
+                  disabled={isLoading || isExecuting}
+                  aria-label="Retry candidate SQL generation"
+                >
+                  {isLoading ? 'Generating Candidate SQL...' : 'Retry Generation'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {!isManualModeActive && response && response.status === 'generated' && response.execution_disclaimer && (
             <p className="candidate-footer-disclaimer">
               {response.execution_disclaimer}
             </p>

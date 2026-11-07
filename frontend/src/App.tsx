@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AccessKeyBar } from './components/AccessKeyBar'
 import { AgentAuthModal } from './components/AgentAuthModal'
 import { CandidateSqlReview } from './components/CandidateSqlReview'
@@ -24,29 +24,27 @@ import { MetricConfigModal } from './components/MetricConfigModal'
 import { ConversationHistoryDrawer } from './components/ConversationHistoryDrawer'
 import { synthesizeDeterministicAnswer } from './services/answerSynthesis'
 import { classifyExecutionError, canAttemptRepair } from './services/errorClassification'
-import { getHealth, postQuery } from './services/apiClient'
-import type { ExecutionMode, HealthResponse, QueryResponse } from './types/api'
+import { postQuery } from './services/apiClient'
+import { getProfileEngine } from './utils/profileUtils'
+import { resolveAutoProfileSelection } from './utils/profileSelection'
+import {
+  AiStatusCoordinator,
+  useAiStatus,
+} from './services/aiStatus'
+import { AiStatusIndicator } from './components/AiStatusIndicator'
+import type { ExecutionMode, QueryResponse } from './types/api'
 import './App.css'
-
-type HealthStatus = 'checking' | 'online' | 'unavailable'
-
-interface HealthState {
-  status: HealthStatus
-  data?: HealthResponse
-  errorMessage?: string
-}
 
 export interface AppProps {
   agentCoordinator?: AgentSessionCoordinator
   sqlCoordinator?: SqlGenerationCoordinator
   queryExecCoordinator?: QueryExecutionCoordinator
+  aiCoordinator?: AiStatusCoordinator
 }
 
-export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator }: AppProps = {}) {
-  // 1. Health probe state
-  const [health, setHealth] = useState<HealthState>({
-    status: 'checking',
-  })
+export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator, aiCoordinator }: AppProps = {}) {
+  // 1. AI Status Coordinator (Milestone B29-C)
+  const { state: aiStatus, coordinator: aiStatusCoordinator } = useAiStatus(aiCoordinator)
 
   // 2. Local Agent session coordinator
   const { state: agentSession, coordinator } = useAgentSession(agentCoordinator)
@@ -98,7 +96,72 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator }: 
     coordinator.probeSession()
   }, [coordinator])
 
+  // User explicit profile selection tracking (Milestone B29-B)
+  const userClearedProfileRef = useRef<boolean>(false)
+  const autoSelectedProfileIdRef = useRef<string | null>(null)
+
+  const handleSelectProfile = useCallback(
+    (profileId: string | null) => {
+      if (!profileId) {
+        userClearedProfileRef.current = true
+        autoSelectedProfileIdRef.current = null
+        void coordinator.selectProfile(null)
+      } else {
+        userClearedProfileRef.current = false
+        autoSelectedProfileIdRef.current = profileId
+        void coordinator.selectProfile(profileId)
+      }
+    },
+    [coordinator]
+  )
+
+  // Automatic database profile selection (Milestone B29-B)
+  useEffect(() => {
+    if (agentSession.status !== 'authenticated') {
+      autoSelectedProfileIdRef.current = null
+      return
+    }
+
+    const targetProfileId = resolveAutoProfileSelection({
+      status: agentSession.status,
+      profiles: agentSession.profiles,
+      currentSelectedId: agentSession.selectedProfileId,
+      userExplicitlyCleared: userClearedProfileRef.current,
+    })
+
+    if (targetProfileId && targetProfileId !== agentSession.selectedProfileId) {
+      if (autoSelectedProfileIdRef.current === targetProfileId) {
+        return
+      }
+      autoSelectedProfileIdRef.current = targetProfileId
+      void coordinator.selectProfile(targetProfileId)
+    } else if (!targetProfileId && agentSession.selectedProfileId) {
+      const isCurrentValid = agentSession.profiles.some(
+        (p) => p.profile_id === agentSession.selectedProfileId
+      )
+      if (!isCurrentValid) {
+        userClearedProfileRef.current = false
+        autoSelectedProfileIdRef.current = null
+        void coordinator.selectProfile(null)
+      }
+    }
+  }, [
+    agentSession.status,
+    agentSession.profiles,
+    agentSession.selectedProfileId,
+    coordinator,
+  ])
+
   // Clear candidate SQL, query execution results, and conversation context when profile changes or session is invalidated
+  const prevProfileIdRef = useRef<string | null>(agentSession.selectedProfileId)
+  useEffect(() => {
+    if (prevProfileIdRef.current !== agentSession.selectedProfileId) {
+      prevProfileIdRef.current = agentSession.selectedProfileId
+      setReviewedSql('')
+      execCoordinator.clearResult()
+    }
+  }, [agentSession.selectedProfileId, execCoordinator])
+
   useEffect(() => {
     if (
       agentSession.status !== 'authenticated' ||
@@ -110,6 +173,7 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator }: 
       sqlGenCoordinator.clearConversationContext()
       sqlGenCoordinator.clearBusinessMetrics()
       execCoordinator.clearResult()
+      setReviewedSql('')
       setRepairedCandidateIds({})
       setIsRepairing(false)
       setRepairError(null)
@@ -122,6 +186,7 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator }: 
       sqlGenCoordinator.clearConversationContext()
       sqlGenCoordinator.clearBusinessMetrics()
       execCoordinator.clearResult()
+      setReviewedSql('')
       setRepairedCandidateIds({})
       setIsRepairing(false)
       setRepairError(null)
@@ -135,59 +200,16 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator }: 
     execCoordinator,
   ])
 
-  // Health check on mount
+  // Synchronize agent session status with AI status coordinator (Milestone B29-C)
   useEffect(() => {
-    const controller = new AbortController()
-    let isMounted = true
+    aiStatusCoordinator.syncAgentStatus(agentSession.status)
+  }, [agentSession.status, aiStatusCoordinator])
 
-    getHealth(controller.signal)
-      .then((data) => {
-        if (isMounted) {
-          setHealth({ status: 'online', data })
-        }
-      })
-      .catch((err: unknown) => {
-        if (isMounted && !(err instanceof DOMException && err.name === 'AbortError')) {
-          const message =
-            err instanceof Error ? err.message : 'Unable to connect to API service.'
-          setHealth({
-            status: 'unavailable',
-            errorMessage: message,
-          })
-        }
-      })
-
-    return () => {
-      isMounted = false
-      controller.abort()
-    }
-  }, [])
-
-  // In-flight query cancellation on unmount
+  // Periodic background check with cleanup on unmount
   useEffect(() => {
-    return () => {
-      if (activeAbortController.current) {
-        activeAbortController.current.abort()
-        activeAbortController.current = null
-      }
-    }
-  }, [])
-
-  const handleRetryHealth = () => {
-    setHealth({ status: 'checking' })
-    getHealth()
-      .then((data) => {
-        setHealth({ status: 'online', data })
-      })
-      .catch((err: unknown) => {
-        const message =
-          err instanceof Error ? err.message : 'Unable to connect to API service.'
-        setHealth({
-          status: 'unavailable',
-          errorMessage: message,
-        })
-      })
-  }
+    const cleanup = aiStatusCoordinator.startPolling(60000)
+    return () => cleanup()
+  }, [aiStatusCoordinator])
 
   // Query execution handler with lifecycle & stale-response hardening
   const handleQuerySubmit = async (
@@ -278,8 +300,9 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator }: 
       if (res?.candidate_sql) {
         setReviewedSql(res.candidate_sql)
       }
-    } catch {
-      // Error handled in sqlGenState.error
+      aiStatusCoordinator.recordGenerationSuccess()
+    } catch (err: unknown) {
+      aiStatusCoordinator.recordGenerationFailure(err)
     }
   }
 
@@ -417,21 +440,22 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator }: 
     execCoordinator.clearResult()
   }
 
-  const handleExecuteCandidateSql = async (sqlToExecute: string) => {
+  const handleExecuteCandidateSql = async (sqlToExecute: string, isManual: boolean = false) => {
     // Capture exact candidate metadata prior to async execution dispatch
-    const questionForThisCandidate = sqlGenState.lastGeneratedQuestion
-    const profileForThisCandidate = sqlGenState.lastGeneratedProfileId
-    const candidateIdForThisCandidate = sqlGenState.candidateId
+    const questionForThisCandidate = isManual ? null : sqlGenState.lastGeneratedQuestion
+    const profileForThisCandidate = isManual ? null : sqlGenState.lastGeneratedProfileId
+    const candidateIdForThisCandidate = isManual ? null : sqlGenState.candidateId
 
     try {
       const result = await execCoordinator.executeQuery(
         agentSession.selectedProfileId,
         sqlToExecute,
-        sqlGenState.response?.request_id
+        isManual ? null : sqlGenState.response?.request_id
       )
 
-      // Record completed turn only when execution succeeded and active profile remains matched
+      // Record completed turn only when execution succeeded, query was an AI candidate, and active profile remains matched
       if (
+        !isManual &&
         result &&
         questionForThisCandidate &&
         profileForThisCandidate === agentSession.selectedProfileId &&
@@ -473,48 +497,17 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator }: 
         </p>
 
         <div className="status-bars-container">
-          {/* Operational Liveness Indicator */}
-          <div className="health-bar" role="status" aria-live="polite">
-            <div className="health-indicator-group">
-              <span
-                className={`status-dot status-dot-${health.status}`}
-                aria-hidden="true"
-              />
-              <span className="health-label">API Liveness:</span>
-              {health.status === 'checking' && (
-                <span className="health-status-text">Checking...</span>
-              )}
-              {health.status === 'online' && (
-                <span className="health-status-text health-online">
-                  Online <span className="health-version">v{health.data?.version}</span>
-                </span>
-              )}
-              {health.status === 'unavailable' && (
-                <span className="health-status-text health-unavailable">
-                  Unavailable
-                </span>
-              )}
-            </div>
-
-            {health.status === 'unavailable' && (
-              <div className="health-error-row">
-                <span className="health-error-message">
-                  {health.errorMessage || 'Service unreachable.'}
-                </span>
-                <button
-                  type="button"
-                  className="retry-button"
-                  onClick={handleRetryHealth}
-                >
-                  Retry
-                </button>
-              </div>
-            )}
-
-            <div className="health-caption">
-              Application service liveness probe &bull; Does not verify database or Gemini readiness
-            </div>
-          </div>
+          {/* AI Availability Status Indicator (Milestone B29-C) */}
+          <AiStatusIndicator
+            status={aiStatus.status}
+            label={aiStatus.label}
+            description={aiStatus.description}
+            detail={aiStatus.detail}
+            isChecking={aiStatus.isChecking}
+            onCheckAgain={() => {
+              void aiStatusCoordinator.checkStatus()
+            }}
+          />
 
           {/* Local Agent Session Status Bar */}
           <div className="agent-session-bar" role="region" aria-label="Local Agent Session">
@@ -608,9 +601,7 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator }: 
                 schemaContext={agentSession.schemaContext}
                 rawSchema={agentSession.rawSchema}
                 schemaError={agentSession.schemaError}
-                onSelectProfile={(profileId) => {
-                  void coordinator.selectProfile(profileId)
-                }}
+                onSelectProfile={handleSelectProfile}
                 onRetrySchema={() => {
                   void coordinator.retryLoadSchema()
                 }}
@@ -676,6 +667,8 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator }: 
                   error={sqlGenState.error}
                   isStale={sqlGenState.isStale}
                   activeProfileName={agentSession.selectedProfile?.display_name}
+                  engineType={getProfileEngine(agentSession.selectedProfile)}
+                  dialect={sqlGenState.response?.dialect}
                   onQuestionChange={(q) => {
                     sqlGenCoordinator.setQuestion(q)
                     execCoordinator.clearResult()
@@ -791,7 +784,7 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator }: 
           await coordinator.refreshProfiles()
         }}
         onUseProfile={(profileId) => {
-          void coordinator.selectProfile(profileId)
+          handleSelectProfile(profileId)
         }}
       />
 

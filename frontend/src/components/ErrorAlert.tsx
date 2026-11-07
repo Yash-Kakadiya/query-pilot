@@ -15,13 +15,21 @@ export function ErrorAlert({ error, onDismiss }: ErrorAlertProps) {
   if (isApiClientError) {
     switch (error.kind) {
       case 'unauthorized':
-        title = 'Access Key Required (HTTP 401)'
+        title = statusCode === 403 ? 'Access Denied (HTTP 403)' : 'Access Key Required (HTTP 401)'
         break
       case 'validation':
         title = statusCode === 413 ? 'Payload Too Large (HTTP 413)' : 'Validation Error (HTTP 422)'
         break
       case 'server':
-        title = statusCode === 429 ? 'Rate Limit Exceeded (HTTP 429)' : (statusCode ? `Server Error (HTTP ${statusCode})` : 'Server Error')
+        if (statusCode === 429) {
+          title = 'Rate Limit Exceeded (HTTP 429)'
+        } else if (statusCode === 502) {
+          title = 'Upstream Backend Unavailable (HTTP 502)'
+        } else if (statusCode === 504) {
+          title = 'Upstream Gateway Timeout (HTTP 504)'
+        } else {
+          title = statusCode ? `Server Error (HTTP ${statusCode})` : 'Server Error'
+        }
         break
       case 'network':
         title = 'Network Connection Error'

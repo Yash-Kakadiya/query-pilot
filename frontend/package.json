@@ -1,16 +1,17 @@
 {
   "name": "frontend",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "node --experimental-strip-types --test tests/apiClient.test.ts tests/executionMode.test.ts tests/schemaProjection.test.ts tests/agentClient.test.ts tests/v1ApiClient.test.ts tests/agentSession.test.ts tests/profileWorkflow.test.ts tests/profileOnboarding.test.ts tests/sqlGeneration.test.ts tests/queryExecution.test.ts tests/answerSynthesis.test.ts tests/userJourneyWorkflow.test.ts tests/multiTurnConversation.test.ts tests/clarificationWorkflow.test.ts tests/errorClassification.test.ts tests/executionRecovery.test.ts tests/resultVisualizer.test.ts tests/metricConfigWorkflow.test.ts tests/conversationHistoryDrawer.test.ts tests/sqliteIntegration.test.ts"
+    "test": "node --experimental-strip-types --test tests/apiClient.test.ts tests/executionMode.test.ts tests/schemaProjection.test.ts tests/agentClient.test.ts tests/v1ApiClient.test.ts tests/agentSession.test.ts tests/profileWorkflow.test.ts tests/profileOnboarding.test.ts tests/sqlGeneration.test.ts tests/queryExecution.test.ts tests/answerSynthesis.test.ts tests/userJourneyWorkflow.test.ts tests/multiTurnConversation.test.ts tests/clarificationWorkflow.test.ts tests/errorClassification.test.ts tests/executionRecovery.test.ts tests/resultVisualizer.test.ts tests/metricConfigWorkflow.test.ts tests/conversationHistoryDrawer.test.ts tests/sqliteIntegration.test.ts tests/generationFailureDiagnostics.test.ts tests/manualSqlWorkflow.test.ts tests/profileSelection.test.ts tests/aiStatus.test.ts"
   },
   "dependencies": {
+    "@tauri-apps/plugin-dialog": "^2.8.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "recharts": "^3.10.1"

@@ -265,11 +265,13 @@ class BrowserTestServer:
         bind_host: str = "127.0.0.1",
         dist_dir: Optional[Path] = None,
         temp_dir: Optional[Path] = None,
+        custom_upstream_transport: Optional[Any] = None,
     ):
         self.port = port if port is not None and port > 0 else find_free_port(bind_host)
         self.bind_host = bind_host
         self.dist_dir = dist_dir or DEFAULT_DIST_DIR
         self._temp_dir_obj: Optional[tempfile.TemporaryDirectory] = None
+        self.custom_upstream_transport = custom_upstream_transport
 
         if temp_dir is None:
             self._temp_dir_obj = tempfile.TemporaryDirectory(prefix="qp_browser_test_")
@@ -416,8 +418,9 @@ class BrowserTestServer:
 
             return httpx.Response(404, json={"detail": f"Route '{request.url.path}' not found in mock upstream"})
 
+        transport = getattr(self, "custom_upstream_transport", None) or httpx.MockTransport(mock_upstream_handler)
         self.mock_upstream_client = httpx.AsyncClient(
-            transport=httpx.MockTransport(mock_upstream_handler)
+            transport=transport
         )
 
         # Build app
