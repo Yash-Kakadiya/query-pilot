@@ -7,10 +7,13 @@ with optional browser launch for opening the production UI at http://127.0.0.1:8
 from __future__ import annotations
 
 import argparse
+import copy
 import datetime
+import json
 import os
 from pathlib import Path
 import platform
+import socket
 import sys
 import threading
 import time
@@ -136,6 +139,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
         help="Open the local UI in the default browser after the daemon is ready (default: False).",
+    )
+    parser.add_argument(
+        "--desktop",
+        "--desktop-mode",
+        dest="desktop_mode",
+        action="store_true",
+        default=_get_env_bool(["QUERYPILOT_AGENT_DESKTOP_MODE"], False),
+        help="Run agent as a supervised desktop sidecar with ephemeral port binding and machine-readable startup handshake.",
     )
     parser.add_argument(
         "--rotate-token",
@@ -563,6 +574,152 @@ def handle_auth_info(args: argparse.Namespace) -> int:
     return 0
 
 
+DESKTOP_READY_PREFIX = "QUERYPILOT_READY:"
+
+
+def emit_desktop_ready_handshake(port: int, pid: int) -> None:
+    """Emit exactly one machine-readable JSON readiness handshake to stdout.
+
+    Strictly contains status, actual bound port, and process ID.
+    Zero tokens, credentials, database paths, or sensitive filesystem metadata are emitted.
+    """
+    handshake = json.dumps({"status": "ready", "port": port, "pid": pid})
+    sys.stdout.write(f"{DESKTOP_READY_PREFIX}{handshake}\n")
+    sys.stdout.flush()
+
+
+def _get_desktop_agent_server_class() -> type:
+    """Dynamically define and return DesktopAgentServer subclassing uvicorn.Server."""
+    import uvicorn
+
+    class DesktopAgentServer(uvicorn.Server):
+        """Uvicorn server subclass for QueryPilot desktop sidecar mode.
+
+        Emits the machine-readable QUERYPILOT_READY handshake to stdout
+        strictly after server startup has completed and sockets are listening.
+        """
+
+        def __init__(
+            self,
+            config: uvicorn.Config,
+            on_ready: Optional[Callable[[int, int], None]] = None,
+        ) -> None:
+            super().__init__(config)
+            self.on_ready = on_ready
+            self._handshake_emitted = False
+
+        async def startup(self, sockets: Optional[list[socket.socket]] = None) -> None:
+            """Execute server startup and emit readiness handshake strictly upon success."""
+            await super().startup(sockets=sockets)
+            if self.started and not self.should_exit and self.on_ready and not self._handshake_emitted:
+                self._handshake_emitted = True
+                bound_port = self.config.port
+                if sockets and len(sockets) > 0:
+                    try:
+                        bound_port = sockets[0].getsockname()[1]
+                    except Exception:
+                        pass
+                self.on_ready(bound_port, os.getpid())
+
+    return DesktopAgentServer
+
+
+def run_desktop_sidecar(
+    config: AgentConfig,
+    on_ready: Optional[Callable[[int, int], None]] = None,
+) -> int:
+    """Run local agent in desktop sidecar mode with pre-bound ephemeral loopback socket.
+
+    Security & Process Lifecycle Guarantees:
+    1. Binds exclusively to 127.0.0.1 on OS-assigned ephemeral port (port 0).
+    2. Keeps pre-bound socket open and passes directly to Uvicorn (zero probe-close-rebind races).
+    3. Emits exactly one machine-readable QUERYPILOT_READY handshake to stdout upon successful startup.
+    4. Routes all diagnostic and HTTP access logs to stderr to keep stdout pristine.
+    5. Closes listening socket safely upon failure or clean shutdown.
+    6. Never emits readiness handshake if startup fails.
+    """
+    server_sock: Optional[socket.socket] = None
+    try:
+        server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server_sock.bind(("127.0.0.1", 0))
+        assigned_port = server_sock.getsockname()[1]
+    except Exception as exc:
+        if server_sock is not None:
+            try:
+                server_sock.close()
+            except Exception:
+                pass
+        sys.stderr.write(f"DESKTOP STARTUP ERROR: Failed to bind ephemeral socket: {exc}\n")
+        sys.stderr.flush()
+        return 1
+
+    effective_config = config.model_copy(
+        update={
+            "bind_port": assigned_port,
+            "bind_host": "127.0.0.1",
+            "desktop_mode": True,
+        }
+    )
+
+    try:
+        app = create_agent_app(config=effective_config)
+    except Exception as exc:
+        try:
+            server_sock.close()
+        except Exception:
+            pass
+        sys.stderr.write(f"DESKTOP STARTUP ERROR: Failed to initialize agent application: {exc}\n")
+        sys.stderr.flush()
+        return 1
+
+    try:
+        import uvicorn
+        import uvicorn.config
+    except ImportError:
+        try:
+            server_sock.close()
+        except Exception:
+            pass
+        sys.stderr.write("uvicorn is required to run the local agent server.\n")
+        sys.stderr.flush()
+        return 1
+
+    # Route all Uvicorn logging (including access logs) to stderr
+    log_config = copy.deepcopy(uvicorn.config.LOGGING_CONFIG)
+    if "handlers" in log_config and isinstance(log_config["handlers"], dict):
+        for handler_name, handler_def in log_config["handlers"].items():
+            if isinstance(handler_def, dict) and "stream" in handler_def:
+                handler_def["stream"] = "ext://sys.stderr"
+
+    uvicorn_config = uvicorn.Config(
+        app,
+        host=effective_config.bind_host,
+        port=effective_config.bind_port,
+        log_config=log_config,
+        log_level="info",
+    )
+
+    server_cls = _get_desktop_agent_server_class()
+    server = server_cls(
+        config=uvicorn_config,
+        on_ready=on_ready or emit_desktop_ready_handshake,
+    )
+
+    try:
+        server.run(sockets=[server_sock])
+        return 0
+    except Exception as exc:
+        sys.stderr.write(f"DESKTOP RUNTIME ERROR: Local agent server encountered error: {exc}\n")
+        sys.stderr.flush()
+        return 1
+    finally:
+        try:
+            server_sock.close()
+        except Exception:
+            pass
+
+
 def run_agent_cli(args: Optional[list[str]] = None) -> int:
     """Parse arguments and execute agent command or start daemon."""
     parser = build_parser()
@@ -607,6 +764,7 @@ def run_agent_cli(args: Optional[list[str]] = None) -> int:
             bind_host=parsed.host,
             bind_port=parsed.port,
             allow_dev_origin=parsed.allow_dev_origin,
+            desktop_mode=getattr(parsed, "desktop_mode", False),
             static_dir=parsed.static_dir,
             upstream_api_url=parsed.upstream_api_url,
             token_dir=parsed.token_dir,
@@ -616,6 +774,69 @@ def run_agent_cli(args: Optional[list[str]] = None) -> int:
         sys.stderr.write(f"CONFIGURATION ERROR: Invalid agent configuration: {exc}\n")
         return 1
 
+    # Desktop mode launch path
+    if config.desktop_mode:
+        return run_desktop_sidecar(config=config)
+
+    # Normal mode with OS-assigned ephemeral port (port 0)
+    if config.bind_port == 0:
+        server_sock: Optional[socket.socket] = None
+        try:
+            server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            server_sock.bind((config.bind_host, 0))
+            assigned_port = server_sock.getsockname()[1]
+        except Exception as exc:
+            if server_sock is not None:
+                try:
+                    server_sock.close()
+                except Exception:
+                    pass
+            sys.stderr.write(f"STARTUP ERROR: Failed to bind ephemeral socket: {exc}\n")
+            return 1
+
+        config = config.model_copy(update={"bind_port": assigned_port})
+        try:
+            app = create_agent_app(config=config)
+        except Exception as exc:
+            try:
+                server_sock.close()
+            except Exception:
+                pass
+            sys.stderr.write(f"CONFIGURATION ERROR: Failed to initialize agent application: {exc}\n")
+            return 1
+
+        app_url = f"http://{config.bind_host}:{config.bind_port}/app/"
+        if parsed.open_browser:
+            thread = threading.Thread(
+                target=_launch_browser_when_ready,
+                args=(app_url,),
+                daemon=True,
+            )
+            thread.start()
+
+        try:
+            import uvicorn
+
+            uvicorn_cfg = uvicorn.Config(app, host=config.bind_host, port=config.bind_port, log_level="info")
+            server = uvicorn.Server(uvicorn_cfg)
+            try:
+                server.run(sockets=[server_sock])
+                return 0
+            finally:
+                try:
+                    server_sock.close()
+                except Exception:
+                    pass
+        except ImportError:
+            try:
+                server_sock.close()
+            except Exception:
+                pass
+            sys.stderr.write("uvicorn is required to run the local agent server.\n")
+            return 1
+
+    # Normal mode with fixed port (default 8001 or explicit port)
     try:
         app = create_agent_app(config=config)
     except Exception as exc:

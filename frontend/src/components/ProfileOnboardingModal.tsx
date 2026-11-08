@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { open as openTauriDialog } from '@tauri-apps/plugin-dialog'
 import {
   AgentClientError,
   createProfile,
@@ -96,6 +97,56 @@ export function ProfileOnboardingModal({
 
   const profileIdInputRef = useRef<HTMLInputElement>(null)
   const testConnBtnRef = useRef<HTMLButtonElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const handleBrowseFileClick = async () => {
+    // 1. Try official Tauri v2 native dialog plugin first
+    try {
+      const selected = await openTauriDialog({
+        title: 'Select SQLite Database File',
+        multiple: false,
+        directory: false,
+        filters: [
+          { name: 'SQLite Databases (*.db, *.sqlite, *.sqlite3)', extensions: ['db', 'sqlite', 'sqlite3'] },
+          { name: 'All Files (*.*)', extensions: ['*'] },
+        ],
+      })
+      if (typeof selected === 'string' && selected.trim()) {
+        handleFieldChange('databasePath', selected.trim())
+      }
+      return
+    } catch {
+      // Not running in Tauri desktop shell or IPC unavailable: fallback to browser handling
+    }
+
+    // 2. Browser fallback: trigger native HTML file picker
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+      fileInputRef.current.click()
+    }
+  }
+
+  const handleNativeFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files || files.length === 0) {
+      // Graceful cancellation: no file chosen, preserve existing state
+      return
+    }
+
+    const selectedFile = files[0]
+    // In desktop webview runtimes (e.g. Electron / patched WebView), file.path contains the local filesystem path.
+    // In standard web browsers, file.path is undefined for sandbox security reasons.
+    const rawPath = (selectedFile as unknown as { path?: string }).path
+    if (rawPath && /^(?:[a-zA-Z]:[\\/]|\\\\|\/)/.test(rawPath.trim())) {
+      handleFieldChange('databasePath', rawPath.trim())
+    } else {
+      // Do NOT populate a relative filename or fake path. Inform user to enter absolute path manually.
+      setFieldErrors((prev) => ({
+        ...prev,
+        databasePath: `Browser security sandbox does not expose the full filesystem path for "${selectedFile.name}". Please enter or paste the full absolute path manually.`,
+      }))
+    }
+  }
 
   const handleClose = () => {
     setFields(INITIAL_FIELDS)
@@ -553,17 +604,39 @@ export function ProfileOnboardingModal({
                   <label htmlFor="onboarding-database-path" className="profile-form-label">
                     Database File Path <span className="required-star">*</span>
                   </label>
-                  <input
-                    id="onboarding-database-path"
-                    type="text"
-                    className={`profile-form-input ${fieldErrors.databasePath ? 'input-error' : ''}`}
-                    placeholder="e.g. C:\sqlite\data\chinook.db or /var/data/chinook.db"
-                    value={fields.databasePath}
-                    onChange={(e) => handleFieldChange('databasePath', e.target.value)}
-                    disabled={isSubmitting}
-                    maxLength={1000}
-                    required
-                  />
+                  <div className="profile-input-with-button">
+                    <input
+                      id="onboarding-database-path"
+                      type="text"
+                      className={`profile-form-input ${fieldErrors.databasePath ? 'input-error' : ''}`}
+                      placeholder="e.g. C:\sqlite\data\chinook.db or /var/data/chinook.db"
+                      value={fields.databasePath}
+                      onChange={(e) => handleFieldChange('databasePath', e.target.value)}
+                      disabled={isSubmitting}
+                      maxLength={1000}
+                      required
+                    />
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      id="onboarding-file-picker"
+                      accept=".db,.sqlite,.sqlite3,*"
+                      style={{ display: 'none' }}
+                      onChange={handleNativeFileSelect}
+                      tabIndex={-1}
+                      aria-hidden="true"
+                    />
+                    <button
+                      type="button"
+                      className="profile-browse-btn"
+                      onClick={handleBrowseFileClick}
+                      disabled={isSubmitting}
+                      title="Select SQLite database file from disk"
+                      aria-label="Browse for SQLite database file"
+                    >
+                      Browse...
+                    </button>
+                  </div>
                   {fieldErrors.databasePath && (
                     <span className="field-error-text" role="alert">{fieldErrors.databasePath}</span>
                   )}

@@ -973,7 +973,14 @@ def test_security_headers_present_on_all_responses(agent_test_setup):
     assert resp.headers.get("referrer-policy") == "no-referrer"
 
     # CSP and framing
-    assert "default-src 'self'" in resp.headers.get("content-security-policy", "")
+    csp = resp.headers.get("content-security-policy", "")
+    assert "default-src 'self'" in csp
+    assert "script-src 'self'" in csp
+    assert "style-src 'self' 'unsafe-inline'" in csp
+    assert "object-src 'none'" in csp
+    assert "base-uri 'none'" in csp
+    assert "form-action 'self'" in csp
+    assert "frame-ancestors 'none'" in csp
     assert resp.headers.get("x-frame-options") == "DENY"
     assert resp.headers.get("x-content-type-options") == "nosniff"
 

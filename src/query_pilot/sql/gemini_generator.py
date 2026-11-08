@@ -156,6 +156,8 @@ class GeminiSQLGenerator(SQLGenerator):
         enable_retrieval: bool = True,
         http_options: Optional[types.HttpOptions] = None,
         client: Optional[Any] = None,
+        secondary_api_key: Optional[str] = None,
+        secondary_client: Optional[Any] = None,
     ):
         """Initialize Gemini SQL Generator.
 
@@ -169,6 +171,8 @@ class GeminiSQLGenerator(SQLGenerator):
             enable_retrieval: Whether domain context retrieval is enabled (default: True).
             http_options: Optional custom types.HttpOptions (defaults to bounded retry settings).
             client: Optional pre-configured genai.Client instance (useful for unit testing).
+            secondary_api_key: Optional explicit secondary API key for quota fallback.
+            secondary_client: Optional pre-configured secondary genai.Client instance.
 
         Raises:
             ConfigurationError: If no valid API key can be resolved.
@@ -176,12 +180,13 @@ class GeminiSQLGenerator(SQLGenerator):
             ValueError: If the catalog file is malformed or invalid.
         """
         resolved_key: Optional[str] = None
+        resolved_secondary_key: Optional[str] = None
         resolved_model: str = "gemini-3.8-flash"
+        cfg = settings
 
         if api_key is not None:
             resolved_key = api_key.strip()
         else:
-            cfg = settings
             if cfg is None:
                 try:
                     cfg = get_settings()
@@ -193,6 +198,11 @@ class GeminiSQLGenerator(SQLGenerator):
             if cfg and cfg.GEMINI_API_KEY:
                 resolved_key = cfg.GEMINI_API_KEY.get_secret_value().strip()
                 resolved_model = cfg.GEMINI_MODEL
+
+        if secondary_api_key is not None:
+            resolved_secondary_key = secondary_api_key.strip()
+        elif cfg and getattr(cfg, "GEMINI_API_KEY_2", None):
+            resolved_secondary_key = cfg.GEMINI_API_KEY_2.get_secret_value().strip()
 
         if not resolved_key or resolved_key == "your_gemini_api_key_here":
             raise ConfigurationError(
@@ -210,18 +220,31 @@ class GeminiSQLGenerator(SQLGenerator):
             # Instantiate retriever using validated catalog
             self.retriever = DomainContextRetriever(catalog_path=catalog_path)
 
+        opts = http_options if http_options is not None else get_gemini_http_options()
+
         if client is not None:
             self.client = client
         else:
             try:
                 # Note: Do NOT log the API key
                 logger.debug(f"Initializing Gemini Client with model={self.model_name}")
-                opts = http_options if http_options is not None else get_gemini_http_options()
                 self.client = genai.Client(api_key=resolved_key, http_options=opts)
             except Exception as exc:
                 raise ConfigurationError(
                     f"Failed to initialize google-genai Client: {exc}"
                 ) from exc
+
+        if secondary_client is not None:
+            self.secondary_client = secondary_client
+        elif resolved_secondary_key:
+            try:
+                logger.debug("Initializing secondary Gemini Client for quota fallback")
+                self.secondary_client = genai.Client(api_key=resolved_secondary_key, http_options=opts)
+            except Exception as exc:
+                logger.warning("Failed to initialize secondary Gemini Client: %s", type(exc).__name__)
+                self.secondary_client = None
+        else:
+            self.secondary_client = None
 
     @trace_gemini_call(name="gemini_generate_sql", run_type="llm")
     def generate(self, request: SQLGenerationRequest) -> SQLGenerationResponse:
@@ -302,9 +325,30 @@ class GeminiSQLGenerator(SQLGenerator):
             )
         except Exception as exc:
             self.last_usage = None
-            raise ProviderAPIError(
-                f"Gemini API request failed: {exc}"
-            ) from exc
+            from query_pilot.sql.failure_classifier import classify_generation_failure
+            from query_pilot.api.models import GenerationFailureClassification
+
+            diagnostic = classify_generation_failure(exc)
+            if (
+                diagnostic.classification == GenerationFailureClassification.QUOTA_EXHAUSTED
+                and self.secondary_client is not None
+            ):
+                logger.info(
+                    "Primary Gemini key quota exhausted. Attempting bounded fallback using secondary key."
+                )
+                try:
+                    response = self.secondary_client.models.generate_content(
+                        model=self.model_name,
+                        contents=prompt,
+                        config=config,
+                    )
+                except Exception as sec_exc:
+                    logger.warning("Secondary Gemini key attempt also failed: %s", type(sec_exc).__name__)
+                    raise ProviderAPIError(f"Gemini API request failed on fallback key: {sec_exc}") from sec_exc
+            else:
+                raise ProviderAPIError(
+                    f"Gemini API request failed: {exc}"
+                ) from exc
         finally:
             elapsed_ms = (time.perf_counter() - start_time) * 1000.0
 

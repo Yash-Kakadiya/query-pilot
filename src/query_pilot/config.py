@@ -99,6 +99,10 @@ class Settings(DatabaseSettings):
         ...,
         description="Google Gemini API Key for LLM reasoning and SQL generation.",
     )
+    GEMINI_API_KEY_2: Optional[SecretStr] = Field(
+        default=None,
+        description="Optional secondary Google Gemini API Key for bounded fallback on quota exhaustion.",
+    )
     GEMINI_MODEL: str = Field(
         default="gemini-3.8-flash",
         description="Gemini model identifier to use.",
@@ -271,6 +275,17 @@ class Settings(DatabaseSettings):
             raise ValueError(
                 "GEMINI_API_KEY cannot be empty or the default placeholder."
             )
+        return v
+
+    @field_validator("GEMINI_API_KEY_2")
+    @classmethod
+    def validate_secondary_api_key_optional(cls, v: Optional[SecretStr]) -> Optional[SecretStr]:
+        """Normalize optional secondary API key, treating empty or placeholder as None."""
+        if v is None:
+            return None
+        raw_val = v.get_secret_value().strip()
+        if not raw_val or raw_val in ("your_gemini_api_key_here", "your_gemini_api_key_2_here"):
+            return None
         return v
 
 

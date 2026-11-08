@@ -9,6 +9,7 @@ from __future__ import annotations
 import ipaddress
 import os
 from pathlib import Path
+import sys
 from typing import Optional, Set
 import urllib.parse
 
@@ -30,6 +31,11 @@ def get_default_static_dir() -> Path:
     3. Fallback: package-internal static directory if it exists, otherwise
        repository checkout `frontend/dist`.
     """
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        meipass_static = Path(sys._MEIPASS) / "query_pilot" / "agent" / "static"
+        if meipass_static.is_dir() and (meipass_static / "index.html").is_file():
+            return meipass_static
+
     pkg_static = Path(__file__).resolve().parent / "static"
     if pkg_static.is_dir() and (pkg_static / "index.html").is_file():
         return pkg_static
@@ -157,9 +163,13 @@ class AgentConfig(BaseModel):
     )
     bind_port: int = Field(
         default_factory=lambda: _get_env_int(["QUERYPILOT_AGENT_PORT"], 8001),
-        ge=1024,
+        ge=0,
         le=65535,
-        description="TCP port for local socket binding.",
+        description="TCP port for local socket binding (0 allows OS-assigned ephemeral port).",
+    )
+    desktop_mode: bool = Field(
+        default_factory=lambda: _get_env_bool(["QUERYPILOT_AGENT_DESKTOP_MODE"], False),
+        description="If True, runs agent in desktop sidecar mode with ephemeral port binding and readiness handshake.",
     )
     allow_dev_origin: bool = Field(
         default_factory=lambda: _get_env_bool(["QUERYPILOT_AGENT_ALLOW_DEV_ORIGIN"], False),
@@ -215,6 +225,16 @@ class AgentConfig(BaseModel):
         le=120.0,
         description="Timeout in seconds for upstream API routing requests (default: 30.0).",
     )
+
+    @field_validator("bind_port")
+    @classmethod
+    def validate_bind_port(cls, v: int) -> int:
+        """Validate bind port: 0 (ephemeral OS-assigned) or 1024..65535."""
+        if v == 0 or (1024 <= v <= 65535):
+            return v
+        raise ValueError(
+            f"Invalid bind_port '{v}'. Must be 0 (for OS-assigned ephemeral port) or between 1024 and 65535."
+        )
 
     @field_validator("bind_host")
     @classmethod

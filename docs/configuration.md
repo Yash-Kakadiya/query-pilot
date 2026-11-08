@@ -43,7 +43,8 @@ No general configuration file precedence layer is introduced for agent runtime s
 | Setting | CLI Argument | Environment Variable | Default | Purpose / Constraints |
 | :--- | :--- | :--- | :--- | :--- |
 | `bind_host` | `--host` | `QUERYPILOT_AGENT_HOST` *(alias: `QUERYPILOT_AGENT_BIND_HOST`)* | `127.0.0.1` | Loopback socket address. Non-loopback addresses fail closed. |
-| `bind_port` | `--port` | `QUERYPILOT_AGENT_PORT` | `8001` | TCP port (range: `1024`–`65535`). |
+| `bind_port` | `--port` | `QUERYPILOT_AGENT_PORT` | `8001` | TCP port (range: `1024`–`65535`, or `0` for OS-assigned ephemeral port). |
+| `desktop_mode` | `--desktop`, `--desktop-mode` | `QUERYPILOT_AGENT_DESKTOP_MODE` | `False` | Run agent as a supervised desktop sidecar with ephemeral port binding and readiness handshake. |
 | `allow_dev_origin` | `--allow-dev-origin` | `QUERYPILOT_AGENT_ALLOW_DEV_ORIGIN` | `False` | Permits Vite dev server (`http://127.0.0.1:5173`). Must be `False` in production. |
 | `token_dir` | `--token-dir` | `QUERYPILOT_TOKEN_DIR` *(alias: `QUERYPILOT_AGENT_TOKEN_DIR`)* | `~/.query_pilot` | Directory where single-use bootstrap token is provisioned. |
 | `token_filename` | *N/A* | `QUERYPILOT_AGENT_TOKEN_FILENAME` | `agent.token` | Filename of the bootstrap token. |
@@ -68,6 +69,29 @@ The Local Agent daemon supports backwards-compatible secondary aliases for key e
 | `QUERYPILOT_UPSTREAM_TIMEOUT_SECONDS` | `QUERYPILOT_AGENT_UPSTREAM_TIMEOUT_SECONDS` | `30.0`s | Local Agent Daemon (`AgentConfig.upstream_timeout_seconds`) |
 
 *Precedence*: If both the canonical variable and its alias are defined, the canonical variable takes precedence. Explicit CLI arguments always override both environment variables.
+
+### 3.2 Supervised Desktop Launch Mode & Handshake Protocol
+
+When running QueryPilot Agent as a supervised desktop sidecar (e.g., under a native desktop wrapper such as Tauri 2):
+
+- **Command-Line Flag**: `--desktop` (or `--desktop-mode` / `QUERYPILOT_AGENT_DESKTOP_MODE=true`).
+- **Ephemeral Port Binding (`port=0`)**: In desktop mode, the agent binds explicitly to loopback `127.0.0.1:0`. The operating system allocates an available ephemeral port (typically in the range 49152–65535 on Windows), completely avoiding port conflicts and micro-race conditions.
+- **Pre-Bound Socket Ownership & Lifecycle**: The open socket is passed directly to Uvicorn via `server.run(sockets=[server_sock])`. The socket is never closed and rebound. The agent owns socket cleanup in a `finally` block on server exit.
+- **Readiness Handshake Protocol**:
+  - After server startup has completed and the socket is actively listening, the agent emits exactly one structured machine-readable line to `sys.stdout`:
+    ```text
+    QUERYPILOT_READY:{"status": "ready", "port": <assigned_port>, "pid": <process_id>}
+    ```
+  - **Zero Secrets Exchanged**: The handshake contains only `status`, `port`, and `pid`. It never emits bootstrap tokens, passwords, database paths, or filesystem locations.
+  - **Stdout Purity**: All Uvicorn HTTP access logs and Python diagnostic logs are redirected to `sys.stderr`, ensuring `sys.stdout` remains dedicated to the machine-readable handshake.
+  - **Startup Failure Guarantee**: If socket creation, binding, or application initialization fails, no handshake is emitted, error diagnostics are written to `sys.stderr`, and the process terminates with exit code `1`.
+- **Desktop Wrapper Consumption**:
+  1. The native desktop host launches the agent sidecar with redirected stdout and stderr pipes.
+  2. The host reads the `QUERYPILOT_READY:...` line from stdout to extract the assigned port and process ID.
+  3. The host initiates loopback authentication and navigates its internal WebView to `http://127.0.0.1:<port>/app/`.
+
+> [!NOTE]
+> Desktop launch support prepares the agent sidecar contract. Desktop packaging and installer distribution are handled in subsequent milestones.
 
 > [!IMPORTANT]
 > **Frontend Build Requirement**:

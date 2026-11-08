@@ -120,7 +120,8 @@ class SecurityHeadersMiddleware:
 
         csp_policy = (
             f"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-            f"font-src 'self' data:; connect-src {connect_src}; img-src 'self' data:; frame-ancestors 'none';"
+            f"font-src 'self' data:; connect-src {connect_src}; img-src 'self' data:; "
+            f"object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none';"
         )
 
         # Hardened headers matching architecture specification 6.1 and 6.3

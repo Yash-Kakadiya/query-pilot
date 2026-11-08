@@ -24,6 +24,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from query_pilot.api.models import (
     GenerateSQLRequest,
     GenerateSQLResponse,
+    GenerationFailureClassification,
+    GenerationFailureDiagnostic,
     GenerationStatus,
     SynthesizeAnswerRequest,
     SynthesizeAnswerResponse,
@@ -36,6 +38,7 @@ from query_pilot.api.security import (
 )
 from query_pilot.presentation.formatter import sanitize_message
 from query_pilot.presentation.synthesizer import AnswerSynthesisService
+from query_pilot.sql.failure_classifier import classify_generation_failure
 from query_pilot.sql.generation import (
     SQLGenerationError,
     SQLGenerationRequest,
@@ -160,19 +163,23 @@ def generate_sql_endpoint(
             gen_response = generator_dep.generate(gen_request)
         except SQLGenerationError as exc:
             logger.warning("Controlled SQL generation error [%s]: %s", type(exc).__name__, exc)
+            diagnostic = classify_generation_failure(exc)
             return GenerateSQLResponse(
                 candidate_sql=None,
                 status=GenerationStatus.GENERATION_FAILED,
                 dialect=effective_dialect,
                 request_id=req_id,
+                failure_diagnostic=diagnostic,
             )
         except Exception as exc:
             logger.error("Unexpected error during SQL generation [%s]", type(exc).__name__)
+            diagnostic = classify_generation_failure(exc)
             return GenerateSQLResponse(
                 candidate_sql=None,
                 status=GenerationStatus.GENERATION_FAILED,
                 dialect=effective_dialect,
                 request_id=req_id,
+                failure_diagnostic=diagnostic,
             )
 
         # Cross-field application-level validation
@@ -184,6 +191,11 @@ def generate_sql_endpoint(
                     status=GenerationStatus.GENERATION_FAILED,
                     dialect=effective_dialect,
                     request_id=req_id,
+                    failure_diagnostic=GenerationFailureDiagnostic(
+                        classification=GenerationFailureClassification.UNKNOWN,
+                        message="Model provider produced an empty candidate SQL statement.",
+                        retry_guidance="Please refine your question and try again.",
+                    ),
                 )
             if len(candidate) > 10000:
                 return GenerateSQLResponse(
@@ -191,6 +203,11 @@ def generate_sql_endpoint(
                     status=GenerationStatus.GENERATION_FAILED,
                     dialect=effective_dialect,
                     request_id=req_id,
+                    failure_diagnostic=GenerationFailureDiagnostic(
+                        classification=GenerationFailureClassification.UNKNOWN,
+                        message="Generated SQL candidate exceeded maximum length of 10,000 characters.",
+                        retry_guidance="Please break down your question into smaller queries.",
+                    ),
                 )
 
             # Primary AST and policy validation against client schema
@@ -247,6 +264,11 @@ def generate_sql_endpoint(
                 status=GenerationStatus.GENERATION_FAILED,
                 dialect=effective_dialect,
                 request_id=req_id,
+                failure_diagnostic=GenerationFailureDiagnostic(
+                    classification=GenerationFailureClassification.UNKNOWN,
+                    message="Model provider was unable to generate candidate SQL for this request.",
+                    retry_guidance=None,
+                ),
             )
 
     if concurrency_guard:

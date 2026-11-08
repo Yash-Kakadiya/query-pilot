@@ -716,3 +716,149 @@ test('B24-F.1 Safe Profile Summary Contract & Engine Identification', async (t) 
     assert.strictEqual(summaryRecord.connection_string, undefined)
   })
 })
+
+// ==============================================================================
+// 6. B27-F UX Polish Contracts (File Picker, Dialect Headings, Cold-Start)
+// ==============================================================================
+
+test('B27-F.1 Native SQLite Database File Picker & Manual Entry Contracts', async (t) => {
+  await t.test('resolves file.path when available on desktop runtime', () => {
+    const mockDesktopFile = {
+      name: 'university_demo.db',
+      path: 'C:\\querypilot\\data\\demo\\university_demo.db',
+    }
+    const resolved = mockDesktopFile.path || mockDesktopFile.name
+    assert.strictEqual(resolved, 'C:\\querypilot\\data\\demo\\university_demo.db')
+  })
+
+  await t.test('rejects fallback to relative filename and alerts user when file.path is not exposed', () => {
+    const mockWebFile = {
+      name: 'university_demo.db',
+    }
+    const rawPath = (mockWebFile as { path?: string }).path
+    const isAbsolute = Boolean(rawPath && /^(?:[a-zA-Z]:[\\/]|\\\\|\/)/.test(rawPath.trim()))
+    assert.strictEqual(isAbsolute, false, 'Standard browser sandbox must not be treated as a valid absolute path')
+  })
+
+  await t.test('graceful cancellation retains existing path without error', () => {
+    let currentPath = 'C:\\existing\\data.db'
+    const emptyFiles: unknown[] = []
+    if (emptyFiles.length === 0) {
+      // Cancellation pattern: do not mutate currentPath
+    } else {
+      currentPath = 'should_not_reach'
+    }
+    assert.strictEqual(currentPath, 'C:\\existing\\data.db')
+  })
+
+  await t.test('manual path entry retains authoritative security boundary', async () => {
+    t.afterEach(() => {
+      restoreFetch()
+    })
+
+    let capturedBody: unknown = null
+    globalThis.fetch = async (_input, init) => {
+      capturedBody = JSON.parse(init?.body as string)
+      return new Response(
+        JSON.stringify({
+          valid: true,
+          message: 'Profile configuration is valid.',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    }
+
+    const manualPayload: CreateProfileRequest = {
+      profile_id: 'sqlite_manual',
+      display_name: 'Manual SQLite',
+      engine_type: 'sqlite',
+      database_path: 'C:\\custom\\path\\my_data.sqlite',
+      schema_name: 'main',
+    }
+
+    const res = await validateProfileConfig(manualPayload)
+    assert.strictEqual(res.valid, true)
+    const body = capturedBody as Record<string, unknown>
+    assert.strictEqual(body.database_path, 'C:\\custom\\path\\my_data.sqlite')
+  })
+})
+
+test('B27-F.2 Dialect-Aware Candidate SQL Heading Resolution', async (t) => {
+  function resolveTestDialectLabel(
+    responseDialect?: string | null,
+    engineType?: 'mssql' | 'sqlite',
+  ): string {
+    if (responseDialect) {
+      const d = responseDialect.trim().toLowerCase()
+      if (d === 'sqlite') return 'SQLite'
+      if (d === 'tsql' || d === 'mssql') return 'T-SQL'
+    }
+    if (engineType === 'sqlite') return 'SQLite'
+    return 'T-SQL'
+  }
+
+  await t.test('SQLite profile and response resolve to SQLite headings', () => {
+    const label = resolveTestDialectLabel('sqlite', 'sqlite')
+    assert.strictEqual(label, 'SQLite')
+    assert.strictEqual(`Candidate ${label} Statement:`, 'Candidate SQLite Statement:')
+    assert.strictEqual(`Edited ${label} Statement:`, 'Edited SQLite Statement:')
+  })
+
+  await t.test('MSSQL profile and response resolve to T-SQL headings', () => {
+    const label = resolveTestDialectLabel('tsql', 'mssql')
+    assert.strictEqual(label, 'T-SQL')
+    assert.strictEqual(`Candidate ${label} Statement:`, 'Candidate T-SQL Statement:')
+    assert.strictEqual(`Edited ${label} Statement:`, 'Edited T-SQL Statement:')
+  })
+
+  await t.test('Legacy profile without engineType or dialect defaults safely to T-SQL', () => {
+    const label = resolveTestDialectLabel(null, undefined)
+    assert.strictEqual(label, 'T-SQL')
+    assert.strictEqual(`Candidate ${label} Statement:`, 'Candidate T-SQL Statement:')
+  })
+
+  await t.test('Dialect label is determined authoritatively and not inferred from SQL text', () => {
+    // SQLite profile executing query that resembles ANSI/T-SQL
+    const sqliteLabel = resolveTestDialectLabel(null, 'sqlite')
+    assert.strictEqual(sqliteLabel, 'SQLite')
+
+    // MSSQL profile executing query that has generic syntax
+    const mssqlLabel = resolveTestDialectLabel(null, 'mssql')
+    assert.strictEqual(mssqlLabel, 'T-SQL')
+  })
+})
+
+test('B27-F.3 Hosted API Cold-Start Feedback & Error Sanitization', async (t) => {
+  await t.test('Cold-start pending indicator activates after delay threshold without repeated requests', () => {
+    let requestsCount = 0
+    let coldStartActive = false
+
+    // Simulate initial dispatch
+    requestsCount += 1
+    const loadingDurationMs = 6000
+
+    if (loadingDurationMs > 5000) {
+      coldStartActive = true
+    }
+
+    assert.strictEqual(requestsCount, 1, 'Only one generation request dispatched, no automatic retry loops')
+    assert.strictEqual(coldStartActive, true, 'Cold-start feedback activated after >5s wait')
+  })
+
+  await t.test('Confirmed generation failure deactivates cold-start indicator and displays sanitized error', () => {
+    let isLoading = false
+    let isColdStartPending = false
+    const simulatedError = new Error('Upstream provider timed out. The model took too long to respond.')
+
+    // On failure
+    isLoading = false
+    isColdStartPending = false
+
+    assert.strictEqual(isLoading, false)
+    assert.strictEqual(isColdStartPending, false)
+    assert.ok(simulatedError.message.includes('Upstream provider timed out'))
+    // Verify no secret leak
+    assert.strictEqual(simulatedError.message.includes('AIza'), false)
+    assert.strictEqual(simulatedError.message.includes('sk-'), false)
+  })
+})

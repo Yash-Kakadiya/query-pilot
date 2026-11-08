@@ -62,6 +62,26 @@ Translates a natural-language question and model-facing schema context into a re
 | `execution_disclaimer` | `string` | Fixed disclaimer: `"Candidate SQL is unexecuted."` |
 | `is_executed` | `boolean` | Fixed literal `false` confirming the query has **not** been executed. |
 | `request_id` | `string` | Correlated request tracking ID. |
+| `failure_diagnostic` | `object \| null` | Structured generation failure diagnostic object (`classification`, `message`, `retry_guidance`). Present only when `status == "generation_failed"`. |
+| `failure_classification` | `string \| null` | Stable failure taxonomy classification (`"quota_exhausted"`, `"authentication_failed"`, `"provider_unavailable"`, `"network_error"`, `"unknown"`). Present only when `status == "generation_failed"`. |
+| `failure_message` | `string \| null` | Safe, sanitized user-facing failure explanation. Never leaks API keys, provider response bodies, or tracebacks. |
+| `retry_guidance` | `string \| null` | Safe retry delay guidance derived strictly from explicit provider metadata (e.g. `RetryInfo.retryDelay`). Never fabricated or estimated. |
+
+##### Generation Failure Diagnostic Object (`GenerationFailureDiagnostic`)
+
+When `status == "generation_failed"`, the response includes structured diagnostic fields to provide transparent, actionable user feedback while preserving strict security and isolation boundaries:
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `classification` | `string` | Failure classification enum: `quota_exhausted`, `authentication_failed`, `provider_unavailable`, `network_error`, or `unknown`. |
+| `message` | `string` | Sanitized human-readable error summary safe for user display. |
+| `retry_guidance` | `string \| null` | Optional actionable retry timing extracted strictly from provider headers/details (e.g. `retryDelay`). `null` when no reliable metadata is available. |
+
+> **Invariants & Security Rules:**
+> - **Zero Candidate SQL Leakage:** `candidate_sql` is strictly `null` whenever `status == "generation_failed"`. No unverified SQL or partial generation is ever exposed or executable.
+> - **Mutual Exclusivity:** Failure diagnostic fields are only valid when `status == "generation_failed"`; attempting to set failure diagnostics when `status == "generated"` triggers strict validation rejection.
+> - **Zero Credential or Traceback Exposure:** Raw provider error dictionaries, Google API keys, authorization bearer tokens, and internal python stack traces are completely stripped before returning to client.
+> - **No Fabricated Reset Times:** Reset timers or countdowns are never guessed or simulated; retry guidance is populated only when the provider furnishes explicit retry-delay metadata.
 
 ---
 

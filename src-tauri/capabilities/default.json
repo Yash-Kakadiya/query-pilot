@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Enables core and dialog permissions for QueryPilot main window and loopback application origin",
+  "windows": [
+    "main"
+  ],
+  "remote": {
+    "urls": [
+      "http://127.0.0.1:*/app/*"
+    ]
+  },
+  "permissions": [
+    "core:default",
+    "dialog:allow-open"
+  ]
+}

@@ -571,6 +571,37 @@ class GenerationStatus(str, Enum):
     GENERATION_FAILED = "generation_failed"
 
 
+class GenerationFailureClassification(str, Enum):
+    """Stable classification taxonomy for candidate SQL generation failures."""
+
+    QUOTA_EXHAUSTED = "quota_exhausted"
+    AUTHENTICATION_FAILED = "authentication_failed"
+    PROVIDER_UNAVAILABLE = "provider_unavailable"
+    NETWORK_ERROR = "network_error"
+    UNKNOWN = "unknown"
+
+
+class GenerationFailureDiagnostic(BaseModel):
+    """Structured, safe diagnostic metadata for generation failures."""
+
+    model_config = {"extra": "forbid"}
+
+    classification: GenerationFailureClassification = Field(
+        ...,
+        description="Stable taxonomy classification of generation failure.",
+    )
+    message: str = Field(
+        ...,
+        max_length=500,
+        description="Safe user-facing explanation without raw provider internals.",
+    )
+    retry_guidance: Optional[str] = Field(
+        default=None,
+        max_length=500,
+        description="Actionable guidance on whether and when a retry should be attempted.",
+    )
+
+
 class ForeignKeySchemaContext(BaseModel):
     """Untrusted client foreign-key metadata under bounded validation."""
 
@@ -1057,6 +1088,24 @@ class GenerateSQLResponse(BaseModel):
         description="Fixed flag confirming the candidate SQL has not been executed.",
     )
     request_id: str = Field(..., description="Correlated request ID.")
+    failure_diagnostic: Optional[GenerationFailureDiagnostic] = Field(
+        default=None,
+        description="Structured failure diagnostic details. Present ONLY when status == 'generation_failed'.",
+    )
+    failure_classification: Optional[GenerationFailureClassification] = Field(
+        default=None,
+        description="Stable taxonomy error classification. Present ONLY when status == 'generation_failed'.",
+    )
+    failure_message: Optional[str] = Field(
+        default=None,
+        max_length=500,
+        description="Safe, user-facing failure explanation. Present ONLY when status == 'generation_failed'.",
+    )
+    retry_guidance: Optional[str] = Field(
+        default=None,
+        max_length=500,
+        description="Actionable retry guidance if supported by provider metadata. Present ONLY when status == 'generation_failed'.",
+    )
 
     @field_validator("clarification_options", mode="before")
     @classmethod
@@ -1084,6 +1133,13 @@ class GenerateSQLResponse(BaseModel):
                 raise ValueError("Generated status must not contain unsupported_reason.")
             if self.clarification_options:
                 raise ValueError("Generated status must not contain clarification_options.")
+            if (
+                self.failure_diagnostic is not None
+                or self.failure_classification is not None
+                or self.failure_message is not None
+                or self.retry_guidance is not None
+            ):
+                raise ValueError("Generated status must not contain failure diagnostics.")
         elif self.status == GenerationStatus.CLARIFICATION_NEEDED:
             if self.candidate_sql is not None:
                 raise ValueError("Clarification status must not contain candidate_sql.")
@@ -1091,6 +1147,13 @@ class GenerateSQLResponse(BaseModel):
                 raise ValueError("Clarification status requires a non-empty clarification_prompt.")
             if self.unsupported_reason is not None:
                 raise ValueError("Clarification status must not contain unsupported_reason.")
+            if (
+                self.failure_diagnostic is not None
+                or self.failure_classification is not None
+                or self.failure_message is not None
+                or self.retry_guidance is not None
+            ):
+                raise ValueError("Clarification status must not contain failure diagnostics.")
         elif self.status == GenerationStatus.UNSUPPORTED:
             if self.candidate_sql is not None:
                 raise ValueError("Unsupported status must not contain candidate_sql.")
@@ -1100,11 +1163,32 @@ class GenerateSQLResponse(BaseModel):
                 raise ValueError("Unsupported status must not contain clarification_prompt.")
             if self.clarification_options:
                 raise ValueError("Unsupported status must not contain clarification_options.")
+            if (
+                self.failure_diagnostic is not None
+                or self.failure_classification is not None
+                or self.failure_message is not None
+                or self.retry_guidance is not None
+            ):
+                raise ValueError("Unsupported status must not contain failure diagnostics.")
         elif self.status == GenerationStatus.GENERATION_FAILED:
             if self.candidate_sql is not None:
                 raise ValueError("Generation failed status must not contain candidate_sql.")
             if self.clarification_options:
                 raise ValueError("Generation failed status must not contain clarification_options.")
+            # Synchronize failure_diagnostic and flat fields
+            if self.failure_diagnostic is not None:
+                if self.failure_classification is None:
+                    self.failure_classification = self.failure_diagnostic.classification
+                if self.failure_message is None:
+                    self.failure_message = self.failure_diagnostic.message
+                if self.retry_guidance is None:
+                    self.retry_guidance = self.failure_diagnostic.retry_guidance
+            elif self.failure_classification is not None:
+                self.failure_diagnostic = GenerationFailureDiagnostic(
+                    classification=self.failure_classification,
+                    message=self.failure_message or "Candidate SQL generation failed.",
+                    retry_guidance=self.retry_guidance,
+                )
         return self
 
 
