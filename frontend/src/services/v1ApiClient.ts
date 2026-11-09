@@ -55,7 +55,10 @@ export function getV1ApiBaseUrl(customEnvUrl?: string): string {
           ? (globalThis as unknown as { __TEST_VITE_API_BASE_URL__?: string }).__TEST_VITE_API_BASE_URL__
           : (import.meta as { env?: Record<string, string | undefined> })?.env?.VITE_API_BASE_URL)
 
-  if (envUrl === undefined || envUrl === null) {
+  if (envUrl === undefined || envUrl === null || envUrl.trim() === '') {
+    if (typeof window !== 'undefined' && window.location.hostname === 'querypilot-frontend-3tz3.onrender.com') {
+      return 'https://querypilot-backend-7bug.onrender.com'
+    }
     return ''
   }
 

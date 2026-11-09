@@ -10,7 +10,7 @@ import ipaddress
 import os
 from pathlib import Path
 import sys
-from typing import Optional, Set
+from typing import List, Optional, Set
 import urllib.parse
 
 from pydantic import BaseModel, Field, field_validator
@@ -174,6 +174,14 @@ class AgentConfig(BaseModel):
     allow_dev_origin: bool = Field(
         default_factory=lambda: _get_env_bool(["QUERYPILOT_AGENT_ALLOW_DEV_ORIGIN"], False),
         description="If True, permits Vite development server origin (http://127.0.0.1:5173). Must be False in packaged mode.",
+    )
+    allowed_origins: List[str] = Field(
+        default_factory=lambda: [
+            item.strip().lower()
+            for item in _get_env_str(["QUERYPILOT_AGENT_ALLOWED_ORIGINS"], "https://querypilot-frontend-3tz3.onrender.com").split(",")
+            if item.strip()
+        ],
+        description="Allowed web origins permitted to connect to the local loopback agent daemon.",
     )
     token_dir: Path = Field(
         default_factory=get_default_token_dir,

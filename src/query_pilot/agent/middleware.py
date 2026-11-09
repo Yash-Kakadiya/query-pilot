@@ -57,6 +57,11 @@ class HostOriginValidationMiddleware:
             self.allowed_origins.add("http://127.0.0.1:5173")
             self.allowed_origins.add("http://localhost:5173")
 
+        # Configured web origins (e.g. Render hosted UI)
+        for web_origin in getattr(config, "allowed_origins", []):
+            if web_origin and isinstance(web_origin, str):
+                self.allowed_origins.add(web_origin.lower().rstrip("/"))
+
     async def __call__(self, scope: Dict[str, Any], receive: Callable, send: Callable) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
@@ -90,6 +95,20 @@ class HostOriginValidationMiddleware:
                 await send({"type": "http.response.body", "body": payload})
                 return
 
+        # CORS Preflight & Private Network Access Handling
+        if method == "OPTIONS" and raw_origin and raw_origin in self.allowed_origins:
+            cors_headers = [
+                (b"access-control-allow-origin", raw_origin.encode("latin-1")),
+                (b"access-control-allow-credentials", b"true"),
+                (b"access-control-allow-methods", b"GET, POST, PUT, DELETE, PATCH, OPTIONS"),
+                (b"access-control-allow-headers", b"content-type, accept, x-querypilot-request, authorization, x-request-id"),
+                (b"access-control-allow-private-network", b"true"),
+                (b"access-control-max-age", b"86400"),
+            ]
+            await send({"type": "http.response.start", "status": 204, "headers": cors_headers})
+            await send({"type": "http.response.body", "body": b""})
+            return
+
         # 3. Custom Header Requirement for State-Changing Requests (CSRF Defense on Agent Endpoints)
         path = scope.get("path", "")
         if method in {"POST", "PUT", "DELETE", "PATCH"} and path.startswith("/agent/"):
@@ -103,6 +122,19 @@ class HostOriginValidationMiddleware:
                 await send({"type": "http.response.start", "status": status_code, "headers": resp_headers})
                 await send({"type": "http.response.body", "body": payload})
                 return
+
+        if raw_origin and raw_origin in self.allowed_origins:
+            async def send_cors_wrapped(message: Dict[str, Any]) -> None:
+                if message["type"] == "http.response.start":
+                    resp_headers = list(message.get("headers", []))
+                    resp_headers.append((b"access-control-allow-origin", raw_origin.encode("latin-1")))
+                    resp_headers.append((b"access-control-allow-credentials", b"true"))
+                    resp_headers.append((b"access-control-allow-private-network", b"true"))
+                    message["headers"] = resp_headers
+                await send(message)
+
+            await self.app(scope, receive, send_cors_wrapped)
+            return
 
         await self.app(scope, receive, send)
 

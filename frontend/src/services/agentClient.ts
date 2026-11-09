@@ -74,7 +74,16 @@ export function getAgentBaseUrl(customEnvUrl?: string): string {
           ? (globalThis as unknown as { __TEST_VITE_AGENT_BASE_URL__?: string }).__TEST_VITE_AGENT_BASE_URL__
           : (import.meta as { env?: Record<string, string | undefined> })?.env?.VITE_AGENT_BASE_URL)
 
-  if (envUrl === undefined || envUrl === null) {
+  if (envUrl === undefined || envUrl === null || envUrl.trim() === '') {
+    if (
+      typeof window !== 'undefined' &&
+      window.location.hostname &&
+      window.location.hostname !== 'localhost' &&
+      window.location.hostname !== '127.0.0.1' &&
+      !window.location.hostname.endsWith('.localhost')
+    ) {
+      return 'http://127.0.0.1:8001/agent'
+    }
     return DEFAULT_AGENT_BASE_PATH
   }
 
