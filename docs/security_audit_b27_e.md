@@ -19,6 +19,10 @@ The overall audit verdict is recorded as **PASS WITH LIMITATIONS**. QueryPilot e
 > **Audit Qualification and Scope Notice:**  
 > This evaluation constitutes a milestone verification of specific local safety boundaries, input validators, authorizers, and error paths. It does **not** constitute a formal third-party certification, complete attack surface enumeration, or a universal security guarantee.
 
+> [!NOTE]
+> **Historical Audit Record & Test Suite Notice:**  
+> The script `scripts/verify_b27_e1_security_audit.py` referenced throughout this document was a dedicated milestone audit runner executed during Milestone B27-E closeout. This historical script is not included in the tracked repository. This document serves as a record of that milestone's verified findings. Ongoing regression verification of all security controls, AST validators, loopback guards, and failure handlers is actively maintained and executed via the repository's tracked test suites: [`tests/test_sqlite_audit.py`](../tests/test_sqlite_audit.py), [`tests/test_agent_daemon.py`](../tests/test_agent_daemon.py), [`tests/test_cli_auth.py`](../tests/test_cli_auth.py), [`tests/test_dual_key_fallback.py`](../tests/test_dual_key_fallback.py), [`tests/test_generation_failure_diagnostics.py`](../tests/test_generation_failure_diagnostics.py), and `frontend/tests/*.test.ts`. Users and reviewers should consult these maintained test suites rather than assume the historical audit script is tracked or directly executable.
+
 ---
 
 ## 2. Dedicated Audit Runner Structure (56 Checks)

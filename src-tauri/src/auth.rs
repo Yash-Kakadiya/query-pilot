@@ -114,6 +114,249 @@ pub fn resolve_token_path() -> PathBuf {
 
 const ABANDONED_DIRECTORY_TTL_NANOS: u128 = 3600 * 1_000_000_000; // 1 hour
 
+/// Tri-state process liveness outcome for fail-closed legacy directory inspection.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum ProcessLiveness {
+    /// Process is confirmed to be actively running (unsignaled handle).
+    Running,
+    /// Process is confirmed to be terminated or non-existent in the OS.
+    Terminated,
+    /// Indeterminate state (e.g. access denied, wait failure, or unexpected error). Fail safe.
+    Inaccessible,
+}
+
+/// Evaluates legacy directory cleanup action based on verified tri-state process liveness.
+/// Deletes strictly when confirmed Terminated; preserves when Running or Inaccessible.
+pub fn evaluate_legacy_cleanup(liveness: ProcessLiveness) -> CleanupAction {
+    match liveness {
+        ProcessLiveness::Terminated => CleanupAction::Delete,
+        ProcessLiveness::Running => CleanupAction::Preserve,
+        ProcessLiveness::Inaccessible => CleanupAction::Preserve,
+    }
+}
+
+/// Pure helper mapping Windows WaitForSingleObject return codes to ProcessLiveness.
+pub fn map_liveness_wait_result(wait_result: u32) -> ProcessLiveness {
+    const WAIT_OBJECT_0: u32 = 0;
+    const WAIT_TIMEOUT: u32 = 258;
+
+    if wait_result == WAIT_TIMEOUT {
+        ProcessLiveness::Running
+    } else if wait_result == WAIT_OBJECT_0 {
+        ProcessLiveness::Terminated
+    } else {
+        ProcessLiveness::Inaccessible
+    }
+}
+
+/// Pure helper mapping Windows OpenProcess error codes (GetLastError) to ProcessLiveness.
+pub fn map_liveness_open_error(last_error: u32) -> ProcessLiveness {
+    const ERROR_INVALID_PARAMETER: u32 = 87;
+    const ERROR_ACCESS_DENIED: u32 = 5;
+
+    if last_error == ERROR_INVALID_PARAMETER {
+        // PID does not exist in the OS -> confirmed dead
+        ProcessLiveness::Terminated
+    } else if last_error == ERROR_ACCESS_DENIED {
+        // Exists but lacks query permission -> indeterminate, fail safe
+        ProcessLiveness::Inaccessible
+    } else {
+        // Any other unexpected OS error -> indeterminate, fail safe
+        ProcessLiveness::Inaccessible
+    }
+}
+
+/// Inspect process liveness with explicit tri-state handling on Windows.
+#[cfg(windows)]
+pub fn inspect_process_liveness(pid: u32) -> ProcessLiveness {
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    const SYNCHRONIZE: u32 = 0x00100000;
+
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, 0, pid);
+        if handle.is_null() {
+            let err = GetLastError();
+            return map_liveness_open_error(err);
+        }
+
+        let wait_res = WaitForSingleObject(handle, 0);
+        CloseHandle(handle);
+
+        map_liveness_wait_result(wait_res)
+    }
+}
+
+#[cfg(not(windows))]
+pub fn inspect_process_liveness(_pid: u32) -> ProcessLiveness {
+    ProcessLiveness::Running
+}
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum ProcessIdentityStatus {
+    /// Process is alive and its kernel creation time matches the recorded creation time.
+    AliveMatch,
+    /// Process is alive, but its creation time does NOT match (PID was recycled by another app).
+    AliveMismatchRecycled,
+    /// Process does not exist (invalid PID or terminated).
+    DeadNotFound,
+    /// Process exists but has exited.
+    DeadExited,
+    /// Process exists but cannot be queried (fail safe: do not assume dead).
+    Inaccessible,
+    /// Legacy directory without recorded creation time.
+    LegacyNoCreationTime,
+}
+
+/// Cleanup action determined by process identity evaluation.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum CleanupAction {
+    Preserve,
+    Delete,
+}
+
+/// Evaluates cleanup decision based on verified process identity.
+pub fn evaluate_cleanup_decision(
+    identity_status: ProcessIdentityStatus,
+    _dir_age_nanos: u128,
+    _ttl_nanos: u128,
+) -> CleanupAction {
+    match identity_status {
+        ProcessIdentityStatus::AliveMatch => CleanupAction::Preserve,
+        ProcessIdentityStatus::AliveMismatchRecycled => CleanupAction::Delete,
+        ProcessIdentityStatus::DeadNotFound => CleanupAction::Delete,
+        ProcessIdentityStatus::DeadExited => CleanupAction::Delete,
+        ProcessIdentityStatus::Inaccessible => CleanupAction::Preserve,
+        ProcessIdentityStatus::LegacyNoCreationTime => {
+            // Conservative legacy policy: preserve ambiguous legacy directories when process
+            // identity cannot be established, deleting only when the process is confirmed dead.
+            CleanupAction::Preserve
+        }
+    }
+}
+
+/// Retrieve the kernel creation timestamp of the current process.
+/// Combines high and low 32-bit words into a single 64-bit integer (100-ns precision).
+/// Returns Err if the Windows API call fails or returns an invalid zero timestamp.
+#[cfg(windows)]
+pub fn get_current_process_creation_time() -> Result<u64, AuthError> {
+    use windows_sys::Win32::Foundation::{GetLastError, FILETIME};
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
+
+    unsafe {
+        let mut creation = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+        let mut exit = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+        let mut kernel = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+        let mut user = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+
+        let handle = GetCurrentProcess();
+        if GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user) != 0 {
+            let ts = ((creation.dwHighDateTime as u64) << 32) | (creation.dwLowDateTime as u64);
+            if ts == 0 {
+                return Err(AuthError::TokenReadFailed(
+                    "Kernel returned zero process creation timestamp".into(),
+                ));
+            }
+            Ok(ts)
+        } else {
+            let err = GetLastError();
+            Err(AuthError::TokenReadFailed(format!(
+                "Failed to get current process creation time (win32 err={})",
+                err
+            )))
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn get_current_process_creation_time() -> Result<u64, AuthError> {
+    Ok(0)
+}
+
+/// Verify process identity by querying its Windows kernel creation timestamp.
+/// Protects against PID recycling and preserves directories of genuinely running processes.
+/// Uses WaitForSingleObject handle synchronization to avoid the STILL_ACTIVE (259) exit code pitfall.
+#[cfg(windows)]
+pub fn check_process_identity(pid: u32, recorded_creation_time: u64) -> ProcessIdentityStatus {
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, GetLastError, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, FILETIME,
+        WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    };
+    use windows_sys::Win32::System::Threading::{
+        GetProcessTimes, OpenProcess, WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    const SYNCHRONIZE: u32 = 0x00100000;
+
+    if recorded_creation_time == 0 {
+        return ProcessIdentityStatus::LegacyNoCreationTime;
+    }
+
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, 0, pid);
+        if handle.is_null() {
+            let err = GetLastError();
+            if err == ERROR_ACCESS_DENIED {
+                // Process exists but access is denied; fail safe
+                return ProcessIdentityStatus::Inaccessible;
+            } else if err == ERROR_INVALID_PARAMETER {
+                return ProcessIdentityStatus::DeadNotFound;
+            } else {
+                return ProcessIdentityStatus::Inaccessible;
+            }
+        }
+
+        // Use kernel synchronization: process object transitions to signaled state upon exit.
+        // This eliminates the exit-code 259 / STILL_ACTIVE defect.
+        let wait_res = WaitForSingleObject(handle, 0);
+        if wait_res == WAIT_OBJECT_0 {
+            // Process object is signaled -> terminated
+            CloseHandle(handle);
+            return ProcessIdentityStatus::DeadExited;
+        } else if wait_res == WAIT_FAILED || wait_res != WAIT_TIMEOUT {
+            // Kernel wait failed or indeterminate; fail safe
+            CloseHandle(handle);
+            return ProcessIdentityStatus::Inaccessible;
+        }
+
+        // Process is actively running (WAIT_TIMEOUT). Query its kernel creation time.
+        let mut creation = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+        let mut exit = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+        let mut kernel = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+        let mut user = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+
+        let ok_times = GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user);
+        CloseHandle(handle);
+
+        if ok_times == 0 {
+            return ProcessIdentityStatus::Inaccessible;
+        }
+
+        let actual_creation_time =
+            ((creation.dwHighDateTime as u64) << 32) | (creation.dwLowDateTime as u64);
+
+        if actual_creation_time == 0 {
+            return ProcessIdentityStatus::Inaccessible;
+        }
+
+        if actual_creation_time == recorded_creation_time {
+            ProcessIdentityStatus::AliveMatch
+        } else {
+            ProcessIdentityStatus::AliveMismatchRecycled
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn check_process_identity(_pid: u32, recorded_creation_time: u64) -> ProcessIdentityStatus {
+    if recorded_creation_time == 0 {
+        ProcessIdentityStatus::LegacyNoCreationTime
+    } else {
+        ProcessIdentityStatus::AliveMatch
+    }
+}
+
 #[cfg(windows)]
 fn get_active_windows_trustee() -> Option<String> {
     use std::os::windows::process::CommandExt;
@@ -189,6 +432,7 @@ pub fn restrict_directory_acl(dir_path: &Path) -> Result<(), AuthError> {
 }
 
 /// Create a unique, private temporary directory for the current launch's bootstrap token.
+/// Associates directory with the active process identity (PID + kernel creation timestamp).
 /// Ensures no two desktop launches or background processes ever share a token directory.
 pub fn create_isolated_token_dir() -> Result<PathBuf, AuthError> {
     // Attempt best-effort cleanup of any stale token directories from prior dead processes
@@ -196,12 +440,9 @@ pub fn create_isolated_token_dir() -> Result<PathBuf, AuthError> {
 
     let base_temp = std::env::temp_dir();
     let pid = std::process::id();
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
+    let creation_time = get_current_process_creation_time()?;
     let count = LAUNCH_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let dir_name = format!("querypilot_token_{}_{}_{}", pid, nanos, count);
+    let dir_name = format!("querypilot_token_v2_{}_{}_{}", pid, creation_time, count);
     let dir_path = base_temp.join(dir_name);
 
     fs::create_dir_all(&dir_path)
@@ -215,10 +456,18 @@ pub fn create_isolated_token_dir() -> Result<PathBuf, AuthError> {
     Ok(dir_path)
 }
 
-/// Best-effort cleanup of abandoned token directories from dead QueryPilot desktop processes.
-/// Employs dual-stage defense against PID recycling:
-/// 1. Directories older than 1 hour (TTL) are purged unconditionally.
-/// 2. Newer directories are purged only if their recorded owner process is no longer active.
+/// Cleanup of abandoned token directories from dead QueryPilot desktop processes.
+/// Employs process identity and liveness verification:
+/// 1. For v2 directories (querypilot_token_v2_<pid>_<creation_time>_<count>):
+///    - Validates recorded kernel creation timestamp against the running process via single-handle inspection.
+///    - If timestamp matches: process is alive -> PRESERVE unconditionally (even across system suspension).
+///    - If timestamp does not match: PID was recycled by another process -> DELETE immediately.
+///    - If process does not exist or exited: DELETE immediately.
+///    - If process query access is denied or wait fails: PRESERVE fail-safe.
+/// 2. For legacy directories (querypilot_token_<pid>_<nanos>_<count>):
+///    - Deletes strictly when process termination is confirmed (non-existent PID or signaled process).
+///    - Running or inaccessible/indeterminate processes are preserved (fail-closed).
+///    - Legacy cleanup no longer uses an age-based TTL to override indeterminate process state.
 pub fn cleanup_abandoned_token_dirs() {
     let base_temp = std::env::temp_dir();
     let entries = match fs::read_dir(&base_temp) {
@@ -226,10 +475,6 @@ pub fn cleanup_abandoned_token_dirs() {
         Err(_) => return,
     };
 
-    let now_nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
     let current_pid = std::process::id();
 
     for entry in entries.flatten() {
@@ -238,8 +483,33 @@ pub fn cleanup_abandoned_token_dirs() {
             continue;
         }
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            if name.starts_with("querypilot_token_") {
-                // Parse PID and creation timestamp from querypilot_token_<pid>_<nanos>_<count>
+            if name.starts_with("querypilot_token_v2_") {
+                // v2 format: querypilot_token_v2_<pid>_<creation_time>_<count>
+                let parts: Vec<&str> = name.split('_').collect();
+                if parts.len() >= 5 {
+                    if let Ok(pid) = parts[3].parse::<u32>() {
+                        // Never purge our own currently active process directory
+                        if pid == current_pid {
+                            continue;
+                        }
+
+                        let recorded_creation = parts[4].parse::<u64>().unwrap_or(0);
+                        let identity_status = check_process_identity(pid, recorded_creation);
+                        let decision = evaluate_cleanup_decision(
+                            identity_status,
+                            0,
+                            ABANDONED_DIRECTORY_TTL_NANOS,
+                        );
+
+                        if decision == CleanupAction::Delete {
+                            cleanup_isolated_token_dir(&path);
+                        }
+                    }
+                }
+            } else if name.starts_with("querypilot_token_") {
+                // Legacy v1 format: querypilot_token_<pid>_<nanos>_<count>
+                // Applies fail-closed tri-state process inspection: deletes only when confirmed
+                // Terminated; preserves when Running or Inaccessible (fail safe).
                 let parts: Vec<&str> = name.split('_').collect();
                 if parts.len() >= 4 {
                     if let Ok(pid) = parts[2].parse::<u32>() {
@@ -248,12 +518,9 @@ pub fn cleanup_abandoned_token_dirs() {
                             continue;
                         }
 
-                        let dir_nanos = parts[3].parse::<u128>().unwrap_or(0);
-                        let is_aged = dir_nanos > 0
-                            && now_nanos.saturating_sub(dir_nanos) > ABANDONED_DIRECTORY_TTL_NANOS;
-
-                        // Clean up if process is dead OR if directory is older than 1 hour (recycled PID defense)
-                        if is_aged || !is_process_running(pid) {
+                        let liveness = inspect_process_liveness(pid);
+                        let decision = evaluate_legacy_cleanup(liveness);
+                        if decision == CleanupAction::Delete {
                             cleanup_isolated_token_dir(&path);
                         }
                     }
@@ -261,31 +528,6 @@ pub fn cleanup_abandoned_token_dirs() {
             }
         }
     }
-}
-
-/// Check whether a process with the given PID is currently running.
-#[cfg(windows)]
-fn is_process_running(pid: u32) -> bool {
-    use windows_sys::Win32::Foundation::CloseHandle;
-    use windows_sys::Win32::System::Threading::{
-        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
-    };
-
-    unsafe {
-        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-        if handle.is_null() {
-            return false;
-        }
-        let mut exit_code: u32 = 0;
-        let ok = GetExitCodeProcess(handle, &mut exit_code);
-        CloseHandle(handle);
-        ok != 0 && exit_code == 259 // STILL_ACTIVE = 259
-    }
-}
-
-#[cfg(not(windows))]
-fn is_process_running(_pid: u32) -> bool {
-    true
 }
 
 /// Clean up temporary token material and remove the isolated token directory safely.
@@ -606,13 +848,104 @@ mod tests {
 
         let name1 = dir1.file_name().unwrap().to_str().unwrap();
         let name2 = dir2.file_name().unwrap().to_str().unwrap();
-        assert!(name1.starts_with("querypilot_token_"));
-        assert!(name2.starts_with("querypilot_token_"));
+        assert!(name1.starts_with("querypilot_token_v2_"));
+        assert!(name2.starts_with("querypilot_token_v2_"));
 
         cleanup_isolated_token_dir(&dir1);
         cleanup_isolated_token_dir(&dir2);
         assert!(!dir1.exists());
         assert!(!dir2.exists());
+    }
+
+    #[test]
+    fn test_evaluate_cleanup_decision_matrix() {
+        let ttl = 3600 * 1_000_000_000; // 1 hour
+
+        // 1. AliveMatch: preserved unconditionally even if older than TTL (suspension protection)
+        assert_eq!(
+            evaluate_cleanup_decision(ProcessIdentityStatus::AliveMatch, ttl * 2, ttl),
+            CleanupAction::Preserve
+        );
+
+        // 2. AliveMismatchRecycled: deleted immediately even if brand new (0 age)
+        assert_eq!(
+            evaluate_cleanup_decision(ProcessIdentityStatus::AliveMismatchRecycled, 0, ttl),
+            CleanupAction::Delete
+        );
+
+        // 3. DeadNotFound: deleted immediately
+        assert_eq!(
+            evaluate_cleanup_decision(ProcessIdentityStatus::DeadNotFound, 0, ttl),
+            CleanupAction::Delete
+        );
+
+        // 4. DeadExited: deleted immediately
+        assert_eq!(
+            evaluate_cleanup_decision(ProcessIdentityStatus::DeadExited, 0, ttl),
+            CleanupAction::Delete
+        );
+
+        // 5. Inaccessible (ERROR_ACCESS_DENIED): fail safe, preserved
+        assert_eq!(
+            evaluate_cleanup_decision(ProcessIdentityStatus::Inaccessible, ttl * 2, ttl),
+            CleanupAction::Preserve
+        );
+
+        // 6. LegacyNoCreationTime: conservative policy preserves ambiguous legacy directories
+        assert_eq!(
+            evaluate_cleanup_decision(ProcessIdentityStatus::LegacyNoCreationTime, 1000, ttl),
+            CleanupAction::Preserve
+        );
+        assert_eq!(
+            evaluate_cleanup_decision(ProcessIdentityStatus::LegacyNoCreationTime, ttl * 2, ttl),
+            CleanupAction::Preserve
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_process_creation_time_live_windows() {
+        let creation_time_res = get_current_process_creation_time();
+        assert!(creation_time_res.is_ok(), "Process creation time must succeed on Windows");
+        let creation_time = creation_time_res.unwrap();
+        assert!(creation_time > 0, "Current process creation time must be non-zero on Windows");
+
+        let current_pid = std::process::id();
+
+        // 1. Current process with matching creation time -> AliveMatch
+        let match_status = check_process_identity(current_pid, creation_time);
+        assert_eq!(match_status, ProcessIdentityStatus::AliveMatch);
+
+        // 2. Current process with bogus creation time -> AliveMismatchRecycled
+        let recycled_status = check_process_identity(current_pid, creation_time.wrapping_add(9999));
+        assert_eq!(recycled_status, ProcessIdentityStatus::AliveMismatchRecycled);
+
+        // 3. Non-existent high PID -> DeadNotFound
+        let dead_status = check_process_identity(9999999, creation_time);
+        assert_eq!(dead_status, ProcessIdentityStatus::DeadNotFound);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_cleanup_abandoned_v2_recycled_directory() {
+        let base_temp = std::env::temp_dir();
+        let current_pid = std::process::id();
+        let current_time = get_current_process_creation_time().unwrap_or(12345678);
+
+        // Create a simulated v2 directory with a different PID that is non-existent
+        let dead_pid = 9999998;
+        let dead_dir = base_temp.join(format!("querypilot_token_v2_{}_{}_1", dead_pid, current_time));
+        fs::create_dir_all(&dead_dir).unwrap();
+        let test_token = dead_dir.join("agent.token");
+        fs::write(&test_token, "0000000000000000000000000000000000000000000000000000000000000000").unwrap();
+
+        assert!(dead_dir.is_dir());
+        cleanup_abandoned_token_dirs();
+        assert!(!dead_dir.exists(), "v2 token directory with dead PID should be deleted immediately");
+
+        // If on Windows, also test PID recycling detection with a live process PID other than current_pid
+        // (Our own process PID is bypassed by self-exclusion, so test with a simulated dead PID)
+        let _ = current_pid;
     }
 
     #[test]
@@ -665,16 +998,16 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn test_cleanup_abandoned_aged_directories() {
         let base_temp = std::env::temp_dir();
-        // Create a simulated abandoned directory with a timestamp 2 hours in the past
+        // Create a simulated legacy abandoned directory with dummy non-existent PID 999999
         let two_hours_ago_nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos()
             .saturating_sub(7200 * 1_000_000_000);
 
-        // Use a dummy PID 999999
         let aged_dir = base_temp.join(format!("querypilot_token_999999_{}_1", two_hours_ago_nanos));
         fs::create_dir_all(&aged_dir).unwrap();
         let test_token = aged_dir.join("agent.token");
@@ -682,6 +1015,79 @@ mod tests {
 
         assert!(aged_dir.is_dir());
         cleanup_abandoned_token_dirs();
-        assert!(!aged_dir.exists(), "Aged abandoned token directory should be automatically purged by TTL");
+        assert!(
+            !aged_dir.exists(),
+            "Legacy abandoned token directory should be deleted when process is confirmed terminated"
+        );
+    }
+
+    #[test]
+    fn test_evaluate_legacy_cleanup_decision() {
+        // Pure decision logic verification:
+        // Confirmed terminated -> Delete
+        assert_eq!(
+            evaluate_legacy_cleanup(ProcessLiveness::Terminated),
+            CleanupAction::Delete
+        );
+        // Running process -> Preserve
+        assert_eq!(
+            evaluate_legacy_cleanup(ProcessLiveness::Running),
+            CleanupAction::Preserve
+        );
+        // Inaccessible / indeterminate -> Preserve (fail safe)
+        assert_eq!(
+            evaluate_legacy_cleanup(ProcessLiveness::Inaccessible),
+            CleanupAction::Preserve
+        );
+    }
+
+    #[test]
+    fn test_map_liveness_wait_result_pure() {
+        // 1. WAIT_TIMEOUT (258) -> Running
+        assert_eq!(map_liveness_wait_result(258), ProcessLiveness::Running);
+
+        // 2. WAIT_OBJECT_0 (0) -> Terminated
+        assert_eq!(map_liveness_wait_result(0), ProcessLiveness::Terminated);
+
+        // 3. WAIT_FAILED (0xFFFFFFFF) -> Inaccessible
+        assert_eq!(map_liveness_wait_result(0xFFFFFFFF), ProcessLiveness::Inaccessible);
+
+        // 4. WAIT_ABANDONED (0x00000080) -> Inaccessible
+        assert_eq!(map_liveness_wait_result(0x80), ProcessLiveness::Inaccessible);
+
+        // 5. Unexpected result -> Inaccessible
+        assert_eq!(map_liveness_wait_result(99999), ProcessLiveness::Inaccessible);
+    }
+
+    #[test]
+    fn test_map_liveness_open_error_pure() {
+        // 1. ERROR_INVALID_PARAMETER (87) -> Terminated (non-existent PID)
+        assert_eq!(map_liveness_open_error(87), ProcessLiveness::Terminated);
+
+        // 2. ERROR_ACCESS_DENIED (5) -> Inaccessible (fail safe, preserve)
+        assert_eq!(map_liveness_open_error(5), ProcessLiveness::Inaccessible);
+
+        // 3. ERROR_GEN_FAILURE (31) -> Inaccessible
+        assert_eq!(map_liveness_open_error(31), ProcessLiveness::Inaccessible);
+
+        // 4. Any unexpected OS error code -> Inaccessible
+        assert_eq!(map_liveness_open_error(1234), ProcessLiveness::Inaccessible);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_inspect_process_liveness_windows_kernel() {
+        let current_pid = std::process::id();
+
+        // 1. Current process is actively running: kernel synchronization returns WAIT_TIMEOUT
+        let live_status = inspect_process_liveness(current_pid);
+        assert_eq!(live_status, ProcessLiveness::Running);
+        assert_eq!(evaluate_legacy_cleanup(live_status), CleanupAction::Preserve);
+
+        // 2. Non-existent high PID: OpenProcess fails with ERROR_INVALID_PARAMETER
+        let dead_pid = 9999999;
+        let dead_status = inspect_process_liveness(dead_pid);
+        assert_eq!(dead_status, ProcessLiveness::Terminated);
+        assert_eq!(evaluate_legacy_cleanup(dead_status), CleanupAction::Delete);
     }
 }
