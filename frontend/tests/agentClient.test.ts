@@ -10,6 +10,7 @@ import {
   MIN_BOOTSTRAP_TOKEN_LENGTH,
   bootstrapAgent,
   createProfile,
+  deleteProfile,
   executeProfileQuery,
   getAgentBaseUrl,
   getProfileSchema,
@@ -950,6 +951,44 @@ test('Local Agent Client - Profile Onboarding & Explicit Connection Testing', as
         assert(err instanceof AgentClientError)
         assert.strictEqual(err.kind, 'not_found')
         assert.strictEqual(err.statusCode, 404)
+        return true
+      }
+    )
+  })
+
+  await t.test('deleteProfile() sends DELETE to /v1/profiles/{encodedId} with CSRF header and credentials', async () => {
+    let capturedUrl: string | URL | Request | undefined
+    let capturedOptions: RequestInit | undefined
+
+    globalThis.fetch = (async (url: string | URL | Request, options?: RequestInit) => {
+      capturedUrl = url
+      capturedOptions = options
+      return new Response(
+        JSON.stringify({
+          success: true,
+          profile_id: 'test_delete_me',
+          message: "Profile 'test_delete_me' successfully deleted.",
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    }) as typeof fetch
+
+    const res = await deleteProfile('test_delete_me')
+    assert.strictEqual(capturedUrl, '/agent/v1/profiles/test_delete_me')
+    assert.strictEqual(capturedOptions?.method, 'DELETE')
+    assert.strictEqual(capturedOptions?.credentials, 'include')
+    const headers = capturedOptions?.headers as Record<string, string>
+    assert.strictEqual(headers['X-QueryPilot-Request'], '1')
+    assert.strictEqual(res.success, true)
+    assert.strictEqual(res.profile_id, 'test_delete_me')
+  })
+
+  await t.test('deleteProfile() rejects empty profileId', async () => {
+    await assert.rejects(
+      async () => deleteProfile('   '),
+      (err: unknown) => {
+        assert(err instanceof AgentClientError)
+        assert.strictEqual(err.kind, 'validation')
         return true
       }
     )

@@ -6,6 +6,7 @@ Ensures fail-fast environment variable validation and prevents secret leakage.
 
 from functools import lru_cache
 import json
+from pathlib import Path
 from typing import Annotated, Any, List, Optional, Set
 import urllib.parse
 from pydantic import Field, SecretStr, field_validator, model_validator
@@ -19,7 +20,10 @@ class DatabaseSettings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(
+            str(Path.home() / ".query_pilot" / ".env"),
+            ".env",
+        ),
         env_file_encoding="utf-8",
         extra="ignore",
     )

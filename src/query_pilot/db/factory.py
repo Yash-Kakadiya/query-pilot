@@ -224,8 +224,8 @@ class ProfileConnectionFactory:
                 f"Creating engine for profile '{config.profile_id}' "
                 f"targeting database '{config.expected_db}'"
             )
+            mode = merged_kwargs.pop("mode", "execution")
             if config.engine_type == "sqlite" and self._engine_creator is sqlalchemy.create_engine:
-                mode = merged_kwargs.pop("mode", "execution")
                 profile = self.resolve_profile(profile_id, client_request=client_request)
                 return create_profile_sqlite_engine(profile, mode=mode, **merged_kwargs)
             return self._engine_creator(config.sqlalchemy_url, **merged_kwargs)

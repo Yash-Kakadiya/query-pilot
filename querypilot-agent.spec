@@ -19,6 +19,10 @@ datas = []
 if frontend_dist.is_dir() and (frontend_dist / "index.html").is_file():
     datas.append((str(frontend_dist), os.path.join("query_pilot", "agent", "static")))
 
+data_dir = repo_root / "data"
+if data_dir.is_dir():
+    datas.append((str(data_dir), "data"))
+
 # Explicitly bundle CA certificates for HTTPS upstream communication
 datas.append((certifi.where(), "certifi"))
 
@@ -60,8 +64,24 @@ hiddenimports = [
     "query_pilot.db.sqlite_path",
     "query_pilot.sql",
     "query_pilot.sql.validator",
+    "query_pilot.sql.generation",
+    "query_pilot.sql.gemini_generator",
+    "query_pilot.sql.failure_classifier",
+    "query_pilot.sql.prompt",
     "query_pilot.presentation",
     "query_pilot.presentation.formatter",
+    "query_pilot.presentation.synthesizer",
+    "query_pilot.config",
+    "query_pilot.tracing",
+    "query_pilot.api",
+    "query_pilot.api.models",
+    "query_pilot.api.security",
+    "query_pilot.api.v1",
+    "query_pilot.api.v1.routes",
+    "google",
+    "google.genai",
+    "pydantic_settings",
+    "dotenv",
 ]
 
 a = Analysis(

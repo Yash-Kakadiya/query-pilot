@@ -215,6 +215,12 @@ def build_parser() -> argparse.ArgumentParser:
     val_parser = profile_subparsers.add_parser("validate", help="Validate approved database connection profiles file.")
     val_parser.add_argument("--profiles-file", type=Path, default=None, help="Path to profiles JSON file.")
 
+    # profile delete
+    del_parser = profile_subparsers.add_parser("delete", help="Delete an approved database connection profile.")
+    del_parser.add_argument("profile_id", type=str, help="ID of profile to delete.")
+    del_parser.add_argument("--profiles-file", type=Path, default=None, help="Path to profiles JSON file.")
+    del_parser.add_argument("--yes", "-y", action="store_true", default=False, help="Confirm deletion without interactive prompt.")
+
     return parser
 
 
@@ -294,6 +300,43 @@ def handle_profile_validate(args: argparse.Namespace) -> int:
         return 0
     except Exception as exc:
         sys.stderr.write(f"VALIDATION ERROR: Profiles file at '{profiles_path}' is invalid: {exc}\n")
+        return 1
+
+
+def handle_profile_delete(args: argparse.Namespace) -> int:
+    """Handle 'querypilot-agent profile delete <profile_id>' command."""
+    profiles_path = args.profiles_file or get_default_profiles_file()
+    if not profiles_path.exists():
+        sys.stderr.write(f"ERROR: Profiles file not found at '{profiles_path}'.\n")
+        return 1
+
+    profile_id = (args.profile_id or "").strip()
+    if not profile_id:
+        sys.stderr.write("ERROR: Profile ID is required.\n")
+        return 1
+
+    if not getattr(args, "yes", False):
+        try:
+            confirm = input(f"Are you sure you want to delete profile '{profile_id}' from '{profiles_path}'? [y/N]: ")
+            if confirm.strip().lower() not in ("y", "yes"):
+                sys.stdout.write("Aborted.\n")
+                return 0
+        except (KeyboardInterrupt, EOFError):
+            sys.stdout.write("\nAborted.\n")
+            return 1
+
+    try:
+        with profile_file_lock(profiles_path, timeout=5.0):
+            store = load_trusted_profiles_file(profiles_path)
+            if not store.has_profile(profile_id):
+                sys.stderr.write(f"ERROR: Profile '{profile_id}' not found in '{profiles_path}'.\n")
+                return 1
+            store.delete_profile(profile_id)
+            save_trusted_profiles_file(profiles_path, store)
+            sys.stdout.write(f"SUCCESS: Profile '{profile_id}' deleted successfully from '{profiles_path}'.\n")
+            return 0
+    except Exception as exc:
+        sys.stderr.write(f"ERROR: Failed to delete profile: {exc}\n")
         return 1
 
 
@@ -722,6 +765,16 @@ def run_desktop_sidecar(
 
 def run_agent_cli(args: Optional[list[str]] = None) -> int:
     """Parse arguments and execute agent command or start daemon."""
+    try:
+        from dotenv import load_dotenv
+
+        user_env = Path.home() / ".query_pilot" / ".env"
+        if user_env.is_file():
+            load_dotenv(user_env)
+        load_dotenv()
+    except Exception:
+        pass
+
     parser = build_parser()
     parsed = parser.parse_args(args)
 
@@ -747,6 +800,8 @@ def run_agent_cli(args: Optional[list[str]] = None) -> int:
             return handle_profile_list(parsed)
         elif parsed.profile_action == "validate":
             return handle_profile_validate(parsed)
+        elif parsed.profile_action == "delete":
+            return handle_profile_delete(parsed)
         else:
             parser.parse_args(["profile", "--help"])
             return 1

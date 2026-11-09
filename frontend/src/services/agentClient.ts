@@ -24,6 +24,7 @@ import {
   type BootstrapResponse,
   type CreateProfileRequest,
   type CreateProfileResponse,
+  type DeleteProfileResponse,
   type ExecuteQueryResponse,
   type LogoutResponse,
   type ModelFacingSchemaContext,
@@ -753,4 +754,36 @@ export async function testProfileConnection(
     options
   )
 }
+
+/**
+ * Deletes a registered database connection profile from the local agent daemon.
+ *
+ * Security & Protocol:
+ * - Safely path-encodes dynamic profile ID.
+ * - Sends DELETE /v1/profiles/{encodedId} with credentials: 'include' and custom CSRF header.
+ * - Releases cached SQLAlchemy connection engines and updates ~/.query_pilot/profiles.json.
+ */
+export async function deleteProfile(
+  profileId: string,
+  options?: AgentRequestOptions
+): Promise<DeleteProfileResponse> {
+  if (typeof profileId !== 'string' || !profileId.trim()) {
+    throw new AgentClientError({
+      message: 'Profile ID must be a non-empty string.',
+      kind: 'validation',
+    })
+  }
+
+  const encodedId = encodeURIComponent(profileId.trim())
+  const url = resolveAgentEndpoint(`/v1/profiles/${encodedId}`)
+
+  return sendAgentRequest<DeleteProfileResponse>(
+    url,
+    {
+      method: 'DELETE',
+    },
+    options
+  )
+}
+
 

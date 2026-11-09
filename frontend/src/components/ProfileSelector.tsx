@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type {
   AgentDatabaseSchema,
   ModelFacingSchemaContext,
@@ -19,6 +20,7 @@ export interface ProfileSelectorProps {
   onRetrySchema: () => void
   onOpenOnboarding?: () => void
   onTestConnection?: (profileId: string) => Promise<void> | void
+  onDeleteProfile?: (profileId: string) => Promise<void> | void
   connectionTestStatus?: 'idle' | 'testing' | 'success' | 'failed'
   connectionTestResult?: TestConnectionResponse | null
 }
@@ -44,12 +46,16 @@ export function ProfileSelector({
   onRetrySchema,
   onOpenOnboarding,
   onTestConnection,
+  onDeleteProfile,
   connectionTestStatus = 'idle',
   connectionTestResult,
 }: ProfileSelectorProps) {
   const hasProfiles = profiles.length > 0
   const isSchemaLoading = schemaStatus === 'loading'
   const isTestingConn = connectionTestStatus === 'testing'
+  const [isConfirmingDelete, setIsConfirmingDelete] = useState<boolean>(false)
+  const [isDeleting, setIsDeleting] = useState<boolean>(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   return (
     <div
@@ -138,12 +144,90 @@ export function ProfileSelector({
               type="button"
               className="profile-clear-btn"
               onClick={() => onSelectProfile(null)}
-              disabled={isSchemaLoading || isTestingConn}
+              disabled={isSchemaLoading || isTestingConn || isDeleting}
               aria-label="Clear profile selection"
             >
               Clear
             </button>
           )}
+
+          {selectedProfileId && onDeleteProfile && (
+            <button
+              type="button"
+              className="profile-action-btn profile-delete-btn"
+              onClick={() => {
+                setDeleteError(null)
+                setIsConfirmingDelete(true)
+              }}
+              disabled={isSchemaLoading || isTestingConn || isDeleting}
+              aria-label="Delete active database profile"
+            >
+              🗑️ Delete Profile
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Profile Deletion Confirmation Dialog */}
+      {isConfirmingDelete && selectedProfile && (
+        <div
+          className="profile-delete-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-profile-dialog-title"
+        >
+          <div className="profile-delete-card">
+            <div className="profile-delete-header">
+              <span className="profile-delete-icon" aria-hidden="true">⚠️</span>
+              <h3 id="delete-profile-dialog-title" className="profile-delete-title">
+                Delete Database Profile?
+              </h3>
+            </div>
+            <p className="profile-delete-prompt">
+              Are you sure you want to delete profile <strong>"{selectedProfile.display_name}"</strong> (<code>{selectedProfile.profile_id}</code>)?
+            </p>
+            <p className="profile-delete-subprompt">
+              This will remove this profile configuration from your local agent daemon and release any open connection pools. This action cannot be undone.
+            </p>
+            {deleteError && (
+              <div className="profile-delete-error" role="alert">
+                {deleteError}
+              </div>
+            )}
+            <div className="profile-delete-actions">
+              <button
+                type="button"
+                className="profile-delete-cancel-btn"
+                onClick={() => {
+                  setIsConfirmingDelete(false)
+                  setDeleteError(null)
+                }}
+                disabled={isDeleting}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="profile-delete-confirm-btn"
+                onClick={async () => {
+                  if (!onDeleteProfile || !selectedProfileId) return
+                  try {
+                    setIsDeleting(true)
+                    setDeleteError(null)
+                    await onDeleteProfile(selectedProfileId)
+                    setIsConfirmingDelete(false)
+                  } catch (err: unknown) {
+                    setDeleteError(err instanceof Error ? err.message : 'Failed to delete profile.')
+                  } finally {
+                    setIsDeleting(false)
+                  }
+                }}
+                disabled={isDeleting}
+              >
+                {isDeleting ? 'Deleting...' : 'Yes, Delete Profile'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

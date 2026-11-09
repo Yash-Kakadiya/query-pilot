@@ -583,12 +583,12 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator, ai
 
       <main className="app-main">
         <div className="workspace-container">
-          {/* Prototype Access Key Authorization */}
-          <section className="access-key-section" aria-label="Access Key Configuration">
-            <AccessKeyBar
-              authRequired={queryError !== null && 'kind' in queryError && queryError.kind === 'unauthorized'}
-            />
-          </section>
+          {/* Prototype Access Key Authorization - Only surfaced if auth required */}
+          {(queryError !== null && 'kind' in queryError && queryError.kind === 'unauthorized') && (
+            <section className="access-key-section" aria-label="Access Key Configuration">
+              <AccessKeyBar authRequired={true} />
+            </section>
+          )}
 
           {/* Database Profile & Schema Selection (Phase 7.2 / F28-A9-B5) */}
           {agentSession.status === 'authenticated' && (
@@ -608,6 +608,9 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator, ai
                 onOpenOnboarding={() => setIsOnboardingOpen(true)}
                 onTestConnection={(profileId) => {
                   void coordinator.testConnection(profileId)
+                }}
+                onDeleteProfile={(profileId) => {
+                  return coordinator.deleteProfile(profileId).then(() => {})
                 }}
                 connectionTestStatus={agentSession.connectionTestStatus}
                 connectionTestResult={agentSession.connectionTestResult}
@@ -718,47 +721,86 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator, ai
               </section>
             )}
 
-          {/* Query Input Section */}
-          <section className="query-input-section" aria-label="Query Workspace">
-            <QueryInput
-              isLoading={isLoading}
-              onSubmit={handleQuerySubmit}
-              onCancel={handleQueryCancel}
-              onClear={handleClearResults}
-              hasResult={queryResponse !== null || queryError !== null}
-            />
-          </section>
-
-          {/* Error Message */}
-          {queryError && (
-            <section className="query-error-section" aria-label="Error Notification">
-              <ErrorAlert
-                error={queryError}
-                onDismiss={() => setQueryError(null)}
-              />
-            </section>
-          )}
-
-          {/* Results Presentation */}
-          {queryResponse && (
-            <section className="query-results-section" aria-label="Query Results">
-              <QueryResults response={queryResponse} />
-            </section>
-          )}
-
-          {/* Initial State Helper */}
-          {!queryResponse && !queryError && !isLoading && (
-            <div className="initial-state-card">
-              <div className="initial-icon" aria-hidden="true">💡</div>
-              <p className="initial-hint">
-                Type a natural-language question above and click <strong>Run Query</strong> to execute.
-              </p>
-              <div className="example-chips">
-                <span className="example-label">Examples:</span>
-                <span className="example-pill">"How many courses are in Computer Science?"</span>
-                <span className="example-pill">"What is the average GPA of all students?"</span>
+          {/* Authenticated Mode: If no profile selected, display clean getting-started guide */}
+          {agentSession.status === 'authenticated' && (!agentSession.selectedProfileId || agentSession.schemaStatus !== 'loaded') && (
+            <div className="profile-guide-card" role="region" aria-label="Getting Started">
+              <div className="profile-guide-icon" aria-hidden="true">💡</div>
+              <div className="profile-guide-body">
+                <h3 className="profile-guide-title">
+                  {agentSession.schemaStatus === 'loading'
+                    ? 'Loading Database Schema...'
+                    : 'Select a Database Profile to Begin'}
+                </h3>
+                <p className="profile-guide-desc">
+                  {agentSession.schemaStatus === 'loading'
+                    ? 'Introspecting metadata from your local database agent...'
+                    : 'QueryPilot generates safe read-only SQL queries tailored directly to your local database schema. Select an approved profile from the dropdown above or click + Add Profile to connect.'}
+                </p>
+                {agentSession.schemaStatus !== 'loading' && (
+                  <div className="profile-guide-steps">
+                    <div className="guide-step">
+                      <span className="guide-step-num">1</span>
+                      <span className="guide-step-text">Choose or configure your local database profile</span>
+                    </div>
+                    <div className="guide-step">
+                      <span className="guide-step-num">2</span>
+                      <span className="guide-step-text">Ask business questions in natural English</span>
+                    </div>
+                    <div className="guide-step">
+                      <span className="guide-step-num">3</span>
+                      <span className="guide-step-text">Review and safely execute candidate SQL queries</span>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
+          )}
+
+          {/* Standalone Demo / Evaluator Mode (Daemon Not Connected) */}
+          {agentSession.status !== 'authenticated' && (
+            <>
+              <section className="query-input-section" aria-label="Query Workspace">
+                <QueryInput
+                  isLoading={isLoading}
+                  onSubmit={handleQuerySubmit}
+                  onCancel={handleQueryCancel}
+                  onClear={handleClearResults}
+                  hasResult={queryResponse !== null || queryError !== null}
+                />
+              </section>
+
+              {/* Error Message */}
+              {queryError && (
+                <section className="query-error-section" aria-label="Error Notification">
+                  <ErrorAlert
+                    error={queryError}
+                    onDismiss={() => setQueryError(null)}
+                  />
+                </section>
+              )}
+
+              {/* Results Presentation */}
+              {queryResponse && (
+                <section className="query-results-section" aria-label="Query Results">
+                  <QueryResults response={queryResponse} />
+                </section>
+              )}
+
+              {/* Initial State Helper */}
+              {!queryResponse && !queryError && !isLoading && (
+                <div className="initial-state-card">
+                  <div className="initial-icon" aria-hidden="true">💡</div>
+                  <p className="initial-hint">
+                    Select a database profile above or type a question to evaluate the demonstration database.
+                  </p>
+                  <div className="example-chips">
+                    <span className="example-label">Examples:</span>
+                    <span className="example-pill">"How many courses are in Computer Science?"</span>
+                    <span className="example-pill">"What is the average GPA of all students?"</span>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
       </main>

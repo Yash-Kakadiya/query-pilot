@@ -26,6 +26,7 @@ import {
   MIN_BOOTSTRAP_TOKEN_LENGTH,
   bootstrapAgent,
   createProfile,
+  deleteProfile,
   getProfileSchema,
   getProfiles,
   logoutAgent,
@@ -564,6 +565,26 @@ export class AgentSessionCoordinator {
     // Refresh profiles without changing current selection
     await this.refreshProfiles()
     return res
+  }
+
+  /**
+   * Deletes a registered database connection profile and refreshes the profiles list.
+   * If the deleted profile was currently selected, clears the active profile selection and schema state.
+   */
+  async deleteProfile(profileId: string): Promise<boolean> {
+    const cleanId = profileId ? profileId.trim() : ''
+    if (!cleanId) {
+      return false
+    }
+
+    await deleteProfile(cleanId)
+
+    if (this.state.selectedProfileId === cleanId) {
+      this.clearSelectedProfile()
+    }
+
+    await this.refreshProfiles()
+    return true
   }
 
   /**

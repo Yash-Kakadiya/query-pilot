@@ -205,12 +205,17 @@
 
 .profile-form-input {
   padding: 0.55rem 0.75rem;
-  border: 1px solid var(--border-color, #cbd5e1);
+  border: 1px solid var(--input-border, var(--border-color, #cbd5e1));
   border-radius: 6px;
   font-size: 0.9rem;
-  color: var(--text-heading, #0f172a);
+  color: var(--input-text, var(--text-heading, #0f172a));
   background: var(--input-bg, #ffffff);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.profile-form-input::placeholder {
+  color: var(--text-muted, #94a3b8);
+  opacity: 0.75;
 }
 
 .profile-form-input:focus {
@@ -551,4 +556,145 @@
 
 .profile-test-btn:hover:not(:disabled) {
   background: #334155;
+}
+
+/* =============================================================================
+   Dark Mode Overrides for Profile Onboarding Modal
+   ============================================================================= */
+@media (prefers-color-scheme: dark) {
+  .profile-modal-dialog {
+    background: var(--card-bg, #111827);
+    border-color: var(--border-color, #1f2937);
+    color: var(--text-heading, #f8fafc);
+  }
+
+  .profile-modal-header {
+    border-bottom-color: var(--border-color, #1f2937);
+  }
+
+  .profile-modal-title {
+    color: var(--text-heading, #f8fafc);
+  }
+
+  .profile-modal-subtitle {
+    color: var(--text-muted, #94a3b8);
+  }
+
+  .profile-form-label {
+    color: var(--text-heading, #f8fafc);
+  }
+
+  .field-help-text {
+    color: var(--text-muted, #94a3b8);
+  }
+
+  .profile-form-input {
+    background: var(--input-bg, #1e293b);
+    color: var(--input-text, #f8fafc);
+    border-color: var(--input-border, #374151);
+  }
+
+  .profile-form-input:focus {
+    border-color: #3b82f6;
+    background: var(--input-bg, #1e293b);
+    color: var(--input-text, #f8fafc);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25);
+  }
+
+  .profile-form-input.input-error {
+    background: rgba(220, 38, 38, 0.15);
+    border-color: #ef4444;
+    color: #fca5a5;
+  }
+
+  .profile-modal-alert-error {
+    background: rgba(239, 68, 68, 0.15);
+    border-color: rgba(239, 68, 68, 0.35);
+    color: #fca5a5;
+  }
+
+  .profile-security-banner {
+    background: rgba(34, 197, 94, 0.1);
+    border-color: rgba(34, 197, 94, 0.25);
+    color: #86efac;
+  }
+
+  .engine-toggle-btn {
+    background: var(--card-bg, #111827);
+    border-color: var(--border-color, #374151);
+    color: var(--text-heading, #f8fafc);
+  }
+
+  .engine-toggle-btn:hover:not(:disabled) {
+    background: var(--pill-bg, #1e293b);
+    border-color: #60a5fa;
+  }
+
+  .engine-toggle-btn.engine-active {
+    background: rgba(37, 99, 235, 0.22);
+    border-color: #3b82f6;
+    color: #60a5fa;
+  }
+
+  .profile-browse-btn {
+    background: var(--pill-bg, #1e293b);
+    border-color: var(--border-color, #374151);
+    color: var(--text-heading, #f8fafc);
+  }
+
+  .profile-browse-btn:hover:not(:disabled) {
+    background: #334155;
+    border-color: #64748b;
+  }
+
+  .profile-locked-attributes {
+    background: var(--bg-color, #0b0f19);
+    border-color: var(--border-color, #1f2937);
+  }
+
+  .locked-badge {
+    background: var(--pill-bg, #1e293b);
+    border-color: var(--border-color, #374151);
+    color: var(--text-muted, #94a3b8);
+  }
+
+  .saved-meta-summary {
+    background: var(--bg-color, #0b0f19);
+    border-color: var(--border-color, #1f2937);
+  }
+
+  .meta-row-value {
+    color: var(--text-heading, #f8fafc);
+  }
+
+  .connection-test-section {
+    background: var(--card-bg, #111827);
+    border-color: var(--border-color, #1f2937);
+  }
+
+  .conn-test-title {
+    color: var(--text-heading, #f8fafc);
+  }
+
+  .conn-test-desc code {
+    background: var(--pill-bg, #1e293b);
+    color: #e2e8f0;
+  }
+
+  .test-result-success {
+    background: rgba(34, 197, 94, 0.12);
+    border-color: rgba(34, 197, 94, 0.3);
+    color: #86efac;
+  }
+
+  .test-result-failure {
+    background: rgba(239, 68, 68, 0.12);
+    border-color: rgba(239, 68, 68, 0.3);
+    color: #fca5a5;
+  }
+
+  .test-latency-pill {
+    background: rgba(34, 197, 94, 0.25);
+    color: #4ade80;
+  }
 }

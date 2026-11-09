@@ -867,4 +867,58 @@ test('Profile Onboarding - Strict Sequence, Failure Gating & Session Invalidatio
       assert.strictEqual(state2.connectionTestResult, null)
     }
   )
+
+  await t.test(
+    'deleteProfile dispatches DELETE, clears active selection if deleted, and refreshes profile store',
+    async () => {
+      const remainingProfiles = [...SAMPLE_EXISTING_PROFILES]
+      const dispatchedRequests: { url: string; method: string }[] = []
+
+      globalThis.fetch = (async (url: string | URL | Request, options?: RequestInit) => {
+        const urlStr = String(url)
+        const method = options?.method || 'GET'
+        dispatchedRequests.push({ url: urlStr, method })
+
+        if (urlStr.includes('/v1/profiles/mssql_analytics') && method === 'DELETE') {
+          return new Response(
+            JSON.stringify({
+              success: true,
+              profile_id: 'mssql_analytics',
+              message: "Profile 'mssql_analytics' deleted.",
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+        }
+
+        if (urlStr.endsWith('/v1/profiles') && method === 'GET') {
+          return new Response(
+            JSON.stringify({ profiles: remainingProfiles }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+        }
+
+        return new Response('Not Found', { status: 404 })
+      }) as typeof fetch
+
+      const coordinator = new AgentSessionCoordinator({
+        status: 'authenticated',
+        profiles: [...SAMPLE_EXISTING_PROFILES, SAMPLE_NEW_PROFILE_SUMMARY],
+        selectedProfileId: 'mssql_analytics',
+        schemaStatus: 'loaded',
+      })
+
+      const ok = await coordinator.deleteProfile('mssql_analytics')
+      assert.strictEqual(ok, true)
+      assert.strictEqual(dispatchedRequests.length, 2)
+      assert.strictEqual(dispatchedRequests[0].method, 'DELETE')
+      assert.ok(dispatchedRequests[0].url.includes('/v1/profiles/mssql_analytics'))
+      assert.strictEqual(dispatchedRequests[1].method, 'GET')
+      assert.ok(dispatchedRequests[1].url.endsWith('/v1/profiles'))
+
+      const state = coordinator.getState()
+      assert.strictEqual(state.selectedProfileId, null)
+      assert.strictEqual(state.schemaStatus, 'idle')
+      assert.strictEqual(state.profiles.length, remainingProfiles.length)
+    }
+  )
 })

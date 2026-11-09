@@ -230,6 +230,12 @@ export interface CreateProfileResponse {
   message: string
 }
 
+export interface DeleteProfileResponse {
+  success: boolean
+  profile_id: string
+  message: string
+}
+
 export interface TestConnectionRequest {
   // Deliberately empty object to reject arbitrary client connection parameters
 }

@@ -62,6 +62,7 @@ from query_pilot.agent.models import (
     ValidateProfileConfigResponse,
     CreateProfileRequest,
     CreateProfileResponse,
+    DeleteProfileResponse,
     TestConnectionRequest,
     TestConnectionResponse,
 )
@@ -157,6 +158,17 @@ def create_agent_app(
         upstream_client: Optional pre-configured httpx.AsyncClient (e.g. mock for offline routing tests).
     """
     resolved_config = config or AgentConfig()
+
+    try:
+        from pathlib import Path
+        from dotenv import load_dotenv
+
+        user_env = Path.home() / ".query_pilot" / ".env"
+        if user_env.is_file():
+            load_dotenv(user_env)
+        load_dotenv()
+    except Exception:
+        pass
 
     # Fail closed if bind_host is not strictly loopback
     resolved_config.validate_bind_host(resolved_config.bind_host)
@@ -551,6 +563,82 @@ def create_agent_app(
             profile=summary,
             is_default=is_default,
             message=f"Database connection profile '{new_profile.profile_id}' created and registered successfully.",
+        )
+
+    @app.delete(
+        "/agent/v1/profiles/{profile_id}",
+        response_model=DeleteProfileResponse,
+        status_code=status.HTTP_200_OK,
+        responses={
+            400: {"model": AgentErrorResponse},
+            401: {"model": AgentErrorResponse},
+            404: {"model": AgentErrorResponse},
+            500: {"model": AgentErrorResponse},
+        },
+    )
+    def delete_profile(
+        profile_id: str,
+        session: Session = Depends(get_current_session),
+    ):
+        """Delete an approved database connection profile, update disk store atomically,
+        and synchronize the running agent's in-memory store and engine pool.
+        """
+        clean_id = (profile_id or "").strip()
+        if not clean_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Profile ID cannot be empty.",
+            )
+
+        profiles_path = resolved_config.resolved_profiles_file
+
+        try:
+            with profile_file_lock(profiles_path, timeout=5.0):
+                if profiles_path.exists():
+                    disk_store = load_trusted_profiles_file(profiles_path)
+                else:
+                    disk_store = ProfileStore()
+
+                if not disk_store.has_profile(clean_id):
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Profile '{clean_id}' not found in approved profile store.",
+                    )
+
+                disk_store.delete_profile(clean_id)
+                save_trusted_profiles_file(profiles_path, disk_store)
+
+                try:
+                    resolved_store.sync_from_store(disk_store)
+                except Exception as sync_exc:
+                    logger.error("In-memory store sync failed after profile deletion: %s", sync_exc)
+                    reloaded = load_trusted_profiles_file(profiles_path)
+                    resolved_store.sync_from_store(reloaded)
+
+        except HTTPException:
+            raise
+        except TimeoutError:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Profile store is currently locked by another process. Please retry shortly.",
+            )
+        except Exception as exc:
+            logger.error("Failed to delete profile '%s': %s", clean_id, exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to delete profile '{clean_id}'.",
+            )
+
+        # Cleanly dispose cached database connection pool for the deleted profile
+        try:
+            resolved_engine_mgr.dispose_engine(clean_id)
+        except Exception as disp_exc:
+            logger.warning("Engine disposal for deleted profile '%s' failed: %s", clean_id, disp_exc)
+
+        return DeleteProfileResponse(
+            success=True,
+            profile_id=clean_id,
+            message=f"Database connection profile '{clean_id}' deleted successfully.",
         )
 
     @app.post(

@@ -272,12 +272,12 @@
 .metric-input,
 .metric-textarea {
   padding: 0.5rem 0.75rem;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--input-border, #cbd5e1);
   border-radius: 6px;
   font-size: 0.875rem;
   font-family: inherit;
-  color: #0f172a;
-  background: #ffffff;
+  color: var(--input-text, #0f172a);
+  background: var(--input-bg, #ffffff);
 }
 
 .metric-input:focus,
@@ -374,9 +374,9 @@
 }
 
 .metric-btn-secondary {
-  background: #ffffff;
-  color: #334155;
-  border: 1px solid #cbd5e1;
+  background: var(--card-bg, #ffffff);
+  color: var(--text-heading, #334155);
+  border: 1px solid var(--border-color, #cbd5e1);
   padding: 0.5rem 1rem;
   border-radius: 6px;
   font-size: 0.875rem;
@@ -384,6 +384,81 @@
 }
 
 .metric-btn-secondary:hover {
-  background: #f1f5f9;
+  background: var(--pill-bg, #f1f5f9);
+}
+
+@media (prefers-color-scheme: dark) {
+  .metric-modal-content {
+    background: var(--card-bg, #111827);
+    color: var(--text-heading, #f8fafc);
+    border-color: var(--border-color, #1f2937);
+  }
+
+  .metric-modal-header {
+    border-bottom-color: var(--border-color, #1f2937);
+  }
+
+  .metric-modal-title {
+    color: var(--text-heading, #f8fafc);
+  }
+
+  .metric-modal-subtitle {
+    color: var(--text-muted, #94a3b8);
+  }
+
+  .metric-label {
+    color: var(--text-heading, #f8fafc);
+  }
+
+  .metric-input,
+  .metric-textarea {
+    background: var(--input-bg, #1e293b);
+    color: var(--input-text, #f8fafc);
+    border-color: var(--input-border, #374151);
+  }
+
+  .metric-input:focus,
+  .metric-textarea:focus {
+    background: var(--input-bg, #1e293b);
+    color: var(--input-text, #f8fafc);
+    border-color: #3b82f6;
+  }
+
+  .metric-card {
+    background: var(--pill-bg, #1e293b);
+    border-color: var(--border-color, #374151);
+  }
+
+  .metric-item-name {
+    color: var(--text-heading, #f8fafc);
+  }
+
+  .metric-item-desc {
+    color: var(--text-muted, #94a3b8);
+  }
+
+  .metric-item-formula {
+    background: var(--bg-color, #0b0f19);
+    color: #e2e8f0;
+  }
+
+  .metric-modal-footer {
+    background: var(--bg-color, #0b0f19);
+    border-top-color: var(--border-color, #1f2937);
+  }
+
+  .metric-payload-indicator {
+    color: var(--text-muted, #94a3b8);
+  }
+
+  .metric-btn-secondary {
+    background: var(--card-bg, #111827);
+    color: var(--text-heading, #f8fafc);
+    border-color: var(--border-color, #374151);
+  }
+
+  .metric-btn-secondary:hover {
+    background: var(--pill-bg, #1e293b);
+  }
 }
 

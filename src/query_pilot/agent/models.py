@@ -436,6 +436,23 @@ class CreateProfileResponse(BaseModel):
     )
 
 
+class DeleteProfileResponse(BaseModel):
+    """Response returned upon successful profile deletion."""
+
+    model_config = {"extra": "forbid"}
+
+    success: bool = Field(
+        default=True,
+        description="True if the profile was deleted successfully."
+    )
+    profile_id: str = Field(
+        description="Identifier of the deleted profile."
+    )
+    message: str = Field(
+        default="Database connection profile deleted successfully."
+    )
+
+
 class TestConnectionRequest(BaseModel):
     """Optional payload for POST /agent/v1/profiles/{profile_id}/test-connection.
 

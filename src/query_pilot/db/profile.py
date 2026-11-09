@@ -960,6 +960,25 @@ class ProfileStore:
                 )
             return self._profiles[profile_id]
 
+    def delete_profile(self, profile_id: str) -> bool:
+        """Delete an approved profile by ID.
+        
+        Removes the profile from the store and safely reassigns or clears default_profile_id.
+        Raises UnknownProfileError if the profile does not exist.
+        """
+        with self._lock:
+            if not profile_id or not isinstance(profile_id, str) or profile_id not in self._profiles:
+                raise UnknownProfileError(
+                    f"Unknown profile '{profile_id}'. Cannot delete.",
+                    profile_id=str(profile_id) if profile_id is not None else "None",
+                )
+            new_profiles = dict(self._profiles)
+            del new_profiles[profile_id]
+            self._profiles = new_profiles
+            if self._default_profile_id == profile_id:
+                self._default_profile_id = next(iter(new_profiles.keys()), None)
+            return True
+
     def sync_from_store(self, other: ProfileStore) -> None:
         """Atomically synchronize profiles and default profile from another ProfileStore instance."""
         with self._lock:

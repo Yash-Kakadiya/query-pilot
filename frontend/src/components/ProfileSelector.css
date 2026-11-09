@@ -316,19 +316,175 @@
   padding: 0.5rem 0.85rem;
   font-size: 0.85rem;
   font-weight: 600;
-  background: #475569;
-  color: #ffffff;
-  border: 1px solid #334155;
+  background: var(--pill-bg, #f1f5f9);
+  color: var(--text-heading, #0f172a);
+  border: 1px solid var(--border-color, #cbd5e1);
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .profile-action-btn.profile-test-btn:hover:not(:disabled) {
-  background: #334155;
+  background: var(--primary-subtle-bg, #eff6ff);
+  border-color: var(--primary, #2563eb);
+  color: var(--primary, #2563eb);
 }
 
 .profile-action-btn.profile-test-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.profile-action-btn.profile-delete-btn {
+  padding: 0.5rem 0.85rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  background: transparent;
+  color: var(--danger, #dc2626);
+  border: 1px solid var(--danger-subtle-border, rgba(220, 38, 38, 0.3));
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.profile-action-btn.profile-delete-btn:hover:not(:disabled) {
+  background: var(--danger-subtle-bg, rgba(220, 38, 38, 0.08));
+  border-color: var(--danger, #dc2626);
+  color: var(--danger-hover, #b91c1c);
+}
+
+.profile-action-btn.profile-delete-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* =============================================================================
+   Profile Deletion Confirmation Dialog Styles
+   ============================================================================= */
+
+.profile-delete-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(4px);
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  box-sizing: border-box;
+}
+
+.profile-delete-card {
+  background: var(--card-bg, #ffffff);
+  border: 1px solid var(--border-color, #cbd5e1);
+  border-radius: 12px;
+  max-width: 480px;
+  width: 100%;
+  padding: 1.5rem;
+  box-shadow: var(--shadow-lg);
+  color: var(--text-heading, #0f172a);
+  animation: modal-fade-in 0.16s ease-out;
+}
+
+.profile-delete-header {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin-bottom: 0.85rem;
+}
+
+.profile-delete-icon {
+  font-size: 1.5rem;
+  line-height: 1;
+}
+
+.profile-delete-title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--danger, #dc2626);
+}
+
+.profile-delete-prompt {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: var(--text-heading, #0f172a);
+}
+
+.profile-delete-prompt strong {
+  color: var(--text-heading, #0f172a);
+}
+
+.profile-delete-prompt code {
+  font-family: var(--font-mono, monospace);
+  background: var(--pill-bg, #f1f5f9);
+  padding: 0.15rem 0.35rem;
+  border-radius: 4px;
+  font-size: 0.88em;
+}
+
+.profile-delete-subprompt {
+  margin: 0 0 1.25rem;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--text-muted, #64748b);
+}
+
+.profile-delete-error {
+  margin-bottom: 1rem;
+  padding: 0.6rem 0.85rem;
+  border-radius: 6px;
+  background: var(--danger-subtle-bg, #fef2f2);
+  border: 1px solid var(--danger-subtle-border, #fecaca);
+  color: var(--danger-subtle-text, #991b1b);
+  font-size: 0.85rem;
+}
+
+.profile-delete-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+.profile-delete-cancel-btn {
+  padding: 0.55rem 1rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  background: var(--pill-bg, #f1f5f9);
+  color: var(--text-heading, #0f172a);
+  border: 1px solid var(--border-color, #cbd5e1);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.profile-delete-cancel-btn:hover:not(:disabled) {
+  background: var(--hover-bg, #e2e8f0);
+}
+
+.profile-delete-confirm-btn {
+  padding: 0.55rem 1.15rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  background: var(--danger, #dc2626);
+  color: #ffffff;
+  border: 1px solid var(--danger-hover, #b91c1c);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.profile-delete-confirm-btn:hover:not(:disabled) {
+  background: var(--danger-hover, #b91c1c);
+}
+
+.profile-delete-confirm-btn:disabled,
+.profile-delete-cancel-btn:disabled {
   opacity: 0.55;
   cursor: not-allowed;
 }
