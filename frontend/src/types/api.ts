@@ -147,6 +147,7 @@ export interface BootstrapRequest {
 export interface BootstrapResponse {
   status: string
   message: string
+  session_id?: string | null
 }
 
 export interface LogoutResponse {

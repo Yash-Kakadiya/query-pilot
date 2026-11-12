@@ -682,10 +682,15 @@ def run_desktop_sidecar(
     6. Never emits readiness handshake if startup fails.
     """
     server_sock: Optional[socket.socket] = None
+    preferred_port = config.bind_port if config.bind_port > 0 else 8001
     try:
         server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        server_sock.bind(("127.0.0.1", 0))
+        try:
+            server_sock.bind(("127.0.0.1", preferred_port))
+        except Exception:
+            # Fallback to OS-assigned ephemeral port if preferred port is already in use
+            server_sock.bind(("127.0.0.1", 0))
         assigned_port = server_sock.getsockname()[1]
     except Exception as exc:
         if server_sock is not None:

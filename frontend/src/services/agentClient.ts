@@ -45,6 +45,24 @@ export const MIN_BOOTSTRAP_TOKEN_LENGTH = 16
 export const MAX_BOOTSTRAP_TOKEN_LENGTH = 128
 export const MAX_SQL_QUERY_LENGTH = 10000
 
+/**
+ * In-memory session identifier fallback.
+ *
+ * For cross-origin contexts (e.g. web UI hosted on https://*.onrender.com calling loopback http://127.0.0.1),
+ * modern browsers block SameSite=Strict cookies from cross-site fetches.
+ * We maintain an in-memory session token transmitted via Authorization: Bearer <session_id>
+ * and X-QueryPilot-Session: <session_id> headers.
+ */
+let inMemorySessionToken: string | null = null
+
+export function getInMemorySessionToken(): string | null {
+  return inMemorySessionToken
+}
+
+export function setInMemorySessionToken(token: string | null): void {
+  inMemorySessionToken = token
+}
+
 export interface AgentRequestOptions {
   /** Optional AbortSignal for request cancellation. */
   signal?: AbortSignal
@@ -210,6 +228,12 @@ async function sendAgentRequest<T>(
     headers['X-Request-ID'] = effectiveRequestId
   }
 
+  // Attach session token in header if present (crucial for cross-origin HTTPS -> loopback HTTP where SameSite=Strict cookies are dropped by browsers)
+  if (inMemorySessionToken) {
+    headers['Authorization'] = `Bearer ${inMemorySessionToken}`
+    headers['X-QueryPilot-Session'] = inMemorySessionToken
+  }
+
   let response: Response
   try {
     response = await fetch(url, {
@@ -367,7 +391,7 @@ export async function bootstrapAgent(
   }
 
   const url = resolveAgentEndpoint('/v1/auth/bootstrap')
-  return sendAgentRequest<BootstrapResponse>(
+  const res = await sendAgentRequest<BootstrapResponse>(
     url,
     {
       method: 'POST',
@@ -378,6 +402,10 @@ export async function bootstrapAgent(
     },
     options
   )
+  if (res && res.session_id) {
+    inMemorySessionToken = res.session_id
+  }
+  return res
 }
 
 /**
@@ -389,13 +417,17 @@ export async function bootstrapAgent(
  */
 export async function logoutAgent(options?: AgentRequestOptions): Promise<LogoutResponse> {
   const url = resolveAgentEndpoint('/v1/auth/logout')
-  return sendAgentRequest<LogoutResponse>(
-    url,
-    {
-      method: 'POST',
-    },
-    options
-  )
+  try {
+    return await sendAgentRequest<LogoutResponse>(
+      url,
+      {
+        method: 'POST',
+      },
+      options
+    )
+  } finally {
+    inMemorySessionToken = null
+  }
 }
 
 /**

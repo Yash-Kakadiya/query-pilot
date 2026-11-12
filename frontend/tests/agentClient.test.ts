@@ -13,12 +13,14 @@ import {
   deleteProfile,
   executeProfileQuery,
   getAgentBaseUrl,
+  getInMemorySessionToken,
   getProfileSchema,
   getProfiles,
   getProjectedProfileSchema,
   logoutAgent,
   resolveAgentEndpoint,
   rotateAgentToken,
+  setInMemorySessionToken,
   testProfileConnection,
   validateProfileConfig,
 } from '../src/services/agentClient.ts'
@@ -198,6 +200,54 @@ test('Local Agent Client - Bootstrap Authentication Flow', async (t) => {
       assert.strictEqual(sessionStorage.getItem('qp_agent_session'), null)
       assert.strictEqual(sessionStorage.getItem('bootstrap_token'), null)
     }
+  })
+
+  await t.test('captures session_id in memory and transmits in subsequent requests, cleared on logout', async () => {
+    setInMemorySessionToken(null)
+    const testSessionId = 'sess-token-cross-origin-xyz-123'
+
+    globalThis.fetch = (async (url: string | URL | Request, options?: RequestInit) => {
+      const u = String(url)
+      if (u.includes('/v1/auth/bootstrap')) {
+        return new Response(
+          JSON.stringify({
+            status: 'authenticated',
+            message: 'Bootstrap successful',
+            session_id: testSessionId,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      }
+      if (u.includes('/v1/profiles')) {
+        const headers = options?.headers as Record<string, string>
+        assert.strictEqual(headers['Authorization'], `Bearer ${testSessionId}`)
+        assert.strictEqual(headers['X-QueryPilot-Session'], testSessionId)
+        return new Response(
+          JSON.stringify({ profiles: [] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      }
+      if (u.includes('/v1/auth/logout')) {
+        return new Response(
+          JSON.stringify({ status: 'logged_out', message: 'Logged out' }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      }
+      return new Response(JSON.stringify({}), { status: 200 })
+    }) as typeof fetch
+
+    // 1. Bootstrap
+    const bootResp = await bootstrapAgent(validToken)
+    assert.strictEqual(bootResp.session_id, testSessionId)
+    assert.strictEqual(getInMemorySessionToken(), testSessionId)
+
+    // 2. Profiles call includes Authorization & X-QueryPilot-Session
+    const profResp = await getProfiles()
+    assert.deepStrictEqual(profResp.profiles, [])
+
+    // 3. Logout clears token
+    await logoutAgent()
+    assert.strictEqual(getInMemorySessionToken(), null)
   })
 })
 

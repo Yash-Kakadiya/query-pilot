@@ -41,6 +41,10 @@ class BootstrapResponse(BaseModel):
     message: str = Field(
         default="Bootstrap authentication successful. Ambient loopback session established."
     )
+    session_id: Optional[str] = Field(
+        default=None,
+        description="Active session identifier for header-based cross-origin authentication.",
+    )
 
 
 class LogoutResponse(BaseModel):

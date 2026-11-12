@@ -759,6 +759,60 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator, ai
           {/* Standalone Demo / Evaluator Mode (Daemon Not Connected) */}
           {agentSession.status !== 'authenticated' && (
             <>
+              {/* Local Agent Disconnected Guidance Banner */}
+              {agentSession.status === 'disconnected' && (
+                <div className="profile-guide-card agent-disconnected-guide" role="region" aria-label="Local Agent Connection Guidance">
+                  <div className="profile-guide-icon" aria-hidden="true">🔌</div>
+                  <div className="profile-guide-body">
+                    <h3 className="profile-guide-title">
+                      Connect Your Local Agent to Query Your Databases
+                    </h3>
+                    <p className="profile-guide-desc">
+                      QueryPilot is designed so database credentials never leave your machine.
+                      To inspect your local database schemas and run queries from this web dashboard:
+                    </p>
+                    <div className="profile-guide-steps">
+                      <div className="guide-step">
+                        <span className="guide-step-num">1</span>
+                        <span className="guide-step-text">
+                          <strong>Start Local App or Daemon:</strong> Launch <code>QueryPilot.exe</code> or run <code>querypilot-agent</code> (listens on <code>http://127.0.0.1:8001</code>).
+                        </span>
+                      </div>
+                      {typeof window !== 'undefined' && window.location.protocol === 'https:' && (
+                        <div className="guide-step">
+                          <span className="guide-step-num">2</span>
+                          <span className="guide-step-text">
+                            <strong>Allow Insecure Content (HTTPS only):</strong> In your browser address bar, click the <strong>🔒 / Tune icon</strong> &rarr; <strong>Site settings</strong> &rarr; set <strong>Insecure content</strong> to <strong>Allow</strong>, then reload.
+                          </span>
+                        </div>
+                      )}
+                      <div className="guide-step">
+                        <span className="guide-step-num">3</span>
+                        <span className="guide-step-text">
+                          <strong>Or Open Direct:</strong> Visit{' '}
+                          <a href="http://127.0.0.1:8001/app/" target="_blank" rel="noopener noreferrer">
+                            http://127.0.0.1:8001/app/
+                          </a>{' '}
+                          in your browser for the full web app with zero browser security prompts.
+                        </span>
+                      </div>
+                    </div>
+                    <div style={{ marginTop: '1rem', display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                      <button
+                        type="button"
+                        className="agent-action-btn agent-retry-btn"
+                        onClick={() => coordinator.retry()}
+                      >
+                        🔄 Check Again / Retry Agent
+                      </button>
+                      <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                        Meanwhile, you can test the demonstration evaluator below.
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <section className="query-input-section" aria-label="Query Workspace">
                 <QueryInput
                   isLoading={isLoading}

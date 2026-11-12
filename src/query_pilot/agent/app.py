@@ -263,8 +263,15 @@ def create_agent_app(
     # Authentication Dependency
     # --------------------------------------------------------------------------
     def get_current_session(request: Request) -> Session:
-        """Authenticate request via ambient loopback session cookie."""
+        """Authenticate request via ambient loopback session cookie or session header."""
         cookie_val = request.cookies.get(SESSION_COOKIE_NAME)
+        if not cookie_val:
+            auth_header = request.headers.get("authorization", "")
+            if auth_header.lower().startswith("bearer "):
+                cookie_val = auth_header[7:].strip()
+            if not cookie_val:
+                cookie_val = request.headers.get("x-querypilot-session", "").strip()
+
         if not cookie_val:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -310,7 +317,7 @@ def create_agent_app(
             path="/",
             secure=False,  # Loopback HTTP does not require TLS
         )
-        return BootstrapResponse()
+        return BootstrapResponse(session_id=session.session_id)
 
     @app.post(
         "/agent/v1/auth/logout",

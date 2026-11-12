@@ -62,6 +62,16 @@ class HostOriginValidationMiddleware:
             if web_origin and isinstance(web_origin, str):
                 self.allowed_origins.add(web_origin.lower().rstrip("/"))
 
+    def is_origin_allowed(self, raw_origin: str) -> bool:
+        if not raw_origin:
+            return True
+        clean = raw_origin.lower().rstrip("/")
+        if clean in self.allowed_origins:
+            return True
+        if clean.startswith("https://") and clean.endswith(".onrender.com"):
+            return True
+        return False
+
     async def __call__(self, scope: Dict[str, Any], receive: Callable, send: Callable) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
@@ -84,19 +94,19 @@ class HostOriginValidationMiddleware:
 
         # 2. Origin Header Validation (Cross-Origin Defense)
         raw_origin = headers.get(b"origin", b"").decode("latin-1").strip().lower()
-        if raw_origin:
-            if raw_origin not in self.allowed_origins:
-                status_code, resp_headers, payload = _make_error_response_bytes(
-                    403,
-                    "FORBIDDEN_ORIGIN",
-                    f"Origin '{raw_origin}' is not permitted.",
-                )
-                await send({"type": "http.response.start", "status": status_code, "headers": resp_headers})
-                await send({"type": "http.response.body", "body": payload})
-                return
+        is_origin_ok = self.is_origin_allowed(raw_origin)
+        if raw_origin and not is_origin_ok:
+            status_code, resp_headers, payload = _make_error_response_bytes(
+                403,
+                "FORBIDDEN_ORIGIN",
+                f"Origin '{raw_origin}' is not permitted.",
+            )
+            await send({"type": "http.response.start", "status": status_code, "headers": resp_headers})
+            await send({"type": "http.response.body", "body": payload})
+            return
 
         # CORS Preflight & Private Network Access Handling
-        if method == "OPTIONS" and raw_origin and raw_origin in self.allowed_origins:
+        if method == "OPTIONS" and raw_origin and is_origin_ok:
             cors_headers = [
                 (b"access-control-allow-origin", raw_origin.encode("latin-1")),
                 (b"access-control-allow-credentials", b"true"),
@@ -123,7 +133,7 @@ class HostOriginValidationMiddleware:
                 await send({"type": "http.response.body", "body": payload})
                 return
 
-        if raw_origin and raw_origin in self.allowed_origins:
+        if raw_origin and is_origin_ok:
             async def send_cors_wrapped(message: Dict[str, Any]) -> None:
                 if message["type"] == "http.response.start":
                     resp_headers = list(message.get("headers", []))
