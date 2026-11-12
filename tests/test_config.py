@@ -44,6 +44,8 @@ def test_database_settings_secret_obfuscation(monkeypatch):
 def test_settings_valid_defaults(monkeypatch):
     """Test that application Settings load valid defaults when GEMINI_API_KEY is supplied."""
     monkeypatch.setenv("GEMINI_API_KEY", "valid_test_gemini_api_key")
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY_2", raising=False)
     monkeypatch.delenv("LANGCHAIN_API_KEY", raising=False)
     monkeypatch.delenv("DB_USER", raising=False)
     monkeypatch.delenv("DB_PASSWORD", raising=False)

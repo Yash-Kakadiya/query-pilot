@@ -317,57 +317,62 @@ class GeminiSQLGenerator(SQLGenerator):
 
         start_time = time.perf_counter()
         response = None
-        last_exc: Optional[Exception] = None
-
         candidate_models: list[str] = [self.model_name]
-        candidate_clients = [self.client]
-        if self.secondary_client is not None:
-            candidate_clients.append(self.secondary_client)
 
-        for cl_idx, cl in enumerate(candidate_clients):
-            model_idx = 0
-            while model_idx < len(candidate_models):
-                model_cand = candidate_models[model_idx]
+        def _call_client_with_models(cl, models: list[str]):
+            m_idx = 0
+            while m_idx < len(models):
+                cand = models[m_idx]
                 try:
-                    r = cl.models.generate_content(
-                        model=model_cand,
+                    res = cl.models.generate_content(
+                        model=cand,
                         contents=prompt,
                         config=config,
                     )
-                    response = r
-                    if r and r.text:
-                        self.model_name = model_cand
-                    break
+                    if res and res.text:
+                        self.model_name = cand
+                    return res
                 except Exception as exc:
-                    last_exc = exc
                     status_code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
-                    # Non-retryable 400 and 401 client errors fail immediately without retry
-                    if status_code in (400, 401):
-                        raise ProviderAPIError(f"Gemini API request failed: {exc}") from exc
-
                     err_msg = str(exc).lower()
-                    is_model_deprecation = (
+                    if (
                         status_code == 404
                         or "not found" in err_msg
                         or "no longer available" in err_msg
-                    )
-                    if is_model_deprecation and model_idx == 0:
-                        # Add standard fallback models if primary model is deprecated / not found
-                        for fallback in ("gemini-2.5-flash", "gemini-3.5-flash-lite", "gemini-3.8-flash"):
-                            if fallback not in candidate_models:
-                                candidate_models.append(fallback)
+                    ) and m_idx == 0:
+                        for fb in ("gemini-2.5-flash", "gemini-3.5-flash-lite", "gemini-3.8-flash"):
+                            if fb not in models:
+                                models.append(fb)
+                        m_idx += 1
+                        continue
+                    raise exc
 
-                    model_idx += 1
-            if response is not None:
-                break
-
-        elapsed_ms = (time.perf_counter() - start_time) * 1000.0
-
-        if response is None:
+        try:
+            response = _call_client_with_models(self.client, candidate_models)
+        except Exception as exc:
             self.last_usage = None
-            if last_exc is not None:
-                raise ProviderAPIError(f"Gemini API request failed: {last_exc}") from last_exc
-            raise ProviderAPIError("Gemini API request failed: All client attempts exhausted.")
+            from query_pilot.sql.failure_classifier import classify_generation_failure
+            from query_pilot.api.models import GenerationFailureClassification
+
+            diagnostic = classify_generation_failure(exc)
+            if (
+                diagnostic.classification == GenerationFailureClassification.QUOTA_EXHAUSTED
+                and self.secondary_client is not None
+            ):
+                logger.info(
+                    "Primary Gemini key quota exhausted. Attempting bounded fallback using secondary key."
+                )
+                try:
+                    response = _call_client_with_models(self.secondary_client, candidate_models)
+                except Exception as sec_exc:
+                    logger.warning("Secondary Gemini key attempt also failed: %s", type(sec_exc).__name__)
+                    raise ProviderAPIError(f"Gemini API request failed on fallback key: {sec_exc}") from sec_exc
+            else:
+                raise ProviderAPIError(
+                    f"Gemini API request failed: {exc}"
+                ) from exc
+        finally:
+            elapsed_ms = (time.perf_counter() - start_time) * 1000.0
 
         usage_meta = extract_llm_usage(
             response=response,

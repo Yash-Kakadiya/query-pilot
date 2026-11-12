@@ -69,7 +69,8 @@ def mock_success_response():
 # 1. Settings & Secret Handling Tests
 # ==============================================================================
 
-def test_settings_gemini_api_key_2_optional():
+def test_settings_gemini_api_key_2_optional(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY_2", raising=False)
     # Only primary key provided
     s1 = Settings(
         _env_file=None,

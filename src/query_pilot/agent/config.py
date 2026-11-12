@@ -192,8 +192,8 @@ class AgentConfig(BaseModel):
         description="Filename of the bootstrap token.",
     )
     single_use_bootstrap_token: bool = Field(
-        default_factory=lambda: _get_env_bool(["QUERYPILOT_AGENT_SINGLE_USE_TOKEN"], False),
-        description="If True, bootstrap token is deleted upon first use. Defaults to False so desktop and web apps can both pair with the local daemon.",
+        default_factory=lambda: _get_env_bool(["QUERYPILOT_AGENT_SINGLE_USE_TOKEN"], True),
+        description="If True, bootstrap token is deleted upon first use.",
     )
     profiles_file: Path = Field(
         default_factory=get_default_profiles_file,

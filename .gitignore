@@ -70,3 +70,6 @@ Thumbs.db
 *.db-shm
 *.token
 *.lock
+
+# Local binary release builds and distributions
+release/

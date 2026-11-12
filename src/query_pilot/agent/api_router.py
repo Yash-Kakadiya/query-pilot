@@ -206,7 +206,7 @@ async def proxy_health(request: Request) -> Response:
             "Upstream health check to '%s' failed: %s", target_url, exc.__class__.__name__
         )
         import os
-        if os.getenv("GEMINI_API_KEY"):
+        if getattr(config, "desktop_mode", False) and os.getenv("GEMINI_API_KEY"):
             return JSONResponse(
                 status_code=status.HTTP_200_OK,
                 content={
