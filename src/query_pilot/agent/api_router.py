@@ -306,7 +306,36 @@ def _try_local_generate_sql(request: Request, body_bytes: bytes) -> Optional[Res
         )
     except Exception as exc:
         logger.warning("Local in-process SQL generation fallback failed: %s", exc)
-        return None
+        try:
+            from query_pilot.sql.failure_classifier import classify_generation_failure
+            from query_pilot.api.models import GenerateSQLResponse, GenerationStatus
+
+            diag = classify_generation_failure(exc)
+            effective_dialect = "tsql"
+            try:
+                if "req_model" in locals() and req_model and req_model.dialect:
+                    effective_dialect = req_model.dialect
+            except Exception:
+                pass
+            req_id = getattr(locals().get("req_model"), "request_id", None) or "req-local-gen"
+            response_model = GenerateSQLResponse(
+                candidate_sql=None,
+                dialect=effective_dialect,
+                status=GenerationStatus.GENERATION_FAILED,
+                failure_diagnostic=diag.diagnostic_feedback,
+                failure_classification=diag.classification,
+                failure_message=str(exc),
+                retry_guidance=diag.retry_guidance,
+                execution_disclaimer="Candidate SQL is unexecuted.",
+                is_executed=False,
+                request_id=req_id,
+            )
+            return JSONResponse(
+                status_code=status.HTTP_200_OK,
+                content=response_model.model_dump(mode="json"),
+            )
+        except Exception:
+            return None
 
 
 def _try_local_synthesize_answer(request: Request, body_bytes: bytes) -> Optional[Response]:
@@ -351,7 +380,22 @@ def _try_local_synthesize_answer(request: Request, body_bytes: bytes) -> Optiona
         )
     except Exception as exc:
         logger.warning("Local in-process answer synthesis fallback failed: %s", exc)
-        return None
+        try:
+            from query_pilot.api.models import SynthesizeAnswerResponse
+            row_count = getattr(locals().get("req_model"), "row_count", 0)
+            req_id = getattr(locals().get("req_model"), "request_id", "req-local-synth")
+            response_model = SynthesizeAnswerResponse(
+                summary=f"Query executed successfully ({row_count} row{'s' if row_count != 1 else ''} returned).",
+                status="ungrounded",
+                grounding_notes=[f"Metadata synthesis fallback: {exc}"],
+                request_id=req_id,
+            )
+            return JSONResponse(
+                status_code=status.HTTP_200_OK,
+                content=response_model.model_dump(mode="json"),
+            )
+        except Exception:
+            return None
 
 
 @api_router.post("/v1/generate-sql")
@@ -420,6 +464,12 @@ async def proxy_generate_sql(request: Request) -> Response:
     config: AgentConfig = request.app.state.config
     modified_bytes = json.dumps(payload).encode("utf-8")
     
+    # In desktop mode, execute candidate SQL generation in-process using local LLM generator
+    if config.desktop_mode:
+        local_resp = _try_local_generate_sql(request, modified_bytes)
+        if local_resp is not None:
+            return local_resp
+
     is_render = "onrender.com" in config.upstream_api_url.lower()
     forward_timeout = 15.0 if is_render else max(config.upstream_timeout_seconds, 60.0)
 
@@ -445,6 +495,13 @@ async def proxy_synthesize_answer(request: Request) -> Response:
     """Proxy metadata-only answer synthesis to trusted upstream API."""
     config: AgentConfig = request.app.state.config
     body_bytes = await request.body()
+
+    # In desktop mode, execute answer synthesis in-process using local service
+    if config.desktop_mode:
+        local_synth = _try_local_synthesize_answer(request, body_bytes)
+        if local_synth is not None:
+            return local_synth
+
     is_render = "onrender.com" in config.upstream_api_url.lower()
     forward_timeout = 15.0 if is_render else max(config.upstream_timeout_seconds, 60.0)
 

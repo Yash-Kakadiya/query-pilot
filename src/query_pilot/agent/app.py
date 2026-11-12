@@ -103,7 +103,7 @@ logger = logging.getLogger(__name__)
 class ConcurrencyGuardMiddleware:
     """Pure ASGI middleware enforcing concurrency ceilings across local agent requests."""
 
-    def __init__(self, app: Any, max_concurrent: int = 2):
+    def __init__(self, app: Any, max_concurrent: int = 10):
         self.app = app
         self._max = max_concurrent
         self._current = 0
@@ -111,6 +111,12 @@ class ConcurrencyGuardMiddleware:
 
     async def __call__(self, scope: Dict[str, Any], receive: Callable, send: Callable) -> None:
         if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
+        # Do not throttle static frontend assets or health endpoints
+        if path.startswith("/app/") or path.startswith("/assets/") or path in ("/app", "/", "/health", "/api/health", "/agent/v1/health"):
             await self.app(scope, receive, send)
             return
 
