@@ -241,6 +241,7 @@ def create_agent_app(
     app.state.caller_engine = caller_engine
     app.state.caller_schema = caller_schema
     app.state.upstream_client = upstream_client
+    app.state.schema_cache: Dict[str, DatabaseSchema] = {}
 
     # --------------------------------------------------------------------------
     # Security Middleware Stack (Evaluated in reverse addition order)
@@ -570,6 +571,9 @@ def create_agent_app(
                 detail="Failed to persist profile configuration.",
             )
 
+        # Clear any stale schema cache for this profile_id
+        getattr(app.state, "schema_cache", {}).pop(new_profile.profile_id, None)
+
         summary = ProfileSummary(
             profile_id=new_profile.profile_id,
             display_name=new_profile.display_name,
@@ -657,6 +661,9 @@ def create_agent_app(
             resolved_engine_mgr.dispose_engine(clean_id)
         except Exception as disp_exc:
             logger.warning("Engine disposal for deleted profile '%s' failed: %s", clean_id, disp_exc)
+
+        # Invalidate cached schema for the deleted profile
+        getattr(app.state, "schema_cache", {}).pop(clean_id, None)
 
         return DeleteProfileResponse(
             success=True,
@@ -839,6 +846,7 @@ def create_agent_app(
     )
     def get_profile_schema(
         profile_id: str,
+        refresh: bool = False,
         session: Session = Depends(get_current_session),
     ):
         """Introspect database schema for an approved profile and return model-facing metadata.
@@ -858,6 +866,12 @@ def create_agent_app(
                 detail=f"Profile '{profile_id}' not found.",
             )
 
+        schema_cache: Dict[str, DatabaseSchema] = getattr(app.state, "schema_cache", {})
+        if not refresh and profile_id in schema_cache:
+            cached = schema_cache[profile_id]
+            if cached.database_name.lower() == profile.database_name.lower():
+                return cached.to_dict()
+
         # Resolve engine (uses caller_engine if injected for offline testing)
         engine = resolved_engine_mgr.get_or_create_engine(
             profile_id=profile_id,
@@ -873,6 +887,7 @@ def create_agent_app(
 
         try:
             model_schema = introspector.introspect_model_facing()
+            schema_cache[profile_id] = model_schema
             return model_schema.to_dict()
         except DatabaseSecurityError as exc:
             sanitized = sanitize_message(str(exc))
@@ -967,6 +982,12 @@ def create_agent_app(
                     active_schema = cand
 
         if active_schema is None:
+            schema_cache: Dict[str, DatabaseSchema] = getattr(app.state, "schema_cache", {})
+            cached = schema_cache.get(profile_id)
+            if cached is not None and cached.database_name.lower() == profile.database_name.lower():
+                active_schema = cached
+
+        if active_schema is None:
             try:
                 introspect_engine = resolved_engine_mgr.get_or_create_engine(
                     profile_id=profile_id,
@@ -979,6 +1000,7 @@ def create_agent_app(
                     factory=resolved_factory,
                 )
                 active_schema = introspector.introspect_model_facing()
+                getattr(app.state, "schema_cache", {})[profile_id] = active_schema
             except DatabaseSecurityError as exc:
                 sanitized = sanitize_message(str(exc))
                 raise HTTPException(
