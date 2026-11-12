@@ -285,6 +285,18 @@
   transition: all 0.15s ease;
 }
 
+.agent-copy-token-btn {
+  background: rgba(37, 99, 235, 0.08);
+  border: 1px solid rgba(37, 99, 235, 0.35);
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.agent-copy-token-btn:hover {
+  background: var(--primary);
+  color: #ffffff;
+}
+
 .agent-logout-btn {
   background: var(--pill-bg);
   border: 1px solid var(--border-color);

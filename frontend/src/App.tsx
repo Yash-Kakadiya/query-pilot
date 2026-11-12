@@ -32,6 +32,7 @@ import {
   useAiStatus,
 } from './services/aiStatus'
 import { AiStatusIndicator } from './components/AiStatusIndicator'
+import { getPairingToken } from './services/agentClient'
 import type { ExecutionMode, QueryResponse } from './types/api'
 import './App.css'
 
@@ -271,6 +272,21 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator, ai
 
   const handleAgentBootstrap = async (token: string) => {
     return coordinator.submitBootstrap(token)
+  }
+
+  const [copiedToken, setCopiedToken] = useState<boolean>(false)
+
+  const handleCopyPairingKey = async () => {
+    try {
+      const res = await getPairingToken()
+      if (res.pairing_token) {
+        await navigator.clipboard.writeText(res.pairing_token)
+        setCopiedToken(true)
+        setTimeout(() => setCopiedToken(false), 3000)
+      }
+    } catch {
+      // Ignore or fall back gracefully
+    }
   }
 
   const handleAgentLogout = async () => {
@@ -550,13 +566,23 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator, ai
 
             <div className="agent-session-actions">
               {agentSession.status === 'authenticated' && (
-                <button
-                  type="button"
-                  className="agent-action-btn agent-logout-btn"
-                  onClick={handleAgentLogout}
-                >
-                  Disconnect / Logout
-                </button>
+                <>
+                  <button
+                    type="button"
+                    className="agent-action-btn agent-copy-token-btn"
+                    onClick={handleCopyPairingKey}
+                    title="Copy pairing token to connect web app hosted on Render"
+                  >
+                    {copiedToken ? '✓ Copied Pairing Key!' : '🔗 Copy Web Pairing Key'}
+                  </button>
+                  <button
+                    type="button"
+                    className="agent-action-btn agent-logout-btn"
+                    onClick={handleAgentLogout}
+                  >
+                    Disconnect / Logout
+                  </button>
+                </>
               )}
               {agentSession.status === 'auth_required' && (
                 <button

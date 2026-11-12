@@ -431,6 +431,20 @@ export async function logoutAgent(options?: AgentRequestOptions): Promise<Logout
 }
 
 /**
+ * Retrieves the active pairing token for display/clipboard in authenticated client sessions.
+ */
+export async function getPairingToken(options?: AgentRequestOptions): Promise<{ pairing_token: string }> {
+  const url = resolveAgentEndpoint('/v1/auth/token')
+  return sendAgentRequest<{ pairing_token: string }>(
+    url,
+    {
+      method: 'GET',
+    },
+    options
+  )
+}
+
+/**
  * Invalidates all active daemon sessions and generates a fresh bootstrap token on the local machine.
  *
  * Security Notice:

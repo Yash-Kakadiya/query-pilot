@@ -192,6 +192,7 @@ def create_agent_app(
     resolved_token_mgr = token_manager or BootstrapTokenManager(
         token_dir=resolved_config.token_dir,
         token_filename=resolved_config.token_filename,
+        single_use=resolved_config.single_use_bootstrap_token,
     )
     resolved_session_mgr = session_manager or SessionManager(
         idle_timeout_seconds=resolved_config.session_idle_seconds,
@@ -365,6 +366,15 @@ def create_agent_app(
             samesite="strict",
         )
         return RotateTokenResponse()
+
+    @app.get(
+        "/agent/v1/auth/token",
+        responses={401: {"model": AgentErrorResponse}},
+    )
+    def get_pairing_token(session: Session = Depends(get_current_session)):
+        """Retrieve active pairing token for display/clipboard in authenticated clients."""
+        tok = resolved_token_mgr.get_token_value()
+        return {"pairing_token": tok or ""}
 
     @app.get(
         "/agent/v1/profiles",

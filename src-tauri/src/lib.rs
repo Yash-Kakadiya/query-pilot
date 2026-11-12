@@ -46,27 +46,16 @@ pub fn run() {
 
     log::info!("Found QueryPilot sidecar executable at: {}", sidecar_path.display());
 
-    // 3. Create isolated, unique temporary token directory for this desktop launch
-    let mut token_dir_guard = match auth::IsolatedTokenDirGuard::new() {
-        Ok(g) => g,
-        Err(err) => {
-            let err_msg = format!("Failed to create isolated token directory: {}", err);
-            eprintln!("[QueryPilot] {}", err_msg);
-            if show_popups {
-                show_native_error("QueryPilot Startup Error", &err_msg);
-            }
-            std::process::exit(1);
-        }
-    };
-    let token_dir = token_dir_guard.path.clone();
-    let token_path = token_dir.join("agent.token");
+    // 3. Resolve canonical token directory (~/.query_pilot) so both desktop and web frontend
+    // share the same consistent token location without temp dir mismatch.
+    let token_path = auth::resolve_token_path();
+    let token_dir = token_path.parent().map(|p| p.to_path_buf());
 
-    // Launch supervised sidecar under Win32 Job Object with isolated token directory
-    let sidecar = match launch_supervised_sidecar(&sidecar_path, Some(&token_dir), None) {
+    // Launch supervised sidecar under Win32 Job Object with canonical token directory
+    let sidecar = match launch_supervised_sidecar(&sidecar_path, token_dir.as_deref(), None) {
         Ok(s) => s,
         Err(err) => {
             eprintln!("[QueryPilot] {}", err);
-            token_dir_guard.cleanup();
             if show_popups {
                 show_native_error("QueryPilot Sidecar Failure", &err);
             }
@@ -92,7 +81,7 @@ pub fn run() {
         });
     }
 
-    // 4. Authenticate directly with local agent using single-use bootstrap token (B26-B4)
+    // 4. Authenticate directly with local agent using bootstrap token (B26-B4)
     let mut bootstrap_token = None;
     for _ in 0..40 {
         if let Ok(t) = auth::read_bootstrap_token(&token_path) {
@@ -110,7 +99,6 @@ pub fn run() {
                 token_path.display()
             );
             eprintln!("[QueryPilot] {}", err_msg);
-            token_dir_guard.cleanup();
             if show_popups {
                 show_native_error("QueryPilot Authentication Failure", &err_msg);
             }
@@ -130,13 +118,10 @@ pub fn run() {
     ) {
         Ok(c) => {
             auth::wipe_string(token);
-            // Immediately clean up isolated token directory upon successful authentication
-            token_dir_guard.cleanup();
             c
         }
         Err(err) => {
             auth::wipe_string(token);
-            token_dir_guard.cleanup();
             let err_msg = format!("Agent bootstrap authentication failed: {}", err);
             eprintln!("[QueryPilot] {}", err_msg);
             if show_popups {

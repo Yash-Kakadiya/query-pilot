@@ -140,9 +140,9 @@ export function AgentAuthModal({
         </div>
 
         <p id="agent-auth-desc" className="agent-auth-desc">
-          The QueryPilot local agent requires authentication to inspect and execute queries against approved local database profiles.
-          Read your single-use bootstrap token from the agent terminal output or from{' '}
-          <code>~/.query_pilot/agent.token</code>.
+          QueryPilot keeps your database credentials safe on your machine.
+          Enter your pairing key from <code>~/.query_pilot/agent.token</code> or click{' '}
+          <strong>Copy Web Pairing Key</strong> in your running QueryPilot desktop app.
         </p>
 
         {effectiveError && (

@@ -197,16 +197,25 @@ class BootstrapTokenManager:
         token_dir: Path,
         token_filename: str = "agent.token",
         auto_initialize: bool = False,
+        single_use: bool = True,
     ):
         self.token_dir = Path(token_dir)
         self.token_filename = token_filename
         self.token_path = self.token_dir / self.token_filename
+        self.single_use = single_use
         self._token: Optional[str] = None
         self._is_consumed: bool = False
         self._lock = threading.RLock()
 
         if auto_initialize:
             self.initialize_token()
+
+    def get_token_value(self) -> Optional[str]:
+        """Return active pairing token value if present, or None."""
+        with self._lock:
+            if self._is_consumed or self._token is None:
+                return None
+            return self._token
 
     @property
     def has_active_token(self) -> bool:
@@ -318,8 +327,9 @@ class BootstrapTokenManager:
     def verify_and_consume(self, candidate_token: Optional[str]) -> bool:
         """Verify the submitted candidate token in constant time.
 
-        If matching and active, immediately consumes the token, invalidates it in memory,
+        If single_use is True, immediately consumes the token, invalidates it in memory,
         and deletes the token file from disk.
+        If single_use is False, verifies the token while keeping it active for multi-client pairing.
         """
         if not candidate_token or not candidate_token.strip():
             return False
@@ -332,11 +342,12 @@ class BootstrapTokenManager:
             is_valid = secrets.compare_digest(candidate_token.strip(), self._token.strip())
 
             if is_valid:
-                # Immediate consumption: single-use guarantee
-                consumed = self._token
-                self._is_consumed = True
-                self._token = None
-                self._safe_wipe_token_file(expected_token=consumed)
+                if self.single_use:
+                    # Immediate consumption: single-use guarantee
+                    consumed = self._token
+                    self._is_consumed = True
+                    self._token = None
+                    self._safe_wipe_token_file(expected_token=consumed)
                 return True
 
             return False
