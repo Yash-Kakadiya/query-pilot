@@ -422,6 +422,14 @@
   overflow-wrap: anywhere;
 }
 
+.candidate-code-block code {
+  display: block;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
+
 /* Outcome states */
 .candidate-outcome-card {
   padding: 0.85rem 1rem;

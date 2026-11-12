@@ -1,12 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AccessKeyBar } from './components/AccessKeyBar'
 import { AgentAuthModal } from './components/AgentAuthModal'
 import { CandidateSqlReview } from './components/CandidateSqlReview'
-import { ErrorAlert } from './components/ErrorAlert'
 import { ProfileOnboardingModal } from './components/ProfileOnboardingModal'
 import { ProfileSelector } from './components/ProfileSelector'
-import { QueryInput } from './components/QueryInput'
-import { QueryResults } from './components/QueryResults'
 import {
   AgentSessionCoordinator,
   useAgentSession,
@@ -24,7 +20,6 @@ import { MetricConfigModal } from './components/MetricConfigModal'
 import { ConversationHistoryDrawer } from './components/ConversationHistoryDrawer'
 import { synthesizeDeterministicAnswer } from './services/answerSynthesis'
 import { classifyExecutionError, canAttemptRepair } from './services/errorClassification'
-import { postQuery } from './services/apiClient'
 import { getProfileEngine } from './utils/profileUtils'
 import { resolveAutoProfileSelection } from './utils/profileSelection'
 import {
@@ -33,7 +28,6 @@ import {
 } from './services/aiStatus'
 import { AiStatusIndicator } from './components/AiStatusIndicator'
 import { getPairingToken } from './services/agentClient'
-import type { ExecutionMode, QueryResponse } from './types/api'
 import './App.css'
 
 export interface AppProps {
@@ -84,13 +78,6 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator, ai
     setPrevCandidateResponse(sqlGenState.response)
     setReviewedSql(sqlGenState.response?.candidate_sql || '')
   }
-
-  // 5. Query execution state (legacy)
-  const [isLoading, setIsLoading] = useState(false)
-  const [queryResponse, setQueryResponse] = useState<QueryResponse | null>(null)
-  const [queryError, setQueryError] = useState<Error | null>(null)
-
-  const activeAbortController = useRef<AbortController | null>(null)
 
   // Agent session probe on application startup
   useEffect(() => {
@@ -211,64 +198,6 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator, ai
     const cleanup = aiStatusCoordinator.startPolling(60000)
     return () => cleanup()
   }, [aiStatusCoordinator])
-
-  // Query execution handler with lifecycle & stale-response hardening
-  const handleQuerySubmit = async (
-    question: string,
-    options?: { executionMode?: ExecutionMode; includeSql?: boolean }
-  ) => {
-    setQueryError(null)
-    setIsLoading(true)
-
-    // Abort any existing in-flight query before initiating a new one
-    if (activeAbortController.current) {
-      activeAbortController.current.abort()
-    }
-
-    const controller = new AbortController()
-    activeAbortController.current = controller
-
-    try {
-      const response = await postQuery(
-        {
-          question,
-          execution_mode: options?.executionMode,
-          include_sql: options?.includeSql,
-        },
-        { signal: controller.signal }
-      )
-      // Only commit if this controller is still the active one (prevent race conditions)
-      if (activeAbortController.current === controller) {
-        setQueryResponse(response)
-      }
-    } catch (err: unknown) {
-      if (err instanceof DOMException && err.name === 'AbortError') {
-        // User/system aborted, do not treat as error
-        return
-      }
-      if (activeAbortController.current === controller) {
-        setQueryError(err instanceof Error ? err : new Error('Query execution failed.'))
-      }
-    } finally {
-      if (activeAbortController.current === controller) {
-        setIsLoading(false)
-        activeAbortController.current = null
-      }
-    }
-  }
-
-  const handleQueryCancel = () => {
-    if (activeAbortController.current) {
-      activeAbortController.current.abort()
-      activeAbortController.current = null
-      setIsLoading(false)
-    }
-  }
-
-  const handleClearResults = () => {
-    setQueryResponse(null)
-    setQueryError(null)
-  }
 
   const handleAgentBootstrap = async (token: string) => {
     return coordinator.submitBootstrap(token)
@@ -609,13 +538,6 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator, ai
 
       <main className="app-main">
         <div className="workspace-container">
-          {/* Prototype Access Key Authorization - Only surfaced if auth required */}
-          {(queryError !== null && 'kind' in queryError && queryError.kind === 'unauthorized') && (
-            <section className="access-key-section" aria-label="Access Key Configuration">
-              <AccessKeyBar authRequired={true} />
-            </section>
-          )}
-
           {/* Database Profile & Schema Selection (Phase 7.2 / F28-A9-B5) */}
           {agentSession.status === 'authenticated' && (
             <section className="profile-selector-section" aria-label="Database Profile Configuration">
@@ -782,105 +704,60 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator, ai
             </div>
           )}
 
-          {/* Standalone Demo / Evaluator Mode (Daemon Not Connected) */}
-          {agentSession.status !== 'authenticated' && (
-            <>
-              {/* Local Agent Disconnected Guidance Banner */}
-              {agentSession.status === 'disconnected' && (
-                <div className="profile-guide-card agent-disconnected-guide" role="region" aria-label="Local Agent Connection Guidance">
-                  <div className="profile-guide-icon" aria-hidden="true">🔌</div>
-                  <div className="profile-guide-body">
-                    <h3 className="profile-guide-title">
-                      Connect Your Local Agent to Query Your Databases
-                    </h3>
-                    <p className="profile-guide-desc">
-                      QueryPilot is designed so database credentials never leave your machine.
-                      To inspect your local database schemas and run queries from this web dashboard:
-                    </p>
-                    <div className="profile-guide-steps">
-                      <div className="guide-step">
-                        <span className="guide-step-num">1</span>
-                        <span className="guide-step-text">
-                          <strong>Start Local App or Daemon:</strong> Launch <code>QueryPilot.exe</code> or run <code>querypilot-agent</code> (listens on <code>http://127.0.0.1:8001</code>).
-                        </span>
-                      </div>
-                      {typeof window !== 'undefined' && window.location.protocol === 'https:' && (
-                        <div className="guide-step">
-                          <span className="guide-step-num">2</span>
-                          <span className="guide-step-text">
-                            <strong>Allow Insecure Content (HTTPS only):</strong> In your browser address bar, click the <strong>🔒 / Tune icon</strong> &rarr; <strong>Site settings</strong> &rarr; set <strong>Insecure content</strong> to <strong>Allow</strong>, then reload.
-                          </span>
-                        </div>
-                      )}
-                      <div className="guide-step">
-                        <span className="guide-step-num">3</span>
-                        <span className="guide-step-text">
-                          <strong>Or Open Direct:</strong> Visit{' '}
-                          <a href="http://127.0.0.1:8001/app/" target="_blank" rel="noopener noreferrer">
-                            http://127.0.0.1:8001/app/
-                          </a>{' '}
-                          in your browser for the full web app with zero browser security prompts.
-                        </span>
-                      </div>
-                    </div>
-                    <div style={{ marginTop: '1rem', display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-                      <button
-                        type="button"
-                        className="agent-action-btn agent-retry-btn"
-                        onClick={() => coordinator.retry()}
-                      >
-                        🔄 Check Again / Retry Agent
-                      </button>
-                      <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                        Meanwhile, you can test the demonstration evaluator below.
-                      </span>
-                    </div>
-                  </div>
+          {/* Unauthenticated / Disconnected States */}
+          {agentSession.status === 'probing' && (
+            <div className="profile-guide-card" role="region" aria-label="Connecting to Local Agent">
+              <div className="profile-guide-icon" aria-hidden="true">⏳</div>
+              <div className="profile-guide-body">
+                <h3 className="profile-guide-title">Connecting to Local Agent...</h3>
+                <p className="profile-guide-desc">Establishing secure loopback connection with your QueryPilot local agent.</p>
+              </div>
+            </div>
+          )}
+
+          {agentSession.status === 'auth_required' && (
+            <div className="profile-guide-card" role="region" aria-label="Authentication Required">
+              <div className="profile-guide-icon" aria-hidden="true">🔒</div>
+              <div className="profile-guide-body">
+                <h3 className="profile-guide-title">Local Agent Authentication Required</h3>
+                <p className="profile-guide-desc">
+                  Authentication is required to inspect database schemas and run queries.
+                  Please enter your pairing token to unlock query features.
+                </p>
+                <button
+                  type="button"
+                  className="agent-action-btn agent-auth-btn"
+                  style={{ marginTop: '0.75rem' }}
+                  onClick={() => coordinator.openModal()}
+                >
+                  Enter Pairing Key
+                </button>
+              </div>
+            </div>
+          )}
+
+          {(agentSession.status === 'disconnected' || agentSession.status === 'error') && (
+            <div className="profile-guide-card agent-disconnected-guide" role="region" aria-label="Local Agent Connection Guidance">
+              <div className="profile-guide-icon" aria-hidden="true">🔌</div>
+              <div className="profile-guide-body">
+                <h3 className="profile-guide-title">
+                  Local Agent Not Connected
+                </h3>
+                <p className="profile-guide-desc">
+                  QueryPilot is designed so database credentials never leave your machine.
+                  To inspect your local database schemas and run queries, ensure the QueryPilot daemon is running on <code>127.0.0.1:8001</code>.
+                </p>
+                <div style={{ marginTop: '1rem', display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                  <button
+                    type="button"
+                    className="agent-action-btn agent-retry-btn"
+                    onClick={() => coordinator.retry()}
+                  >
+                    🔄 Retry Connection
+                  </button>
                 </div>
-              )}
-
-              <section className="query-input-section" aria-label="Query Workspace">
-                <QueryInput
-                  isLoading={isLoading}
-                  onSubmit={handleQuerySubmit}
-                  onCancel={handleQueryCancel}
-                  onClear={handleClearResults}
-                  hasResult={queryResponse !== null || queryError !== null}
-                />
-              </section>
-
-              {/* Error Message */}
-              {queryError && (
-                <section className="query-error-section" aria-label="Error Notification">
-                  <ErrorAlert
-                    error={queryError}
-                    onDismiss={() => setQueryError(null)}
-                  />
-                </section>
-              )}
-
-              {/* Results Presentation */}
-              {queryResponse && (
-                <section className="query-results-section" aria-label="Query Results">
-                  <QueryResults response={queryResponse} />
-                </section>
-              )}
-
-              {/* Initial State Helper */}
-              {!queryResponse && !queryError && !isLoading && (
-                <div className="initial-state-card">
-                  <div className="initial-icon" aria-hidden="true">💡</div>
-                  <p className="initial-hint">
-                    Select a database profile above or type a question to evaluate the demonstration database.
-                  </p>
-                  <div className="example-chips">
-                    <span className="example-label">Examples:</span>
-                    <span className="example-pill">"How many courses are in Computer Science?"</span>
-                    <span className="example-pill">"What is the average GPA of all students?"</span>
-                  </div>
-                </div>
-              )}
-            </>
+              </div>
+            </div>
           )}
         </div>
       </main>

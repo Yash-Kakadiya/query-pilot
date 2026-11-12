@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { KnownPipelineStatus, QueryResponse } from '../types/api'
 
 interface QueryResultsProps {
@@ -6,6 +7,15 @@ interface QueryResultsProps {
 
 export function QueryResults({ response }: QueryResultsProps) {
   const status = response.status
+  const [copied, setCopied] = useState<boolean>(false)
+
+  const handleCopySql = (sql: string) => {
+    if (navigator.clipboard) {
+      void navigator.clipboard.writeText(sql)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }
+  }
 
   const isKnownStatus = (s: string): s is KnownPipelineStatus => {
     return [
@@ -209,12 +219,12 @@ export function QueryResults({ response }: QueryResultsProps) {
                     type="button"
                     className="copy-sql-btn"
                     onClick={() => {
-                      if (response.generated_sql && navigator.clipboard) {
-                        navigator.clipboard.writeText(response.generated_sql)
+                      if (response.generated_sql) {
+                        handleCopySql(response.generated_sql)
                       }
                     }}
                   >
-                    Copy SQL
+                    {copied ? '✓ Copied!' : 'Copy SQL'}
                   </button>
                 </div>
                 <pre className="sql-code-block">
@@ -337,38 +347,40 @@ export function QueryResults({ response }: QueryResultsProps) {
         </div>
       )}
 
-      {/* Generated SQL Disclosure */}
-      <details className="sql-disclosure">
-        <summary className="sql-disclosure-summary">
-          Generated SQL Query
-        </summary>
-        <div className="sql-disclosure-body">
-          {response.generated_sql ? (
-            <div className="sql-disclosure-content">
-              <div className="sql-disclosure-actions">
-                <button
-                  type="button"
-                  className="copy-sql-btn"
-                  onClick={() => {
-                    if (response.generated_sql && navigator.clipboard) {
-                      navigator.clipboard.writeText(response.generated_sql)
-                    }
-                  }}
-                >
-                  Copy SQL
-                </button>
+      {/* Generated SQL Disclosure (Hidden if already displayed above in VALIDATED_ONLY) */}
+      {status !== 'VALIDATED_ONLY' && (
+        <details className="sql-disclosure">
+          <summary className="sql-disclosure-summary">
+            Generated SQL Query
+          </summary>
+          <div className="sql-disclosure-body">
+            {response.generated_sql ? (
+              <div className="sql-disclosure-content">
+                <div className="sql-disclosure-actions">
+                  <button
+                    type="button"
+                    className="copy-sql-btn"
+                    onClick={() => {
+                      if (response.generated_sql) {
+                        handleCopySql(response.generated_sql)
+                      }
+                    }}
+                  >
+                    {copied ? '✓ Copied!' : 'Copy SQL'}
+                  </button>
+                </div>
+                <pre className="sql-code-block">
+                  <code>{response.generated_sql}</code>
+                </pre>
               </div>
-              <pre className="sql-code-block">
-                <code>{response.generated_sql}</code>
-              </pre>
-            </div>
-          ) : (
-            <p className="sql-policy-notice">
-              Generated SQL is excluded from public responses by server safety policy.
-            </p>
-          )}
-        </div>
-      </details>
+            ) : (
+              <p className="sql-policy-notice">
+                Generated SQL is excluded from public responses by server safety policy.
+              </p>
+            )}
+          </div>
+        </details>
+      )}
     </div>
   )
 }
