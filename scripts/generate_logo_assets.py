@@ -1,8 +1,9 @@
 """Generates QueryPilot professional logo, favicon, and banner assets.
 
-The navigation compass is 100% complete and uncut.
-The Q's diagonal tail stroke emerges seamlessly from the bottom-right of the compass,
-aligning with the right wing tip and sweeping outward through the Q-ring.
+Concept A: Sleek Aerospace Compass Q
+- Centered, faceted multi-axis navigation compass needle
+- Perfectly balanced negative space with precision radar coordinate reticle
+- Bold circular gradient Q ring with aerodynamic 45° jet-fin tail
 """
 
 from pathlib import Path
@@ -21,103 +22,162 @@ TAURI_ICONS = Path("src-tauri/icons")
 LOGO_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" fill="none">
   <defs>
     <!-- Background Radial Gradient -->
-    <radialGradient id="bgGlow" cx="50%" cy="42%" r="65%">
-      <stop offset="0%" stop-color="#1e293b" />
-      <stop offset="55%" stop-color="#0f172a" />
-      <stop offset="100%" stop-color="#090d16" />
+    <radialGradient id="bgGrad" cx="50%" cy="46%" r="65%">
+      <stop offset="0%" stop-color="#111827" />
+      <stop offset="55%" stop-color="#0b1120" />
+      <stop offset="100%" stop-color="#060911" />
     </radialGradient>
 
-    <!-- Outer Ring Gradient (The Q Body) -->
-    <linearGradient id="ringGrad" x1="100" y1="90" x2="410" y2="410" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#38bdf8" />
-      <stop offset="45%" stop-color="#6366f1" />
-      <stop offset="100%" stop-color="#a855f7" />
+    <!-- Q Ring Circular Gradient -->
+    <linearGradient id="qRingGrad" x1="110" y1="90" x2="400" y2="400" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#00f5ff" />
+      <stop offset="25%" stop-color="#38bdf8" />
+      <stop offset="65%" stop-color="#6366f1" />
+      <stop offset="100%" stop-color="#8b5cf6" />
     </linearGradient>
 
-    <!-- Pilot Needle Left Facet -->
-    <linearGradient id="needleLeft" x1="160" y1="310" x2="355" y2="145" gradientUnits="userSpaceOnUse">
+    <!-- Primary Vertical Needle - North Left Facet (Cyan/White) -->
+    <linearGradient id="needleVertL" x1="234" y1="256" x2="256" y2="156" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#0284c7" />
-      <stop offset="50%" stop-color="#38bdf8" />
+      <stop offset="60%" stop-color="#38bdf8" />
       <stop offset="100%" stop-color="#ffffff" />
     </linearGradient>
 
-    <!-- Pilot Needle Right Facet -->
-    <linearGradient id="needleRight" x1="240" y1="350" x2="355" y2="136" gradientUnits="userSpaceOnUse">
+    <!-- Primary Vertical Needle - North Right Facet (Indigo/Cyan) -->
+    <linearGradient id="needleVertR" x1="278" y1="256" x2="256" y2="156" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#4338ca" />
-      <stop offset="55%" stop-color="#6366f1" />
+      <stop offset="60%" stop-color="#6366f1" />
       <stop offset="100%" stop-color="#e0e7ff" />
     </linearGradient>
 
-    <!-- Q Tail Gradient -->
-    <linearGradient id="tailGrad" x1="280" y1="330" x2="410" y2="430" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#4f46e5" />
-      <stop offset="45%" stop-color="#6366f1" />
+    <!-- Vertical Needle - South Tip Facets -->
+    <linearGradient id="needleSouthL" x1="256" y1="256" x2="256" y2="356" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0284c7" />
       <stop offset="100%" stop-color="#38bdf8" />
     </linearGradient>
+    <linearGradient id="needleSouthR" x1="256" y1="256" x2="256" y2="356" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#312e81" />
+      <stop offset="100%" stop-color="#4f46e5" />
+    </linearGradient>
 
-    <!-- Inner Orbit Track -->
-    <linearGradient id="trackGrad" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.8" />
-      <stop offset="100%" stop-color="#818cf8" stop-opacity="0.2" />
+    <!-- Secondary Angled Blade - Top-Right Facets -->
+    <linearGradient id="bladeTopR_White" x1="256" y1="256" x2="330" y2="182" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#f8fafc" />
+      <stop offset="100%" stop-color="#ffffff" />
+    </linearGradient>
+    <linearGradient id="bladeTopR_Cyan" x1="256" y1="256" x2="330" y2="182" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0284c7" />
+      <stop offset="70%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#bae6fd" />
+    </linearGradient>
+
+    <!-- Secondary Angled Blade - Bottom-Left Facets -->
+    <linearGradient id="bladeBotL_Cyan" x1="256" y1="256" x2="182" y2="330" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0284c7" />
+      <stop offset="70%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#ffffff" />
+    </linearGradient>
+    <linearGradient id="bladeBotL_Dark" x1="256" y1="256" x2="182" y2="330" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="70%" stop-color="#0369a1" />
+      <stop offset="100%" stop-color="#0284c7" />
+    </linearGradient>
+
+    <!-- Q Tail Gradient -->
+    <linearGradient id="qTailGrad" x1="280" y1="310" x2="425" y2="425" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4f46e5" />
+      <stop offset="45%" stop-color="#6366f1" />
+      <stop offset="80%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#00f5ff" />
     </linearGradient>
 
     <!-- Glow Filter -->
-    <filter id="coreGlow" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="12" result="blur" />
+    <filter id="ringGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="8" result="blur" />
       <feComposite in="SourceGraphic" in2="blur" operator="over" />
     </filter>
 
-    <!-- Needle Drop Shadow (Elevates compass above the tail and ring) -->
+    <!-- Needle Drop Shadow -->
     <filter id="needleShadow" x="-25%" y="-25%" width="150%" height="150%">
-      <feDropShadow dx="2" dy="5" stdDeviation="6" flood-color="#000000" flood-opacity="0.6" />
+      <feDropShadow dx="2" dy="5" stdDeviation="6" flood-color="#000000" flood-opacity="0.65" />
     </filter>
 
     <!-- Base Drop Shadow -->
-    <filter id="dropShadow" x="-10%" y="-10%" width="120%" height="120%">
-      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#000000" flood-opacity="0.6" />
+    <filter id="baseShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#000000" flood-opacity="0.6" />
     </filter>
   </defs>
 
   <!-- Squircle Base Canvas -->
-  <rect x="24" y="24" width="464" height="464" rx="108" fill="url(#bgGlow)" stroke="#1e293b" stroke-width="4" filter="url(#dropShadow)" />
+  <rect x="24" y="24" width="464" height="464" rx="108" fill="url(#bgGrad)" stroke="#1e293b" stroke-width="4" filter="url(#baseShadow)" />
 
   <!-- Ambient Light Reflection Arc -->
-  <path d="M 100 160 A 180 180 0 0 1 360 80" stroke="#38bdf8" stroke-width="2" stroke-opacity="0.2" stroke-linecap="round" fill="none" />
-  
-  <!-- Subtle Data Geometry (Radar / Grid Rings) -->
-  <circle cx="248" cy="244" r="148" stroke="#334155" stroke-width="1.5" stroke-dasharray="4 8" stroke-opacity="0.35" fill="none" />
-  <circle cx="248" cy="244" r="98" stroke="#334155" stroke-width="1.5" stroke-dasharray="3 6" stroke-opacity="0.25" fill="none" />
+  <path d="M 110 160 A 170 170 0 0 1 360 84" stroke="#38bdf8" stroke-width="2" stroke-opacity="0.25" stroke-linecap="round" fill="none" />
 
-  <!-- Precision Cardinal Ticks -->
-  <line x1="248" y1="62" x2="248" y2="74" stroke="#38bdf8" stroke-width="3" stroke-linecap="round" />
-  <line x1="62" y1="244" x2="74" y2="244" stroke="#38bdf8" stroke-width="3" stroke-linecap="round" />
-  <line x1="248" y1="414" x2="248" y2="426" stroke="#6366f1" stroke-width="3" stroke-linecap="round" />
-  <line x1="414" y1="244" x2="426" y2="244" stroke="#818cf8" stroke-width="3" stroke-linecap="round" />
+  <!-- Radar Coordinate Geometry (Balanced Negative Space) -->
+  <g opacity="0.38">
+    <!-- Concentric Target Orbit Rings -->
+    <circle cx="256" cy="256" r="148" stroke="#334155" stroke-width="1.5" stroke-dasharray="4 8" fill="none" />
+    <circle cx="256" cy="256" r="108" stroke="#38bdf8" stroke-width="1.2" stroke-dasharray="3 6" fill="none" stroke-opacity="0.6" />
+    <circle cx="256" cy="256" r="70" stroke="#334155" stroke-width="1" stroke-dasharray="2 4" fill="none" />
 
-  <!-- The "Q" Outer Precision Ring -->
-  <circle cx="248" cy="244" r="150" stroke="url(#ringGrad)" stroke-width="26" fill="none" filter="url(#coreGlow)" />
+    <!-- Crosshair Reticle Axes -->
+    <line x1="256" y1="96" x2="256" y2="416" stroke="#38bdf8" stroke-width="1.2" stroke-opacity="0.5" />
+    <line x1="96" y1="256" x2="416" y2="256" stroke="#38bdf8" stroke-width="1.2" stroke-opacity="0.5" />
 
-  <!-- Inner Orbit Accent Rings (Database Layers) -->
-  <path d="M 148 244 A 98 98 0 0 1 332 176" stroke="url(#trackGrad)" stroke-width="6" stroke-linecap="round" fill="none" />
-  <path d="M 168 284 A 98 98 0 0 0 318 314" stroke="url(#trackGrad)" stroke-width="6" stroke-linecap="round" fill="none" />
-
-  <!-- 1. The "Q" Tail Stroke: Follows the bottom right of the compass -->
-  <!-- Starts under the right wing, shoots down-right from tip (282, 346) and edge (296, 304) -->
-  <polygon points="260,310 282,346 376,440 405,412 296,304" fill="url(#tailGrad)" filter="url(#coreGlow)" />
-  <line x1="296" y1="304" x2="405" y2="412" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-opacity="0.85" />
-
-  <!-- 2. The Complete, Uncut Compass Needle: Rendered in full on top -->
-  <g filter="url(#needleShadow)">
-    <!-- Left Facet (Cyan Wing) -->
-    <polygon points="356,136 182,284 242,270" fill="url(#needleLeft)" />
-    <!-- Right Facet (Complete Indigo Wing, 100% visible and uncut!) -->
-    <polygon points="356,136 242,270 282,346" fill="url(#needleRight)" />
-    <!-- Center Spine Highlight -->
-    <line x1="356" y1="136" x2="242" y2="270" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-opacity="0.95" />
+    <!-- 45-degree Guide Ticks -->
+    <line x1="172" y1="172" x2="182" y2="182" stroke="#6366f1" stroke-width="1.5" stroke-linecap="round" stroke-opacity="0.7" />
+    <line x1="340" y1="340" x2="330" y2="330" stroke="#6366f1" stroke-width="1.5" stroke-linecap="round" stroke-opacity="0.7" />
+    <line x1="340" y1="172" x2="330" y2="182" stroke="#6366f1" stroke-width="1.5" stroke-linecap="round" stroke-opacity="0.7" />
+    <line x1="172" y1="340" x2="182" y2="330" stroke="#6366f1" stroke-width="1.5" stroke-linecap="round" stroke-opacity="0.7" />
   </g>
 
-  <!-- North-East Guidance Beacon (Apex Star) -->
-  <circle cx="356" cy="136" r="5" fill="#ffffff" filter="url(#coreGlow)" />
+  <!-- Cardinal Precision Pips -->
+  <line x1="256" y1="64" x2="256" y2="76" stroke="#00f5ff" stroke-width="3" stroke-linecap="round" />
+  <line x1="64" y1="256" x2="76" y2="256" stroke="#38bdf8" stroke-width="3" stroke-linecap="round" />
+  <line x1="256" y1="436" x2="256" y2="448" stroke="#6366f1" stroke-width="3" stroke-linecap="round" />
+  <line x1="436" y1="256" x2="448" y2="256" stroke="#818cf8" stroke-width="3" stroke-linecap="round" />
+
+  <!-- Bold Circular Q Ring -->
+  <circle cx="256" cy="256" r="148" stroke="url(#qRingGrad)" stroke-width="36" fill="none" filter="url(#ringGlow)" />
+
+  <!-- The Q Tail: Bold Aerodynamic Jet Fin at 45° -->
+  <polygon points="274,310 338,300 424,420 376,432 308,356" fill="url(#qTailGrad)" filter="url(#ringGlow)" />
+  <!-- Tail Upper Gleam -->
+  <line x1="338" y1="300" x2="424" y2="420" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-opacity="0.9" />
+
+  <!-- Navigation Compass Instrument (Centered & Elevated) -->
+  <g filter="url(#needleShadow)">
+    <!-- 1. Secondary Angled Needle (Cross Blade) -->
+    <!-- Top-Right Blade -->
+    <polygon points="256,256 330,182 284,236" fill="url(#bladeTopR_White)" />
+    <polygon points="256,256 330,182 242,216" fill="url(#bladeTopR_Cyan)" />
+    <line x1="256" y1="256" x2="330" y2="182" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" />
+
+    <!-- Bottom-Left Blade -->
+    <polygon points="256,256 182,330 228,276" fill="url(#bladeBotL_Cyan)" />
+    <polygon points="256,256 182,330 270,296" fill="url(#bladeBotL_Dark)" />
+    <line x1="256" y1="256" x2="182" y2="330" stroke="#38bdf8" stroke-width="1.5" stroke-linecap="round" />
+
+    <!-- 2. Primary Vertical Needle -->
+    <!-- North Point (Fills Upper Half) -->
+    <polygon points="256,156 234,256 256,256" fill="url(#needleVertL)" />
+    <polygon points="256,156 256,256 278,256" fill="url(#needleVertR)" />
+    <line x1="256" y1="156" x2="256" y2="256" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-opacity="0.95" />
+
+    <!-- South Point (Balances Lower Half) -->
+    <polygon points="256,356 234,256 256,256" fill="url(#needleSouthL)" />
+    <polygon points="256,356 256,256 278,256" fill="url(#needleSouthR)" />
+    <line x1="256" y1="356" x2="256" y2="256" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-opacity="0.85" />
+
+    <!-- 3. Central Pivot Hub Ring -->
+    <circle cx="256" cy="256" r="17" fill="#0b1120" stroke="#00f5ff" stroke-width="3.5" />
+    <circle cx="256" cy="256" r="9" fill="#1e293b" />
+    <circle cx="256" cy="256" r="4.5" fill="#ffffff" />
+  </g>
+
+  <!-- North Star Beacon (Apex Gleam) -->
+  <circle cx="256" cy="156" r="5" fill="#ffffff" filter="url(#ringGlow)" />
 </svg>
 """
 
@@ -126,28 +186,30 @@ LOGO_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"
 # -----------------------------------------------------------------------------
 FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" fill="none">
   <defs>
-    <linearGradient id="favRing" x1="100" y1="90" x2="410" y2="410" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#38bdf8" />
-      <stop offset="50%" stop-color="#6366f1" />
-      <stop offset="100%" stop-color="#a855f7" />
+    <linearGradient id="favRing" x1="110" y1="90" x2="400" y2="400" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#00f5ff" />
+      <stop offset="25%" stop-color="#38bdf8" />
+      <stop offset="65%" stop-color="#6366f1" />
+      <stop offset="100%" stop-color="#8b5cf6" />
     </linearGradient>
-    <linearGradient id="favNeedleLeft" x1="160" y1="310" x2="355" y2="145" gradientUnits="userSpaceOnUse">
+    <linearGradient id="favVertL" x1="234" y1="256" x2="256" y2="156" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#0284c7" />
       <stop offset="60%" stop-color="#38bdf8" />
       <stop offset="100%" stop-color="#ffffff" />
     </linearGradient>
-    <linearGradient id="favNeedleRight" x1="240" y1="350" x2="355" y2="136" gradientUnits="userSpaceOnUse">
+    <linearGradient id="favVertR" x1="278" y1="256" x2="256" y2="156" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#4338ca" />
       <stop offset="60%" stop-color="#6366f1" />
       <stop offset="100%" stop-color="#e0e7ff" />
     </linearGradient>
-    <linearGradient id="favTail" x1="280" y1="330" x2="410" y2="430" gradientUnits="userSpaceOnUse">
+    <linearGradient id="favTail" x1="280" y1="310" x2="425" y2="425" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#4f46e5" />
       <stop offset="45%" stop-color="#6366f1" />
-      <stop offset="100%" stop-color="#38bdf8" />
+      <stop offset="80%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#00f5ff" />
     </linearGradient>
     <filter id="favGlow" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="12" result="blur" />
+      <feGaussianBlur stdDeviation="8" result="blur" />
       <feComposite in="SourceGraphic" in2="blur" operator="over" />
     </filter>
     <filter id="favNeedleShadow" x="-20%" y="-20%" width="140%" height="140%">
@@ -155,28 +217,41 @@ FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" w
     </filter>
   </defs>
 
-  <!-- Background Base Disc -->
-  <circle cx="256" cy="256" r="236" fill="#0f172a" stroke="#1e293b" stroke-width="8" />
+  <!-- Base Disc -->
+  <circle cx="256" cy="256" r="236" fill="#0b1120" stroke="#1e293b" stroke-width="8" />
 
-  <!-- The "Q" Outer Precision Ring -->
-  <circle cx="256" cy="250" r="150" stroke="url(#favRing)" stroke-width="28" fill="none" filter="url(#favGlow)" />
+  <!-- Radar coordinate tracks -->
+  <circle cx="256" cy="256" r="108" stroke="#38bdf8" stroke-width="1.5" stroke-dasharray="3 6" fill="none" opacity="0.4" />
 
-  <!-- Internal Orbit Arc -->
-  <path d="M 158 250 A 98 98 0 0 1 336 182" stroke="#38bdf8" stroke-width="8" stroke-linecap="round" stroke-opacity="0.6" fill="none" />
+  <!-- Q Ring -->
+  <circle cx="256" cy="256" r="148" stroke="url(#favRing)" stroke-width="36" fill="none" filter="url(#favGlow)" />
 
-  <!-- 1. The "Q" Tail (emerges from bottom right of compass) -->
-  <polygon points="268,316 290,352 384,446 413,418 304,310" fill="url(#favTail)" />
-  <line x1="304" y1="310" x2="413" y2="418" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-opacity="0.85" />
+  <!-- Q Tail -->
+  <polygon points="274,310 338,300 424,420 376,432 308,356" fill="url(#favTail)" filter="url(#favGlow)" />
+  <line x1="338" y1="300" x2="424" y2="420" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-opacity="0.9" />
 
-  <!-- 2. The Complete Uncut Compass Needle -->
+  <!-- Centered Navigation Compass -->
   <g filter="url(#favNeedleShadow)">
-    <polygon points="364,142 190,290 250,276" fill="url(#favNeedleLeft)" />
-    <polygon points="364,142 250,276 290,352" fill="url(#favNeedleRight)" />
-    <line x1="364" y1="142" x2="250" y2="276" stroke="#ffffff" stroke-width="3" stroke-linecap="round" />
+    <!-- Cross Blade -->
+    <polygon points="256,256 330,182 284,236" fill="#ffffff" />
+    <polygon points="256,256 182,330 228,276" fill="#38bdf8" />
+
+    <!-- Vertical Needle -->
+    <polygon points="256,156 234,256 256,256" fill="url(#favVertL)" />
+    <polygon points="256,156 256,256 278,256" fill="url(#favVertR)" />
+    <line x1="256" y1="156" x2="256" y2="256" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" />
+
+    <polygon points="256,356 234,256 256,256" fill="#0284c7" />
+    <polygon points="256,356 256,256 278,256" fill="#4338ca" />
+    <line x1="256" y1="356" x2="256" y2="256" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" />
+
+    <!-- Hub -->
+    <circle cx="256" cy="256" r="17" fill="#0b1120" stroke="#00f5ff" stroke-width="3.5" />
+    <circle cx="256" cy="256" r="6" fill="#ffffff" />
   </g>
 
   <!-- Beacon Star -->
-  <circle cx="364" cy="142" r="6" fill="#ffffff" />
+  <circle cx="256" cy="156" r="5" fill="#ffffff" filter="url(#favGlow)" />
 </svg>
 """
 
@@ -191,29 +266,31 @@ BANNER_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 260" wi
       <stop offset="100%" stop-color="#070a12" />
     </radialGradient>
     <linearGradient id="brandGrad" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="0%" stop-color="#00f5ff" />
       <stop offset="50%" stop-color="#818cf8" />
       <stop offset="100%" stop-color="#c084fc" />
     </linearGradient>
-    <linearGradient id="ringGradB" x1="40" y1="30" x2="200" y2="210" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#38bdf8" />
-      <stop offset="50%" stop-color="#6366f1" />
-      <stop offset="100%" stop-color="#a855f7" />
+    <linearGradient id="ringGradB" x1="50" y1="40" x2="200" y2="200" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#00f5ff" />
+      <stop offset="25%" stop-color="#38bdf8" />
+      <stop offset="65%" stop-color="#6366f1" />
+      <stop offset="100%" stop-color="#8b5cf6" />
     </linearGradient>
-    <linearGradient id="needleLB" x1="80" y1="160" x2="180" y2="70" gradientUnits="userSpaceOnUse">
+    <linearGradient id="vertLB" x1="110" y1="120" x2="120" y2="72" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#0284c7" />
-      <stop offset="50%" stop-color="#38bdf8" />
+      <stop offset="60%" stop-color="#38bdf8" />
       <stop offset="100%" stop-color="#ffffff" />
     </linearGradient>
-    <linearGradient id="needleRB" x1="120" y1="160" x2="180" y2="70" gradientUnits="userSpaceOnUse">
+    <linearGradient id="vertRB" x1="130" y1="120" x2="120" y2="72" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#4338ca" />
       <stop offset="60%" stop-color="#6366f1" />
       <stop offset="100%" stop-color="#e0e7ff" />
     </linearGradient>
-    <linearGradient id="tailGradB" x1="135" y1="150" x2="198" y2="212" gradientUnits="userSpaceOnUse">
+    <linearGradient id="tailGradB" x1="130" y1="145" x2="202" y2="202" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#4f46e5" />
       <stop offset="45%" stop-color="#6366f1" />
-      <stop offset="100%" stop-color="#38bdf8" />
+      <stop offset="85%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#00f5ff" />
     </linearGradient>
     <filter id="glowB" x="-20%" y="-20%" width="140%" height="140%">
       <feGaussianBlur stdDeviation="8" result="blur" />
@@ -228,24 +305,42 @@ BANNER_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 260" wi
   <g transform="translate(15, 10)">
     <!-- Base Disc -->
     <circle cx="120" cy="120" r="95" fill="#0b1120" stroke="#1e293b" stroke-width="3" />
-    <!-- Ticks -->
-    <circle cx="120" cy="120" r="72" stroke="#334155" stroke-width="1.2" stroke-dasharray="3 5" stroke-opacity="0.4" fill="none" />
+    <!-- Radar Ticks -->
+    <circle cx="120" cy="120" r="70" stroke="#334155" stroke-width="1.2" stroke-dasharray="3 5" stroke-opacity="0.4" fill="none" />
+    <circle cx="120" cy="120" r="50" stroke="#38bdf8" stroke-width="1" stroke-dasharray="2 4" stroke-opacity="0.4" fill="none" />
+    <!-- Reticle axes -->
+    <line x1="120" y1="46" x2="120" y2="194" stroke="#38bdf8" stroke-width="1" stroke-opacity="0.3" />
+    <line x1="46" y1="120" x2="194" y2="120" stroke="#38bdf8" stroke-width="1" stroke-opacity="0.3" />
+
     <!-- Q Ring -->
-    <circle cx="120" cy="120" r="74" fill="none" stroke="url(#ringGradB)" stroke-width="13" filter="url(#glowB)" />
-    <!-- Orbit Arc -->
-    <path d="M 75 120 A 45 45 0 0 1 155 90" stroke="#38bdf8" stroke-width="3.5" stroke-linecap="round" stroke-opacity="0.6" fill="none" />
+    <circle cx="120" cy="120" r="70" fill="none" stroke="url(#ringGradB)" stroke-width="17" filter="url(#glowB)" />
     
-    <!-- 1. Q Tail (emerging from bottom right of compass) -->
-    <polygon points="128,154 140,170 186,216 200,202 146,148" fill="url(#tailGradB)" filter="url(#glowB)" />
-    <line x1="146" y1="148" x2="200" y2="202" stroke="#ffffff" stroke-width="1.2" stroke-opacity="0.85" />
-    
-    <!-- 2. Uncut Compass Needle -->
-    <polygon points="172,70 90,140 120,132" fill="url(#needleLB)" />
-    <polygon points="172,70 120,132 140,170" fill="url(#needleRB)" />
-    <line x1="172" y1="70" x2="120" y2="132" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" />
+    <!-- Q Tail -->
+    <polygon points="128,145 158,141 202,198 178,204 146,168" fill="url(#tailGradB)" filter="url(#glowB)" />
+    <line x1="158" y1="141" x2="202" y2="198" stroke="#ffffff" stroke-width="1.4" stroke-linecap="round" stroke-opacity="0.9" />
+
+    <!-- Centered Needle -->
+    <g>
+      <!-- Cross blade -->
+      <polygon points="120,120 155,85 133,111" fill="#ffffff" />
+      <polygon points="120,120 85,155 107,129" fill="#38bdf8" />
+
+      <!-- Vertical Needle -->
+      <polygon points="120,72 109,120 120,120" fill="url(#vertLB)" />
+      <polygon points="120,72 120,120 131,120" fill="url(#vertRB)" />
+      <line x1="120" y1="72" x2="120" y2="120" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" />
+
+      <polygon points="120,168 109,120 120,120" fill="#0284c7" />
+      <polygon points="120,168 120,120 131,120" fill="#4338ca" />
+      <line x1="120" y1="168" x2="120" y2="120" stroke="#38bdf8" stroke-width="1.2" stroke-linecap="round" />
+
+      <!-- Hub -->
+      <circle cx="120" cy="120" r="8" fill="#0b1120" stroke="#00f5ff" stroke-width="2" />
+      <circle cx="120" cy="120" r="3" fill="#ffffff" />
+    </g>
 
     <!-- Beacon -->
-    <circle cx="172" cy="70" r="3" fill="#ffffff" />
+    <circle cx="120" cy="72" r="3" fill="#ffffff" />
   </g>
 
   <!-- Typography: QueryPilot -->

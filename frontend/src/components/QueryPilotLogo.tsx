@@ -23,95 +23,117 @@ export const QueryPilotLogo: React.FC<QueryPilotLogoProps> = ({
       fill="none"
     >
       <defs>
-        <radialGradient id="qlogoGlow" cx="50%" cy="42%" r="65%">
-          <stop offset="0%" stopColor="#1e293b" />
-          <stop offset="55%" stopColor="#0f172a" />
-          <stop offset="100%" stopColor="#090d16" />
+        <radialGradient id="qlogoBg" cx="50%" cy="46%" r="65%">
+          <stop offset="0%" stopColor="#111827" />
+          <stop offset="55%" stopColor="#0b1120" />
+          <stop offset="100%" stopColor="#060911" />
         </radialGradient>
 
-        <linearGradient id="qlogoRing" x1="100" y1="90" x2="410" y2="410" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#38bdf8" />
-          <stop offset="45%" stopColor="#6366f1" />
-          <stop offset="100%" stopColor="#a855f7" />
+        <linearGradient id="qlogoRing" x1="110" y1="90" x2="400" y2="400" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#00f5ff" />
+          <stop offset="25%" stopColor="#38bdf8" />
+          <stop offset="65%" stopColor="#6366f1" />
+          <stop offset="100%" stopColor="#8b5cf6" />
         </linearGradient>
 
-        <linearGradient id="qlogoNeedleLeft" x1="160" y1="310" x2="355" y2="145" gradientUnits="userSpaceOnUse">
+        <linearGradient id="qlogoVertL" x1="234" y1="256" x2="256" y2="156" gradientUnits="userSpaceOnUse">
           <stop offset="0%" stopColor="#0284c7" />
-          <stop offset="50%" stopColor="#38bdf8" />
+          <stop offset="60%" stopColor="#38bdf8" />
           <stop offset="100%" stopColor="#ffffff" />
         </linearGradient>
 
-        <linearGradient id="qlogoNeedleRight" x1="240" y1="350" x2="355" y2="136" gradientUnits="userSpaceOnUse">
+        <linearGradient id="qlogoVertR" x1="278" y1="256" x2="256" y2="156" gradientUnits="userSpaceOnUse">
           <stop offset="0%" stopColor="#4338ca" />
-          <stop offset="55%" stopColor="#6366f1" />
+          <stop offset="60%" stopColor="#6366f1" />
           <stop offset="100%" stopColor="#e0e7ff" />
         </linearGradient>
 
-        <linearGradient id="qlogoTail" x1="280" y1="330" x2="410" y2="430" gradientUnits="userSpaceOnUse">
+        <linearGradient id="qlogoBladeTopR" x1="256" y1="256" x2="330" y2="182" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#f8fafc" />
+          <stop offset="100%" stopColor="#ffffff" />
+        </linearGradient>
+        <linearGradient id="qlogoBladeTopRCyan" x1="256" y1="256" x2="330" y2="182" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#0284c7" />
+          <stop offset="70%" stopColor="#38bdf8" />
+          <stop offset="100%" stopColor="#bae6fd" />
+        </linearGradient>
+
+        <linearGradient id="qlogoBladeBotL" x1="256" y1="256" x2="182" y2="330" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#0284c7" />
+          <stop offset="70%" stopColor="#38bdf8" />
+          <stop offset="100%" stopColor="#ffffff" />
+        </linearGradient>
+
+        <linearGradient id="qlogoTail" x1="280" y1="310" x2="425" y2="425" gradientUnits="userSpaceOnUse">
           <stop offset="0%" stopColor="#4f46e5" />
           <stop offset="45%" stopColor="#6366f1" />
-          <stop offset="100%" stopColor="#38bdf8" />
+          <stop offset="80%" stopColor="#38bdf8" />
+          <stop offset="100%" stopColor="#00f5ff" />
         </linearGradient>
 
-        <linearGradient id="qlogoTrack" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.8" />
-          <stop offset="100%" stopColor="#818cf8" stopOpacity="0.2" />
-        </linearGradient>
-
-        <filter id="qlogoFilter" x="-15%" y="-15%" width="130%" height="130%">
-          <feGaussianBlur stdDeviation="12" result="blur" />
+        <filter id="qlogoGlow" x="-20%" y="-20%" width="140%" height="140%">
+          <feGaussianBlur stdDeviation="8" result="blur" />
           <feComposite in="SourceGraphic" in2="blur" operator="over" />
         </filter>
 
-        <filter id="qlogoNeedleShadow" x="-25%" y="-25%" width="150%" height="150%">
-          <feDropShadow dx="2" dy="5" stdDeviation="6" floodColor="#000000" floodOpacity="0.6" />
+        <filter id="qlogoShadow" x="-25%" y="-25%" width="150%" height="150%">
+          <feDropShadow dx="2" dy="5" stdDeviation="6" floodColor="#000000" floodOpacity="0.65" />
         </filter>
       </defs>
 
       {/* Squircle Canvas Base */}
-      <rect x="24" y="24" width="464" height="464" rx="108" fill="url(#qlogoGlow)" stroke="#1e293b" strokeWidth="5" />
+      <rect x="24" y="24" width="464" height="464" rx="108" fill="url(#qlogoBg)" stroke="#1e293b" strokeWidth="4" />
 
-      {/* Data Geometry Orbitals */}
-      <circle cx="248" cy="244" r="148" stroke="#334155" strokeWidth="2" strokeDasharray="6 8" strokeOpacity="0.35" />
-      <circle cx="248" cy="244" r="98" stroke="#334155" strokeWidth="2" strokeDasharray="4 6" strokeOpacity="0.25" />
+      {/* Radar Coordinate Geometry */}
+      <g opacity="0.38">
+        <circle cx="256" cy="256" r="148" stroke="#334155" strokeWidth="1.5" strokeDasharray="4 8" fill="none" />
+        <circle cx="256" cy="256" r="108" stroke="#38bdf8" strokeWidth="1.2" strokeDasharray="3 6" fill="none" strokeOpacity="0.6" />
+        <circle cx="256" cy="256" r="70" stroke="#334155" strokeWidth="1" strokeDasharray="2 4" fill="none" />
+        <line x1="256" y1="96" x2="256" y2="416" stroke="#38bdf8" strokeWidth="1.2" strokeOpacity="0.5" />
+        <line x1="96" y1="256" x2="416" y2="256" stroke="#38bdf8" strokeWidth="1.2" strokeOpacity="0.5" />
+      </g>
 
-      {/* Precision Cardinal Ticks */}
-      <line x1="248" y1="62" x2="248" y2="74" stroke="#38bdf8" strokeWidth="3" strokeLinecap="round" />
-      <line x1="62" y1="244" x2="74" y2="244" stroke="#38bdf8" strokeWidth="3" strokeLinecap="round" />
-      <line x1="248" y1="414" x2="248" y2="426" stroke="#6366f1" strokeWidth="3" strokeLinecap="round" />
-      <line x1="414" y1="244" x2="426" y2="244" stroke="#818cf8" strokeWidth="3" strokeLinecap="round" />
+      {/* Cardinal Pips */}
+      <line x1="256" y1="64" x2="256" y2="76" stroke="#00f5ff" strokeWidth="3" strokeLinecap="round" />
+      <line x1="64" y1="256" x2="76" y2="256" stroke="#38bdf8" strokeWidth="3" strokeLinecap="round" />
+      <line x1="256" y1="436" x2="256" y2="448" stroke="#6366f1" strokeWidth="3" strokeLinecap="round" />
+      <line x1="436" y1="256" x2="448" y2="256" stroke="#818cf8" strokeWidth="3" strokeLinecap="round" />
 
-      {/* Precision Q Ring */}
-      <circle
-        cx="248"
-        cy="244"
-        r="150"
-        stroke="url(#qlogoRing)"
-        strokeWidth="26"
-        fill="none"
-        filter="url(#qlogoFilter)"
-      />
+      {/* Bold Circular Q Ring */}
+      <circle cx="256" cy="256" r="148" stroke="url(#qlogoRing)" strokeWidth="36" fill="none" filter="url(#qlogoGlow)" />
 
-      {/* Inner Layer Arcs */}
-      <path d="M 148 244 A 98 98 0 0 1 332 176" stroke="url(#qlogoTrack)" strokeWidth="6" strokeLinecap="round" />
-      <path d="M 168 284 A 98 98 0 0 0 318 314" stroke="url(#qlogoTrack)" strokeWidth="6" strokeLinecap="round" />
+      {/* The Q Tail */}
+      <polygon points="274,310 338,300 424,420 376,432 308,356" fill="url(#qlogoTail)" filter="url(#qlogoGlow)" />
+      <line x1="338" y1="300" x2="424" y2="420" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" strokeOpacity="0.9" />
 
-      {/* 1. The Q Tail (Follows bottom right of the compass) */}
-      <polygon points="260,310 282,346 376,440 405,412 296,304" fill="url(#qlogoTail)" filter="url(#qlogoFilter)" />
-      <line x1="296" y1="304" x2="405" y2="412" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" strokeOpacity="0.85" />
+      {/* Navigation Compass Instrument */}
+      <g filter="url(#qlogoShadow)">
+        {/* Cross Blade */}
+        <polygon points="256,256 330,182 284,236" fill="url(#qlogoBladeTopR)" />
+        <polygon points="256,256 330,182 242,216" fill="url(#qlogoBladeTopRCyan)" />
+        <line x1="256" y1="256" x2="330" y2="182" stroke="#ffffff" strokeWidth="1.8" strokeLinecap="round" />
 
-      {/* 2. The Complete Uncut Compass Needle: 100% visible on top */}
-      <g filter="url(#qlogoNeedleShadow)">
-        {/* Left Facet (Cyan Wing) */}
-        <polygon points="356,136 182,284 242,270" fill="url(#qlogoNeedleLeft)" />
-        {/* Right Facet (Complete Indigo Wing, uncut) */}
-        <polygon points="356,136 242,270 282,346" fill="url(#qlogoNeedleRight)" />
-        {/* Center Spine Highlight */}
-        <line x1="356" y1="136" x2="242" y2="270" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" strokeOpacity="0.95" />
+        <polygon points="256,256 182,330 228,276" fill="url(#qlogoBladeBotL)" />
+        <polygon points="256,256 182,330 270,296" fill="#0f172a" />
+        <line x1="256" y1="256" x2="182" y2="330" stroke="#38bdf8" strokeWidth="1.5" strokeLinecap="round" />
+
+        {/* Primary Vertical Needle */}
+        <polygon points="256,156 234,256 256,256" fill="url(#qlogoVertL)" />
+        <polygon points="256,156 256,256 278,256" fill="url(#qlogoVertR)" />
+        <line x1="256" y1="156" x2="256" y2="256" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" strokeOpacity="0.95" />
+
+        <polygon points="256,356 234,256 256,256" fill="#0284c7" />
+        <polygon points="256,356 256,256 278,256" fill="#4338ca" />
+        <line x1="256" y1="356" x2="256" y2="256" stroke="#38bdf8" strokeWidth="2" strokeLinecap="round" strokeOpacity="0.85" />
+
+        {/* Pivot Hub */}
+        <circle cx="256" cy="256" r="17" fill="#0b1120" stroke="#00f5ff" strokeWidth="3" />
+        <circle cx="256" cy="256" r="9" fill="#1e293b" />
+        <circle cx="256" cy="256" r="4.5" fill="#ffffff" />
       </g>
 
       {/* Beacon Star */}
-      <circle cx="356" cy="136" r="5" fill="#ffffff" filter="url(#qlogoFilter)" />
+      <circle cx="256" cy="156" r="5" fill="#ffffff" filter="url(#qlogoGlow)" />
     </svg>
   )
 }

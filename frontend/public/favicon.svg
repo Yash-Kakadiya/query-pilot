@@ -1,27 +1,29 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" fill="none">
   <defs>
-    <linearGradient id="favRing" x1="100" y1="90" x2="410" y2="410" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#38bdf8" />
-      <stop offset="50%" stop-color="#6366f1" />
-      <stop offset="100%" stop-color="#a855f7" />
+    <linearGradient id="favRing" x1="110" y1="90" x2="400" y2="400" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#00f5ff" />
+      <stop offset="25%" stop-color="#38bdf8" />
+      <stop offset="65%" stop-color="#6366f1" />
+      <stop offset="100%" stop-color="#8b5cf6" />
     </linearGradient>
-    <linearGradient id="favNeedleLeft" x1="160" y1="310" x2="355" y2="145" gradientUnits="userSpaceOnUse">
+    <linearGradient id="favVertL" x1="234" y1="256" x2="256" y2="156" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#0284c7" />
       <stop offset="60%" stop-color="#38bdf8" />
       <stop offset="100%" stop-color="#ffffff" />
     </linearGradient>
-    <linearGradient id="favNeedleRight" x1="240" y1="350" x2="355" y2="136" gradientUnits="userSpaceOnUse">
+    <linearGradient id="favVertR" x1="278" y1="256" x2="256" y2="156" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#4338ca" />
       <stop offset="60%" stop-color="#6366f1" />
       <stop offset="100%" stop-color="#e0e7ff" />
     </linearGradient>
-    <linearGradient id="favTail" x1="280" y1="330" x2="410" y2="430" gradientUnits="userSpaceOnUse">
+    <linearGradient id="favTail" x1="280" y1="310" x2="425" y2="425" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#4f46e5" />
       <stop offset="45%" stop-color="#6366f1" />
-      <stop offset="100%" stop-color="#38bdf8" />
+      <stop offset="80%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#00f5ff" />
     </linearGradient>
     <filter id="favGlow" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="12" result="blur" />
+      <feGaussianBlur stdDeviation="8" result="blur" />
       <feComposite in="SourceGraphic" in2="blur" operator="over" />
     </filter>
     <filter id="favNeedleShadow" x="-20%" y="-20%" width="140%" height="140%">
@@ -29,26 +31,39 @@
     </filter>
   </defs>
 
-  <!-- Background Base Disc -->
-  <circle cx="256" cy="256" r="236" fill="#0f172a" stroke="#1e293b" stroke-width="8" />
+  <!-- Base Disc -->
+  <circle cx="256" cy="256" r="236" fill="#0b1120" stroke="#1e293b" stroke-width="8" />
 
-  <!-- The "Q" Outer Precision Ring -->
-  <circle cx="256" cy="250" r="150" stroke="url(#favRing)" stroke-width="28" fill="none" filter="url(#favGlow)" />
+  <!-- Radar coordinate tracks -->
+  <circle cx="256" cy="256" r="108" stroke="#38bdf8" stroke-width="1.5" stroke-dasharray="3 6" fill="none" opacity="0.4" />
 
-  <!-- Internal Orbit Arc -->
-  <path d="M 158 250 A 98 98 0 0 1 336 182" stroke="#38bdf8" stroke-width="8" stroke-linecap="round" stroke-opacity="0.6" fill="none" />
+  <!-- Q Ring -->
+  <circle cx="256" cy="256" r="148" stroke="url(#favRing)" stroke-width="36" fill="none" filter="url(#favGlow)" />
 
-  <!-- 1. The "Q" Tail (emerges from bottom right of compass) -->
-  <polygon points="268,316 290,352 384,446 413,418 304,310" fill="url(#favTail)" />
-  <line x1="304" y1="310" x2="413" y2="418" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-opacity="0.85" />
+  <!-- Q Tail -->
+  <polygon points="274,310 338,300 424,420 376,432 308,356" fill="url(#favTail)" filter="url(#favGlow)" />
+  <line x1="338" y1="300" x2="424" y2="420" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-opacity="0.9" />
 
-  <!-- 2. The Complete Uncut Compass Needle -->
+  <!-- Centered Navigation Compass -->
   <g filter="url(#favNeedleShadow)">
-    <polygon points="364,142 190,290 250,276" fill="url(#favNeedleLeft)" />
-    <polygon points="364,142 250,276 290,352" fill="url(#favNeedleRight)" />
-    <line x1="364" y1="142" x2="250" y2="276" stroke="#ffffff" stroke-width="3" stroke-linecap="round" />
+    <!-- Cross Blade -->
+    <polygon points="256,256 330,182 284,236" fill="#ffffff" />
+    <polygon points="256,256 182,330 228,276" fill="#38bdf8" />
+
+    <!-- Vertical Needle -->
+    <polygon points="256,156 234,256 256,256" fill="url(#favVertL)" />
+    <polygon points="256,156 256,256 278,256" fill="url(#favVertR)" />
+    <line x1="256" y1="156" x2="256" y2="256" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" />
+
+    <polygon points="256,356 234,256 256,256" fill="#0284c7" />
+    <polygon points="256,356 256,256 278,256" fill="#4338ca" />
+    <line x1="256" y1="356" x2="256" y2="256" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" />
+
+    <!-- Hub -->
+    <circle cx="256" cy="256" r="17" fill="#0b1120" stroke="#00f5ff" stroke-width="3.5" />
+    <circle cx="256" cy="256" r="6" fill="#ffffff" />
   </g>
 
   <!-- Beacon Star -->
-  <circle cx="364" cy="142" r="6" fill="#ffffff" />
+  <circle cx="256" cy="156" r="5" fill="#ffffff" filter="url(#favGlow)" />
 </svg>
