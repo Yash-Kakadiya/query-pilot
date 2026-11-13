@@ -38,17 +38,18 @@ export const QueryPilotLogo: React.FC<QueryPilotLogoProps> = ({
         <linearGradient id="qlogoNeedleLeft" x1="160" y1="310" x2="355" y2="145" gradientUnits="userSpaceOnUse">
           <stop offset="0%" stopColor="#0284c7" />
           <stop offset="50%" stopColor="#38bdf8" />
-          <stop offset="100%" stopColor="#f0f9ff" />
+          <stop offset="100%" stopColor="#ffffff" />
         </linearGradient>
 
-        <linearGradient id="qlogoNeedleRight" x1="240" y1="360" x2="355" y2="145" gradientUnits="userSpaceOnUse">
+        <linearGradient id="qlogoNeedleRight" x1="240" y1="270" x2="355" y2="136" gradientUnits="userSpaceOnUse">
           <stop offset="0%" stopColor="#4338ca" />
-          <stop offset="50%" stopColor="#6366f1" />
+          <stop offset="60%" stopColor="#6366f1" />
           <stop offset="100%" stopColor="#e0e7ff" />
         </linearGradient>
 
-        <linearGradient id="qlogoTail" x1="260" y1="260" x2="415" y2="415" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#6366f1" />
+        <linearGradient id="qlogoTail" x1="265" y1="280" x2="416" y2="410" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#4f46e5" />
+          <stop offset="45%" stopColor="#6366f1" />
           <stop offset="100%" stopColor="#38bdf8" />
         </linearGradient>
 
@@ -80,7 +81,7 @@ export const QueryPilotLogo: React.FC<QueryPilotLogoProps> = ({
       <circle
         cx="248"
         cy="244"
-        r="152"
+        r="150"
         stroke="url(#qlogoRing)"
         strokeWidth="26"
         fill="none"
@@ -88,17 +89,20 @@ export const QueryPilotLogo: React.FC<QueryPilotLogoProps> = ({
       />
 
       {/* Inner Layer Arcs */}
-      <path d="M 148 244 A 100 100 0 0 1 332 176" stroke="url(#qlogoTrack)" strokeWidth="6" strokeLinecap="round" />
-      <path d="M 168 284 A 100 100 0 0 0 318 314" stroke="url(#qlogoTrack)" strokeWidth="6" strokeLinecap="round" />
+      <path d="M 148 244 A 98 98 0 0 1 332 176" stroke="url(#qlogoTrack)" strokeWidth="6" strokeLinecap="round" />
+      <path d="M 168 284 A 98 98 0 0 0 318 314" stroke="url(#qlogoTrack)" strokeWidth="6" strokeLinecap="round" />
 
-      {/* Pilot Compass Delta Arrow */}
+      {/* Pilot Navigation Compass Needle */}
+      {/* Left Facet (Cyan Wing) */}
       <polygon points="356,136 182,284 242,270" fill="url(#qlogoNeedleLeft)" />
-      <polygon points="356,136 242,270 282,346" fill="url(#qlogoNeedleRight)" />
-      <line x1="356" y1="136" x2="242" y2="270" stroke="#ffffff" strokeWidth="3" strokeLinecap="round" strokeOpacity="0.95" />
+      {/* Right Facet (Indigo Wing) */}
+      <polygon points="356,136 242,270 290,290" fill="url(#qlogoNeedleRight)" />
+      {/* Center Spine Highlight */}
+      <line x1="356" y1="136" x2="242" y2="270" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" strokeOpacity="0.95" />
 
-      {/* The Q Tail Fin: Clean, Sharp Blade (NO dot / circle) */}
-      <polygon points="268,264 416,412 376,424 238,294" fill="url(#qlogoTail)" filter="url(#qlogoFilter)" />
-      <line x1="268" y1="264" x2="416" y2="412" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" strokeOpacity="0.8" />
+      {/* The "Q" Tail: Continues cleanly from the trailing edge of the compass (242,270) - (290,290) */}
+      <polygon points="242,270 376,424 416,400 290,290" fill="url(#qlogoTail)" filter="url(#qlogoFilter)" />
+      <line x1="290" y1="290" x2="416" y2="400" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" strokeOpacity="0.85" />
 
       {/* Beacon Star */}
       <circle cx="356" cy="136" r="5" fill="#ffffff" />

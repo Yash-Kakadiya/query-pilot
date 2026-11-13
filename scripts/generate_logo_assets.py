@@ -1,4 +1,8 @@
-"""Generates QueryPilot professional logo, favicon, and banner assets without the bottom-right dot/circle."""
+"""Generates QueryPilot professional logo, favicon, and banner assets.
+
+Clean, continuous geometry where the Q's diagonal tail stroke directly continues
+from the trailing edge of the navigation compass with zero overlap.
+"""
 
 from pathlib import Path
 import subprocess
@@ -12,7 +16,6 @@ TAURI_ICONS = Path("src-tauri/icons")
 
 # -----------------------------------------------------------------------------
 # 1. Standalone Mark / Icon SVG (512x512)
-# Clean, sharp Q ring with streamlined diagonal pilot tail (NO dot / circle at bottom right)
 # -----------------------------------------------------------------------------
 LOGO_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" fill="none">
   <defs>
@@ -34,19 +37,20 @@ LOGO_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"
     <linearGradient id="needleLeft" x1="160" y1="310" x2="355" y2="145" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#0284c7" />
       <stop offset="50%" stop-color="#38bdf8" />
-      <stop offset="100%" stop-color="#f0f9ff" />
+      <stop offset="100%" stop-color="#ffffff" />
     </linearGradient>
 
     <!-- Pilot Needle Right Facet -->
-    <linearGradient id="needleRight" x1="240" y1="360" x2="355" y2="145" gradientUnits="userSpaceOnUse">
+    <linearGradient id="needleRight" x1="240" y1="270" x2="355" y2="136" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#4338ca" />
-      <stop offset="50%" stop-color="#6366f1" />
+      <stop offset="60%" stop-color="#6366f1" />
       <stop offset="100%" stop-color="#e0e7ff" />
     </linearGradient>
 
-    <!-- Tail Fin Gradient -->
-    <linearGradient id="tailGrad" x1="260" y1="260" x2="415" y2="415" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#6366f1" />
+    <!-- Continuous Tail Stroke (starts at compass edge 242,270 to 290,290) -->
+    <linearGradient id="tailGrad" x1="265" y1="280" x2="416" y2="410" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4f46e5" />
+      <stop offset="45%" stop-color="#6366f1" />
       <stop offset="100%" stop-color="#38bdf8" />
     </linearGradient>
 
@@ -58,20 +62,20 @@ LOGO_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"
 
     <!-- Glow Filter -->
     <filter id="coreGlow" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="14" result="blur" />
+      <feGaussianBlur stdDeviation="12" result="blur" />
       <feComposite in="SourceGraphic" in2="blur" operator="over" />
     </filter>
 
     <!-- Drop Shadow Filter -->
     <filter id="dropShadow" x="-10%" y="-10%" width="120%" height="120%">
-      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#000000" flood-opacity="0.6" />
+      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#000000" flood-opacity="0.6" />
     </filter>
   </defs>
 
   <!-- Squircle Base Canvas -->
   <rect x="24" y="24" width="464" height="464" rx="108" fill="url(#bgGlow)" stroke="#1e293b" stroke-width="4" filter="url(#dropShadow)" />
 
-  <!-- Ambient Light Arc Reflection -->
+  <!-- Ambient Light Reflection Arc -->
   <path d="M 100 160 A 180 180 0 0 1 360 80" stroke="#38bdf8" stroke-width="2" stroke-opacity="0.2" stroke-linecap="round" fill="none" />
   
   <!-- Subtle Data Geometry (Radar / Grid Rings) -->
@@ -85,26 +89,28 @@ LOGO_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"
   <line x1="414" y1="244" x2="426" y2="244" stroke="#818cf8" stroke-width="3" stroke-linecap="round" />
 
   <!-- The "Q" Outer Precision Ring -->
-  <circle cx="248" cy="244" r="152" stroke="url(#ringGrad)" stroke-width="26" fill="none" filter="url(#coreGlow)" />
+  <circle cx="248" cy="244" r="150" stroke="url(#ringGrad)" stroke-width="26" fill="none" filter="url(#coreGlow)" />
 
   <!-- Inner Orbit Accent Rings (Database Layers) -->
-  <path d="M 148 244 A 100 100 0 0 1 332 176" stroke="url(#trackGrad)" stroke-width="6" stroke-linecap="round" fill="none" />
-  <path d="M 168 284 A 100 100 0 0 0 318 314" stroke="url(#trackGrad)" stroke-width="6" stroke-linecap="round" fill="none" />
+  <path d="M 148 244 A 98 98 0 0 1 332 176" stroke="url(#trackGrad)" stroke-width="6" stroke-linecap="round" fill="none" />
+  <path d="M 168 284 A 98 98 0 0 0 318 314" stroke="url(#trackGrad)" stroke-width="6" stroke-linecap="round" fill="none" />
 
-  <!-- Pilot Delta Navigation Arrow (Primary Emblem) -->
-  <!-- Left Wing -->
+  <!-- Pilot Navigation Compass Needle -->
+  <!-- Left Facet (Cyan Wing) -->
   <polygon points="356,136 182,284 242,270" fill="url(#needleLeft)" filter="url(#dropShadow)" />
-  <!-- Right Wing -->
-  <polygon points="356,136 242,270 282,346" fill="url(#needleRight)" filter="url(#dropShadow)" />
-  <!-- Spine Highlight (Gleam) -->
+  <!-- Right Facet (Indigo Wing) -->
+  <polygon points="356,136 242,270 290,290" fill="url(#needleRight)" filter="url(#dropShadow)" />
+  <!-- Center Spine Highlight -->
   <line x1="356" y1="136" x2="242" y2="270" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-opacity="0.95" />
 
-  <!-- The "Q" Tail: Clean, Sharp Aerodynamic Wedge / Fin (No dots, no circles) -->
-  <polygon points="268,264 416,412 376,424 238,294" fill="url(#tailGrad)" filter="url(#coreGlow)" />
-  <line x1="268" y1="264" x2="416" y2="412" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-opacity="0.8" />
+  <!-- The "Q" Tail: Continues cleanly from the trailing edge of the compass (242,270) - (290,290) -->
+  <!-- Zero overlap, perfectly seamless transition through the Q ring -->
+  <polygon points="242,270 376,424 416,400 290,290" fill="url(#tailGrad)" filter="url(#coreGlow)" />
+  <!-- Tail Top Aerodynamic Highlight -->
+  <line x1="290" y1="290" x2="416" y2="400" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-opacity="0.85" />
 
   <!-- North-East Guidance Beacon (Apex Star) -->
-  <circle cx="356" cy="136" r="4.5" fill="#ffffff" filter="url(#coreGlow)" />
+  <circle cx="356" cy="136" r="5" fill="#ffffff" filter="url(#coreGlow)" />
 </svg>
 """
 
@@ -123,13 +129,14 @@ FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" w
       <stop offset="60%" stop-color="#38bdf8" />
       <stop offset="100%" stop-color="#ffffff" />
     </linearGradient>
-    <linearGradient id="favNeedleRight" x1="240" y1="360" x2="355" y2="145" gradientUnits="userSpaceOnUse">
+    <linearGradient id="favNeedleRight" x1="240" y1="270" x2="355" y2="136" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#4338ca" />
       <stop offset="60%" stop-color="#6366f1" />
       <stop offset="100%" stop-color="#e0e7ff" />
     </linearGradient>
-    <linearGradient id="favTail" x1="260" y1="260" x2="415" y2="415" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#6366f1" />
+    <linearGradient id="favTail" x1="265" y1="280" x2="416" y2="410" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4f46e5" />
+      <stop offset="45%" stop-color="#6366f1" />
       <stop offset="100%" stop-color="#38bdf8" />
     </linearGradient>
     <filter id="favGlow" x="-20%" y="-20%" width="140%" height="140%">
@@ -142,19 +149,19 @@ FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" w
   <circle cx="256" cy="256" r="236" fill="#0f172a" stroke="#1e293b" stroke-width="8" />
 
   <!-- The "Q" Outer Precision Ring -->
-  <circle cx="256" cy="250" r="152" stroke="url(#favRing)" stroke-width="28" fill="none" filter="url(#favGlow)" />
+  <circle cx="256" cy="250" r="150" stroke="url(#favRing)" stroke-width="28" fill="none" filter="url(#favGlow)" />
 
   <!-- Internal Orbit Arc -->
   <path d="M 158 250 A 98 98 0 0 1 336 182" stroke="#38bdf8" stroke-width="8" stroke-linecap="round" stroke-opacity="0.6" fill="none" />
 
-  <!-- Pilot Delta Arrow -->
+  <!-- Pilot Compass Needle -->
   <polygon points="364,142 190,290 250,276" fill="url(#favNeedleLeft)" />
-  <polygon points="364,142 250,276 290,352" fill="url(#favNeedleRight)" />
+  <polygon points="364,142 250,276 298,296" fill="url(#favNeedleRight)" />
   <line x1="364" y1="142" x2="250" y2="276" stroke="#ffffff" stroke-width="3" stroke-linecap="round" />
 
-  <!-- The "Q" Tail: Sharp, Clean Wedge (NO dot / circle) -->
-  <polygon points="276,270 424,418 384,430 246,300" fill="url(#favTail)" />
-  <line x1="276" y1="270" x2="424" y2="418" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-opacity="0.8" />
+  <!-- Continuous Tail: starts from compass edge (250,276) - (298,296) -->
+  <polygon points="250,276 384,430 424,406 298,296" fill="url(#favTail)" />
+  <line x1="298" y1="296" x2="424" y2="406" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-opacity="0.85" />
 
   <!-- Beacon Star -->
   <circle cx="364" cy="142" r="6" fill="#ffffff" />
@@ -186,13 +193,14 @@ BANNER_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 260" wi
       <stop offset="50%" stop-color="#38bdf8" />
       <stop offset="100%" stop-color="#ffffff" />
     </linearGradient>
-    <linearGradient id="needleRB" x1="120" y1="190" x2="180" y2="70" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#4f46e5" />
+    <linearGradient id="needleRB" x1="120" y1="130" x2="180" y2="70" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4338ca" />
       <stop offset="60%" stop-color="#6366f1" />
-      <stop offset="100%" stop-color="#c7d2fe" />
+      <stop offset="100%" stop-color="#e0e7ff" />
     </linearGradient>
-    <linearGradient id="tailGradB" x1="120" y1="120" x2="195" y2="195" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#6366f1" />
+    <linearGradient id="tailGradB" x1="130" y1="140" x2="202" y2="200" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4f46e5" />
+      <stop offset="45%" stop-color="#6366f1" />
       <stop offset="100%" stop-color="#38bdf8" />
     </linearGradient>
     <filter id="glowB" x="-20%" y="-20%" width="140%" height="140%">
@@ -214,13 +222,14 @@ BANNER_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 260" wi
     <circle cx="120" cy="120" r="74" fill="none" stroke="url(#ringGradB)" stroke-width="13" filter="url(#glowB)" />
     <!-- Orbit Arc -->
     <path d="M 75 120 A 45 45 0 0 1 155 90" stroke="#38bdf8" stroke-width="3.5" stroke-linecap="round" stroke-opacity="0.6" fill="none" />
-    <!-- Needle -->
+    <!-- Needle Left Wing -->
     <polygon points="172,70 90,140 120,132" fill="url(#needleLB)" />
-    <polygon points="172,70 120,132 140,170" fill="url(#needleRB)" />
+    <!-- Needle Right Wing -->
+    <polygon points="172,70 120,132 144,142" fill="url(#needleRB)" />
     <line x1="172" y1="70" x2="120" y2="132" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" />
-    <!-- Q Tail (Clean sharp blade, NO dot / circle) -->
-    <polygon points="128,128 198,198 178,206 114,142" fill="url(#tailGradB)" />
-    <line x1="128" y1="128" x2="198" y2="198" stroke="#ffffff" stroke-width="1.2" stroke-opacity="0.8" />
+    <!-- Q Tail (Continues from compass edge 120,132 to 144,142) -->
+    <polygon points="120,132 184,206 202,194 144,142" fill="url(#tailGradB)" filter="url(#glowB)" />
+    <line x1="144" y1="142" x2="202" y2="194" stroke="#ffffff" stroke-width="1.2" stroke-opacity="0.85" />
     <!-- Beacon -->
     <circle cx="172" cy="70" r="3" fill="#ffffff" />
   </g>
@@ -249,12 +258,14 @@ BANNER_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 260" wi
 </svg>
 """
 
+
 def generate_svgs():
     (ASSETS_DIR / "querypilot-logo.svg").write_text(LOGO_ICON_SVG, encoding="utf-8")
     (ASSETS_DIR / "querypilot-banner.svg").write_text(BANNER_SVG, encoding="utf-8")
     (FRONTEND_PUBLIC / "favicon.svg").write_text(FAVICON_SVG, encoding="utf-8")
     (FRONTEND_PUBLIC / "logo.svg").write_text(LOGO_ICON_SVG, encoding="utf-8")
     print("SVGs generated successfully.")
+
 
 def render_pngs_with_edge():
     edge_path = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
@@ -266,7 +277,8 @@ def render_pngs_with_edge():
 
     # 1. Render Logo PNG (512x512)
     logo_svg_path = (ASSETS_DIR / "querypilot-logo.svg").resolve().as_uri()
-    tmp_html.write_text(f"""<!DOCTYPE html>
+    tmp_html.write_text(
+        f"""<!DOCTYPE html>
 <html>
 <head>
 <style>
@@ -277,7 +289,9 @@ def render_pngs_with_edge():
 <body>
   <img src="{logo_svg_path}" />
 </body>
-</html>""", encoding="utf-8")
+</html>""",
+        encoding="utf-8",
+    )
 
     out_logo_png = (ASSETS_DIR / "querypilot-logo.png").resolve()
     cmd1 = [
@@ -295,7 +309,8 @@ def render_pngs_with_edge():
 
     # 2. Render Banner PNG (960x260)
     banner_svg_path = (ASSETS_DIR / "querypilot-banner.svg").resolve().as_uri()
-    tmp_html.write_text(f"""<!DOCTYPE html>
+    tmp_html.write_text(
+        f"""<!DOCTYPE html>
 <html>
 <head>
 <style>
@@ -306,7 +321,9 @@ def render_pngs_with_edge():
 <body>
   <img src="{banner_svg_path}" />
 </body>
-</html>""", encoding="utf-8")
+</html>""",
+        encoding="utf-8",
+    )
 
     out_banner_png = (ASSETS_DIR / "querypilot-banner.png").resolve()
     cmd2 = [
@@ -328,7 +345,7 @@ def render_pngs_with_edge():
     # Update ALL icon variants in src-tauri/icons
     if out_logo_png.exists():
         im = Image.open(out_logo_png)
-        
+
         # Standard PNG icon sizes
         sizes_to_save = {
             "32x32.png": (32, 32),
@@ -357,6 +374,7 @@ def render_pngs_with_edge():
         ico_sizes = [(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
         im.save(TAURI_ICONS / "icon.ico", format="ICO", sizes=ico_sizes)
         print("Updated ALL Tauri desktop icon variants.")
+
 
 if __name__ == "__main__":
     generate_svgs()
