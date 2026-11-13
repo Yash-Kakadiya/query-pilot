@@ -22,14 +22,14 @@
     </linearGradient>
 
     <!-- Pilot Needle Right Facet -->
-    <linearGradient id="needleRight" x1="240" y1="270" x2="355" y2="136" gradientUnits="userSpaceOnUse">
+    <linearGradient id="needleRight" x1="240" y1="350" x2="355" y2="136" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#4338ca" />
-      <stop offset="60%" stop-color="#6366f1" />
+      <stop offset="55%" stop-color="#6366f1" />
       <stop offset="100%" stop-color="#e0e7ff" />
     </linearGradient>
 
-    <!-- Continuous Tail Stroke (starts at compass edge 242,270 to 290,290) -->
-    <linearGradient id="tailGrad" x1="265" y1="280" x2="416" y2="410" gradientUnits="userSpaceOnUse">
+    <!-- Q Tail Gradient -->
+    <linearGradient id="tailGrad" x1="280" y1="330" x2="410" y2="430" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#4f46e5" />
       <stop offset="45%" stop-color="#6366f1" />
       <stop offset="100%" stop-color="#38bdf8" />
@@ -47,7 +47,12 @@
       <feComposite in="SourceGraphic" in2="blur" operator="over" />
     </filter>
 
-    <!-- Drop Shadow Filter -->
+    <!-- Needle Drop Shadow (Elevates compass above the tail and ring) -->
+    <filter id="needleShadow" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="2" dy="5" stdDeviation="6" flood-color="#000000" flood-opacity="0.6" />
+    </filter>
+
+    <!-- Base Drop Shadow -->
     <filter id="dropShadow" x="-10%" y="-10%" width="120%" height="120%">
       <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#000000" flood-opacity="0.6" />
     </filter>
@@ -76,19 +81,20 @@
   <path d="M 148 244 A 98 98 0 0 1 332 176" stroke="url(#trackGrad)" stroke-width="6" stroke-linecap="round" fill="none" />
   <path d="M 168 284 A 98 98 0 0 0 318 314" stroke="url(#trackGrad)" stroke-width="6" stroke-linecap="round" fill="none" />
 
-  <!-- Pilot Navigation Compass Needle -->
-  <!-- Left Facet (Cyan Wing) -->
-  <polygon points="356,136 182,284 242,270" fill="url(#needleLeft)" filter="url(#dropShadow)" />
-  <!-- Right Facet (Indigo Wing) -->
-  <polygon points="356,136 242,270 290,290" fill="url(#needleRight)" filter="url(#dropShadow)" />
-  <!-- Center Spine Highlight -->
-  <line x1="356" y1="136" x2="242" y2="270" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-opacity="0.95" />
+  <!-- 1. The "Q" Tail Stroke: Follows the bottom right of the compass -->
+  <!-- Starts under the right wing, shoots down-right from tip (282, 346) and edge (296, 304) -->
+  <polygon points="260,310 282,346 376,440 405,412 296,304" fill="url(#tailGrad)" filter="url(#coreGlow)" />
+  <line x1="296" y1="304" x2="405" y2="412" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-opacity="0.85" />
 
-  <!-- The "Q" Tail: Continues cleanly from the trailing edge of the compass (242,270) - (290,290) -->
-  <!-- Zero overlap, perfectly seamless transition through the Q ring -->
-  <polygon points="242,270 376,424 416,400 290,290" fill="url(#tailGrad)" filter="url(#coreGlow)" />
-  <!-- Tail Top Aerodynamic Highlight -->
-  <line x1="290" y1="290" x2="416" y2="400" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-opacity="0.85" />
+  <!-- 2. The Complete, Uncut Compass Needle: Rendered in full on top -->
+  <g filter="url(#needleShadow)">
+    <!-- Left Facet (Cyan Wing) -->
+    <polygon points="356,136 182,284 242,270" fill="url(#needleLeft)" />
+    <!-- Right Facet (Complete Indigo Wing, 100% visible and uncut!) -->
+    <polygon points="356,136 242,270 282,346" fill="url(#needleRight)" />
+    <!-- Center Spine Highlight -->
+    <line x1="356" y1="136" x2="242" y2="270" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-opacity="0.95" />
+  </g>
 
   <!-- North-East Guidance Beacon (Apex Star) -->
   <circle cx="356" cy="136" r="5" fill="#ffffff" filter="url(#coreGlow)" />

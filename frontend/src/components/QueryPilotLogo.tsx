@@ -41,13 +41,13 @@ export const QueryPilotLogo: React.FC<QueryPilotLogoProps> = ({
           <stop offset="100%" stopColor="#ffffff" />
         </linearGradient>
 
-        <linearGradient id="qlogoNeedleRight" x1="240" y1="270" x2="355" y2="136" gradientUnits="userSpaceOnUse">
+        <linearGradient id="qlogoNeedleRight" x1="240" y1="350" x2="355" y2="136" gradientUnits="userSpaceOnUse">
           <stop offset="0%" stopColor="#4338ca" />
-          <stop offset="60%" stopColor="#6366f1" />
+          <stop offset="55%" stopColor="#6366f1" />
           <stop offset="100%" stopColor="#e0e7ff" />
         </linearGradient>
 
-        <linearGradient id="qlogoTail" x1="265" y1="280" x2="416" y2="410" gradientUnits="userSpaceOnUse">
+        <linearGradient id="qlogoTail" x1="280" y1="330" x2="410" y2="430" gradientUnits="userSpaceOnUse">
           <stop offset="0%" stopColor="#4f46e5" />
           <stop offset="45%" stopColor="#6366f1" />
           <stop offset="100%" stopColor="#38bdf8" />
@@ -61,6 +61,10 @@ export const QueryPilotLogo: React.FC<QueryPilotLogoProps> = ({
         <filter id="qlogoFilter" x="-15%" y="-15%" width="130%" height="130%">
           <feGaussianBlur stdDeviation="12" result="blur" />
           <feComposite in="SourceGraphic" in2="blur" operator="over" />
+        </filter>
+
+        <filter id="qlogoNeedleShadow" x="-25%" y="-25%" width="150%" height="150%">
+          <feDropShadow dx="2" dy="5" stdDeviation="6" floodColor="#000000" floodOpacity="0.6" />
         </filter>
       </defs>
 
@@ -92,20 +96,22 @@ export const QueryPilotLogo: React.FC<QueryPilotLogoProps> = ({
       <path d="M 148 244 A 98 98 0 0 1 332 176" stroke="url(#qlogoTrack)" strokeWidth="6" strokeLinecap="round" />
       <path d="M 168 284 A 98 98 0 0 0 318 314" stroke="url(#qlogoTrack)" strokeWidth="6" strokeLinecap="round" />
 
-      {/* Pilot Navigation Compass Needle */}
-      {/* Left Facet (Cyan Wing) */}
-      <polygon points="356,136 182,284 242,270" fill="url(#qlogoNeedleLeft)" />
-      {/* Right Facet (Indigo Wing) */}
-      <polygon points="356,136 242,270 290,290" fill="url(#qlogoNeedleRight)" />
-      {/* Center Spine Highlight */}
-      <line x1="356" y1="136" x2="242" y2="270" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" strokeOpacity="0.95" />
+      {/* 1. The Q Tail (Follows bottom right of the compass) */}
+      <polygon points="260,310 282,346 376,440 405,412 296,304" fill="url(#qlogoTail)" filter="url(#qlogoFilter)" />
+      <line x1="296" y1="304" x2="405" y2="412" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" strokeOpacity="0.85" />
 
-      {/* The "Q" Tail: Continues cleanly from the trailing edge of the compass (242,270) - (290,290) */}
-      <polygon points="242,270 376,424 416,400 290,290" fill="url(#qlogoTail)" filter="url(#qlogoFilter)" />
-      <line x1="290" y1="290" x2="416" y2="400" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" strokeOpacity="0.85" />
+      {/* 2. The Complete Uncut Compass Needle: 100% visible on top */}
+      <g filter="url(#qlogoNeedleShadow)">
+        {/* Left Facet (Cyan Wing) */}
+        <polygon points="356,136 182,284 242,270" fill="url(#qlogoNeedleLeft)" />
+        {/* Right Facet (Complete Indigo Wing, uncut) */}
+        <polygon points="356,136 242,270 282,346" fill="url(#qlogoNeedleRight)" />
+        {/* Center Spine Highlight */}
+        <line x1="356" y1="136" x2="242" y2="270" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" strokeOpacity="0.95" />
+      </g>
 
       {/* Beacon Star */}
-      <circle cx="356" cy="136" r="5" fill="#ffffff" />
+      <circle cx="356" cy="136" r="5" fill="#ffffff" filter="url(#qlogoFilter)" />
     </svg>
   )
 }

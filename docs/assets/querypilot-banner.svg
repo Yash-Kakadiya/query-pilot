@@ -20,12 +20,12 @@
       <stop offset="50%" stop-color="#38bdf8" />
       <stop offset="100%" stop-color="#ffffff" />
     </linearGradient>
-    <linearGradient id="needleRB" x1="120" y1="130" x2="180" y2="70" gradientUnits="userSpaceOnUse">
+    <linearGradient id="needleRB" x1="120" y1="160" x2="180" y2="70" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#4338ca" />
       <stop offset="60%" stop-color="#6366f1" />
       <stop offset="100%" stop-color="#e0e7ff" />
     </linearGradient>
-    <linearGradient id="tailGradB" x1="130" y1="140" x2="202" y2="200" gradientUnits="userSpaceOnUse">
+    <linearGradient id="tailGradB" x1="135" y1="150" x2="198" y2="212" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#4f46e5" />
       <stop offset="45%" stop-color="#6366f1" />
       <stop offset="100%" stop-color="#38bdf8" />
@@ -49,14 +49,16 @@
     <circle cx="120" cy="120" r="74" fill="none" stroke="url(#ringGradB)" stroke-width="13" filter="url(#glowB)" />
     <!-- Orbit Arc -->
     <path d="M 75 120 A 45 45 0 0 1 155 90" stroke="#38bdf8" stroke-width="3.5" stroke-linecap="round" stroke-opacity="0.6" fill="none" />
-    <!-- Needle Left Wing -->
+    
+    <!-- 1. Q Tail (emerging from bottom right of compass) -->
+    <polygon points="128,154 140,170 186,216 200,202 146,148" fill="url(#tailGradB)" filter="url(#glowB)" />
+    <line x1="146" y1="148" x2="200" y2="202" stroke="#ffffff" stroke-width="1.2" stroke-opacity="0.85" />
+    
+    <!-- 2. Uncut Compass Needle -->
     <polygon points="172,70 90,140 120,132" fill="url(#needleLB)" />
-    <!-- Needle Right Wing -->
-    <polygon points="172,70 120,132 144,142" fill="url(#needleRB)" />
+    <polygon points="172,70 120,132 140,170" fill="url(#needleRB)" />
     <line x1="172" y1="70" x2="120" y2="132" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" />
-    <!-- Q Tail (Continues from compass edge 120,132 to 144,142) -->
-    <polygon points="120,132 184,206 202,194 144,142" fill="url(#tailGradB)" filter="url(#glowB)" />
-    <line x1="144" y1="142" x2="202" y2="194" stroke="#ffffff" stroke-width="1.2" stroke-opacity="0.85" />
+
     <!-- Beacon -->
     <circle cx="172" cy="70" r="3" fill="#ffffff" />
   </g>

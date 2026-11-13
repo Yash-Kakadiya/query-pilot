@@ -1,7 +1,8 @@
 """Generates QueryPilot professional logo, favicon, and banner assets.
 
-Clean, continuous geometry where the Q's diagonal tail stroke directly continues
-from the trailing edge of the navigation compass with zero overlap.
+The navigation compass is 100% complete and uncut.
+The Q's diagonal tail stroke emerges seamlessly from the bottom-right of the compass,
+aligning with the right wing tip and sweeping outward through the Q-ring.
 """
 
 from pathlib import Path
@@ -41,14 +42,14 @@ LOGO_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"
     </linearGradient>
 
     <!-- Pilot Needle Right Facet -->
-    <linearGradient id="needleRight" x1="240" y1="270" x2="355" y2="136" gradientUnits="userSpaceOnUse">
+    <linearGradient id="needleRight" x1="240" y1="350" x2="355" y2="136" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#4338ca" />
-      <stop offset="60%" stop-color="#6366f1" />
+      <stop offset="55%" stop-color="#6366f1" />
       <stop offset="100%" stop-color="#e0e7ff" />
     </linearGradient>
 
-    <!-- Continuous Tail Stroke (starts at compass edge 242,270 to 290,290) -->
-    <linearGradient id="tailGrad" x1="265" y1="280" x2="416" y2="410" gradientUnits="userSpaceOnUse">
+    <!-- Q Tail Gradient -->
+    <linearGradient id="tailGrad" x1="280" y1="330" x2="410" y2="430" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#4f46e5" />
       <stop offset="45%" stop-color="#6366f1" />
       <stop offset="100%" stop-color="#38bdf8" />
@@ -66,7 +67,12 @@ LOGO_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"
       <feComposite in="SourceGraphic" in2="blur" operator="over" />
     </filter>
 
-    <!-- Drop Shadow Filter -->
+    <!-- Needle Drop Shadow (Elevates compass above the tail and ring) -->
+    <filter id="needleShadow" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="2" dy="5" stdDeviation="6" flood-color="#000000" flood-opacity="0.6" />
+    </filter>
+
+    <!-- Base Drop Shadow -->
     <filter id="dropShadow" x="-10%" y="-10%" width="120%" height="120%">
       <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#000000" flood-opacity="0.6" />
     </filter>
@@ -95,19 +101,20 @@ LOGO_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"
   <path d="M 148 244 A 98 98 0 0 1 332 176" stroke="url(#trackGrad)" stroke-width="6" stroke-linecap="round" fill="none" />
   <path d="M 168 284 A 98 98 0 0 0 318 314" stroke="url(#trackGrad)" stroke-width="6" stroke-linecap="round" fill="none" />
 
-  <!-- Pilot Navigation Compass Needle -->
-  <!-- Left Facet (Cyan Wing) -->
-  <polygon points="356,136 182,284 242,270" fill="url(#needleLeft)" filter="url(#dropShadow)" />
-  <!-- Right Facet (Indigo Wing) -->
-  <polygon points="356,136 242,270 290,290" fill="url(#needleRight)" filter="url(#dropShadow)" />
-  <!-- Center Spine Highlight -->
-  <line x1="356" y1="136" x2="242" y2="270" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-opacity="0.95" />
+  <!-- 1. The "Q" Tail Stroke: Follows the bottom right of the compass -->
+  <!-- Starts under the right wing, shoots down-right from tip (282, 346) and edge (296, 304) -->
+  <polygon points="260,310 282,346 376,440 405,412 296,304" fill="url(#tailGrad)" filter="url(#coreGlow)" />
+  <line x1="296" y1="304" x2="405" y2="412" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-opacity="0.85" />
 
-  <!-- The "Q" Tail: Continues cleanly from the trailing edge of the compass (242,270) - (290,290) -->
-  <!-- Zero overlap, perfectly seamless transition through the Q ring -->
-  <polygon points="242,270 376,424 416,400 290,290" fill="url(#tailGrad)" filter="url(#coreGlow)" />
-  <!-- Tail Top Aerodynamic Highlight -->
-  <line x1="290" y1="290" x2="416" y2="400" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-opacity="0.85" />
+  <!-- 2. The Complete, Uncut Compass Needle: Rendered in full on top -->
+  <g filter="url(#needleShadow)">
+    <!-- Left Facet (Cyan Wing) -->
+    <polygon points="356,136 182,284 242,270" fill="url(#needleLeft)" />
+    <!-- Right Facet (Complete Indigo Wing, 100% visible and uncut!) -->
+    <polygon points="356,136 242,270 282,346" fill="url(#needleRight)" />
+    <!-- Center Spine Highlight -->
+    <line x1="356" y1="136" x2="242" y2="270" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-opacity="0.95" />
+  </g>
 
   <!-- North-East Guidance Beacon (Apex Star) -->
   <circle cx="356" cy="136" r="5" fill="#ffffff" filter="url(#coreGlow)" />
@@ -129,12 +136,12 @@ FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" w
       <stop offset="60%" stop-color="#38bdf8" />
       <stop offset="100%" stop-color="#ffffff" />
     </linearGradient>
-    <linearGradient id="favNeedleRight" x1="240" y1="270" x2="355" y2="136" gradientUnits="userSpaceOnUse">
+    <linearGradient id="favNeedleRight" x1="240" y1="350" x2="355" y2="136" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#4338ca" />
       <stop offset="60%" stop-color="#6366f1" />
       <stop offset="100%" stop-color="#e0e7ff" />
     </linearGradient>
-    <linearGradient id="favTail" x1="265" y1="280" x2="416" y2="410" gradientUnits="userSpaceOnUse">
+    <linearGradient id="favTail" x1="280" y1="330" x2="410" y2="430" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#4f46e5" />
       <stop offset="45%" stop-color="#6366f1" />
       <stop offset="100%" stop-color="#38bdf8" />
@@ -142,6 +149,9 @@ FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" w
     <filter id="favGlow" x="-20%" y="-20%" width="140%" height="140%">
       <feGaussianBlur stdDeviation="12" result="blur" />
       <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+    <filter id="favNeedleShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="2" dy="5" stdDeviation="6" flood-color="#000000" flood-opacity="0.6" />
     </filter>
   </defs>
 
@@ -154,14 +164,16 @@ FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" w
   <!-- Internal Orbit Arc -->
   <path d="M 158 250 A 98 98 0 0 1 336 182" stroke="#38bdf8" stroke-width="8" stroke-linecap="round" stroke-opacity="0.6" fill="none" />
 
-  <!-- Pilot Compass Needle -->
-  <polygon points="364,142 190,290 250,276" fill="url(#favNeedleLeft)" />
-  <polygon points="364,142 250,276 298,296" fill="url(#favNeedleRight)" />
-  <line x1="364" y1="142" x2="250" y2="276" stroke="#ffffff" stroke-width="3" stroke-linecap="round" />
+  <!-- 1. The "Q" Tail (emerges from bottom right of compass) -->
+  <polygon points="268,316 290,352 384,446 413,418 304,310" fill="url(#favTail)" />
+  <line x1="304" y1="310" x2="413" y2="418" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-opacity="0.85" />
 
-  <!-- Continuous Tail: starts from compass edge (250,276) - (298,296) -->
-  <polygon points="250,276 384,430 424,406 298,296" fill="url(#favTail)" />
-  <line x1="298" y1="296" x2="424" y2="406" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-opacity="0.85" />
+  <!-- 2. The Complete Uncut Compass Needle -->
+  <g filter="url(#favNeedleShadow)">
+    <polygon points="364,142 190,290 250,276" fill="url(#favNeedleLeft)" />
+    <polygon points="364,142 250,276 290,352" fill="url(#favNeedleRight)" />
+    <line x1="364" y1="142" x2="250" y2="276" stroke="#ffffff" stroke-width="3" stroke-linecap="round" />
+  </g>
 
   <!-- Beacon Star -->
   <circle cx="364" cy="142" r="6" fill="#ffffff" />
@@ -193,12 +205,12 @@ BANNER_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 260" wi
       <stop offset="50%" stop-color="#38bdf8" />
       <stop offset="100%" stop-color="#ffffff" />
     </linearGradient>
-    <linearGradient id="needleRB" x1="120" y1="130" x2="180" y2="70" gradientUnits="userSpaceOnUse">
+    <linearGradient id="needleRB" x1="120" y1="160" x2="180" y2="70" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#4338ca" />
       <stop offset="60%" stop-color="#6366f1" />
       <stop offset="100%" stop-color="#e0e7ff" />
     </linearGradient>
-    <linearGradient id="tailGradB" x1="130" y1="140" x2="202" y2="200" gradientUnits="userSpaceOnUse">
+    <linearGradient id="tailGradB" x1="135" y1="150" x2="198" y2="212" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#4f46e5" />
       <stop offset="45%" stop-color="#6366f1" />
       <stop offset="100%" stop-color="#38bdf8" />
@@ -222,14 +234,16 @@ BANNER_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 260" wi
     <circle cx="120" cy="120" r="74" fill="none" stroke="url(#ringGradB)" stroke-width="13" filter="url(#glowB)" />
     <!-- Orbit Arc -->
     <path d="M 75 120 A 45 45 0 0 1 155 90" stroke="#38bdf8" stroke-width="3.5" stroke-linecap="round" stroke-opacity="0.6" fill="none" />
-    <!-- Needle Left Wing -->
+    
+    <!-- 1. Q Tail (emerging from bottom right of compass) -->
+    <polygon points="128,154 140,170 186,216 200,202 146,148" fill="url(#tailGradB)" filter="url(#glowB)" />
+    <line x1="146" y1="148" x2="200" y2="202" stroke="#ffffff" stroke-width="1.2" stroke-opacity="0.85" />
+    
+    <!-- 2. Uncut Compass Needle -->
     <polygon points="172,70 90,140 120,132" fill="url(#needleLB)" />
-    <!-- Needle Right Wing -->
-    <polygon points="172,70 120,132 144,142" fill="url(#needleRB)" />
+    <polygon points="172,70 120,132 140,170" fill="url(#needleRB)" />
     <line x1="172" y1="70" x2="120" y2="132" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" />
-    <!-- Q Tail (Continues from compass edge 120,132 to 144,142) -->
-    <polygon points="120,132 184,206 202,194 144,142" fill="url(#tailGradB)" filter="url(#glowB)" />
-    <line x1="144" y1="142" x2="202" y2="194" stroke="#ffffff" stroke-width="1.2" stroke-opacity="0.85" />
+
     <!-- Beacon -->
     <circle cx="172" cy="70" r="3" fill="#ffffff" />
   </g>
