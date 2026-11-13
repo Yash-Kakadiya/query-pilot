@@ -166,7 +166,15 @@ pub fn run() {
                 .min_inner_size(960.0, 640.0)
                 .center()
                 .resizable(true)
-                .fullscreen(false)
+                .fullscreen(false);
+
+            let window_builder = if let Some(icon) = app.default_window_icon() {
+                window_builder.icon(icon.clone()).expect("Failed to set window icon")
+            } else {
+                window_builder
+            };
+
+            let window_builder = window_builder
                 .on_navigation(move |url| {
                     match evaluate_navigation_target(url, bound_port) {
                         NavigationDecision::AllowInternal => true,

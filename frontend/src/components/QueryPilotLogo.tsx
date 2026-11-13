@@ -23,28 +23,33 @@ export const QueryPilotLogo: React.FC<QueryPilotLogoProps> = ({
       fill="none"
     >
       <defs>
-        <radialGradient id="qlogoGlow" cx="50%" cy="40%" r="65%">
+        <radialGradient id="qlogoGlow" cx="50%" cy="42%" r="65%">
           <stop offset="0%" stopColor="#1e293b" />
-          <stop offset="60%" stopColor="#0f172a" />
+          <stop offset="55%" stopColor="#0f172a" />
           <stop offset="100%" stopColor="#090d16" />
         </radialGradient>
 
-        <linearGradient id="qlogoRing" x1="120" y1="100" x2="400" y2="420" gradientUnits="userSpaceOnUse">
+        <linearGradient id="qlogoRing" x1="100" y1="90" x2="410" y2="410" gradientUnits="userSpaceOnUse">
           <stop offset="0%" stopColor="#38bdf8" />
           <stop offset="45%" stopColor="#6366f1" />
           <stop offset="100%" stopColor="#a855f7" />
         </linearGradient>
 
-        <linearGradient id="qlogoNeedleLeft" x1="160" y1="310" x2="350" y2="160" gradientUnits="userSpaceOnUse">
+        <linearGradient id="qlogoNeedleLeft" x1="160" y1="310" x2="355" y2="145" gradientUnits="userSpaceOnUse">
           <stop offset="0%" stopColor="#0284c7" />
           <stop offset="50%" stopColor="#38bdf8" />
-          <stop offset="100%" stopColor="#e0f2fe" />
+          <stop offset="100%" stopColor="#f0f9ff" />
         </linearGradient>
 
-        <linearGradient id="qlogoNeedleRight" x1="240" y1="360" x2="350" y2="160" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#4f46e5" />
-          <stop offset="60%" stopColor="#6366f1" />
-          <stop offset="100%" stopColor="#c7d2fe" />
+        <linearGradient id="qlogoNeedleRight" x1="240" y1="360" x2="355" y2="145" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#4338ca" />
+          <stop offset="50%" stopColor="#6366f1" />
+          <stop offset="100%" stopColor="#e0e7ff" />
+        </linearGradient>
+
+        <linearGradient id="qlogoTail" x1="260" y1="260" x2="415" y2="415" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#6366f1" />
+          <stop offset="100%" stopColor="#38bdf8" />
         </linearGradient>
 
         <linearGradient id="qlogoTrack" x1="0" y1="0" x2="1" y2="1">
@@ -53,49 +58,50 @@ export const QueryPilotLogo: React.FC<QueryPilotLogoProps> = ({
         </linearGradient>
 
         <filter id="qlogoFilter" x="-15%" y="-15%" width="130%" height="130%">
-          <feGaussianBlur stdDeviation="10" result="blur" />
+          <feGaussianBlur stdDeviation="12" result="blur" />
           <feComposite in="SourceGraphic" in2="blur" operator="over" />
         </filter>
       </defs>
 
       {/* Squircle Canvas Base */}
-      <rect x="24" y="24" width="464" height="464" rx="108" fill="url(#qlogoGlow)" stroke="#1e293b" strokeWidth="6" />
+      <rect x="24" y="24" width="464" height="464" rx="108" fill="url(#qlogoGlow)" stroke="#1e293b" strokeWidth="5" />
 
       {/* Data Geometry Orbitals */}
-      <circle cx="248" cy="248" r="140" stroke="#334155" strokeWidth="2" strokeDasharray="6 8" strokeOpacity="0.4" />
-      <circle cx="248" cy="248" r="95" stroke="#334155" strokeWidth="2" strokeDasharray="4 6" strokeOpacity="0.3" />
+      <circle cx="248" cy="244" r="148" stroke="#334155" strokeWidth="2" strokeDasharray="6 8" strokeOpacity="0.35" />
+      <circle cx="248" cy="244" r="98" stroke="#334155" strokeWidth="2" strokeDasharray="4 6" strokeOpacity="0.25" />
+
+      {/* Precision Cardinal Ticks */}
+      <line x1="248" y1="62" x2="248" y2="74" stroke="#38bdf8" strokeWidth="3" strokeLinecap="round" />
+      <line x1="62" y1="244" x2="74" y2="244" stroke="#38bdf8" strokeWidth="3" strokeLinecap="round" />
+      <line x1="248" y1="414" x2="248" y2="426" stroke="#6366f1" strokeWidth="3" strokeLinecap="round" />
+      <line x1="414" y1="244" x2="426" y2="244" stroke="#818cf8" strokeWidth="3" strokeLinecap="round" />
 
       {/* Precision Q Ring */}
-      <path
-        d="M 248 92
-           A 156 156 0 1 0 384 326
-           L 410 366
-           A 22 22 0 0 1 376 390
-           L 346 350
-           A 156 156 0 0 0 248 92 Z"
-        fill="none"
+      <circle
+        cx="248"
+        cy="244"
+        r="152"
         stroke="url(#qlogoRing)"
         strokeWidth="26"
-        strokeLinecap="round"
-        strokeLinejoin="round"
+        fill="none"
         filter="url(#qlogoFilter)"
       />
 
       {/* Inner Layer Arcs */}
-      <path d="M 152 248 A 96 96 0 0 1 328 184" stroke="url(#qlogoTrack)" strokeWidth="6" strokeLinecap="round" />
-      <path d="M 172 288 A 96 96 0 0 0 316 316" stroke="url(#qlogoTrack)" strokeWidth="6" strokeLinecap="round" />
+      <path d="M 148 244 A 100 100 0 0 1 332 176" stroke="url(#qlogoTrack)" strokeWidth="6" strokeLinecap="round" />
+      <path d="M 168 284 A 100 100 0 0 0 318 314" stroke="url(#qlogoTrack)" strokeWidth="6" strokeLinecap="round" />
 
       {/* Pilot Compass Delta Arrow */}
-      <polygon points="358,138 184,286 244,272" fill="url(#qlogoNeedleLeft)" />
-      <polygon points="358,138 244,272 284,348" fill="url(#qlogoNeedleRight)" />
-      <line x1="358" y1="138" x2="244" y2="272" stroke="#ffffff" strokeWidth="3" strokeLinecap="round" />
+      <polygon points="356,136 182,284 242,270" fill="url(#qlogoNeedleLeft)" />
+      <polygon points="356,136 242,270 282,346" fill="url(#qlogoNeedleRight)" />
+      <line x1="356" y1="136" x2="242" y2="270" stroke="#ffffff" strokeWidth="3" strokeLinecap="round" strokeOpacity="0.95" />
 
-      {/* Q Tail Accent */}
-      <polygon points="252,286 392,416 364,424 234,302" fill="url(#qlogoRing)" opacity="0.95" />
-      <circle cx="392" cy="416" r="7" fill="#38bdf8" />
+      {/* The Q Tail Fin: Clean, Sharp Blade (NO dot / circle) */}
+      <polygon points="268,264 416,412 376,424 238,294" fill="url(#qlogoTail)" filter="url(#qlogoFilter)" />
+      <line x1="268" y1="264" x2="416" y2="412" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" strokeOpacity="0.8" />
 
       {/* Beacon Star */}
-      <circle cx="358" cy="138" r="5" fill="#ffffff" />
+      <circle cx="356" cy="136" r="5" fill="#ffffff" />
     </svg>
   )
 }
