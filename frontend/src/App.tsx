@@ -27,6 +27,7 @@ import {
   useAiStatus,
 } from './services/aiStatus'
 import { AiStatusIndicator } from './components/AiStatusIndicator'
+import { QueryPilotLogo } from './components/QueryPilotLogo'
 import { getPairingToken } from './services/agentClient'
 import './App.css'
 
@@ -434,7 +435,7 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator, ai
     <div className="app-container">
       <header className="app-header">
         <div className="brand">
-          <span className="brand-icon" aria-hidden="true">🧭</span>
+          <QueryPilotLogo size={38} className="brand-logo" />
           <h1 className="brand-title">QueryPilot</h1>
         </div>
         <p className="brand-subtitle">

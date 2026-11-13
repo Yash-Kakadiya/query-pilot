@@ -1,12 +1,22 @@
-# QueryPilot 🧭
-**Autonomous Natural-Language to SQL Analyst with Dual-Engine Dialect Routing & Guarded Local Execution**
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/querypilot-banner.png">
+    <img src="docs/assets/querypilot-banner.png" alt="QueryPilot Logo" width="760" />
+  </picture>
+</p>
 
-[![Status: Controlled Technical Preview](https://img.shields.io/badge/Status-Controlled_Preview-orange.svg)](#release-status--verification-evidence)
-[![Python: >=3.12](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](pyproject.toml)
-[![Frontend: React 19 + TypeScript](https://img.shields.io/badge/Frontend-React_19_%2B_TypeScript-61dafb.svg)](frontend/)
-[![Backend: FastAPI + Uvicorn](https://img.shields.io/badge/Backend-FastAPI_%2B_Uvicorn-009688.svg)](src/query_pilot/)
-[![Tests: 1835 Python | 448 Frontend Passing](https://img.shields.io/badge/Tests-1835_Python_%7C_448_Frontend_Passing-brightgreen.svg)](#testing)
-[![Engines: SQL Server & SQLite](https://img.shields.io/badge/Engines-SQL_Server_%26_SQLite-purple.svg)](#supported-database-engines)
+<p align="center">
+  <strong>Autonomous Natural-Language to SQL Analyst with Dual-Engine Dialect Routing &amp; Guarded Local Execution</strong>
+</p>
+
+<p align="center">
+  <a href="#release-status--verification-evidence"><img src="https://img.shields.io/badge/Status-Controlled_Preview-orange.svg" alt="Status" /></a>
+  <a href="pyproject.toml"><img src="https://img.shields.io/badge/Python-3.12%2B-blue.svg" alt="Python" /></a>
+  <a href="frontend/"><img src="https://img.shields.io/badge/Frontend-React_19_%2B_TypeScript-61dafb.svg" alt="Frontend" /></a>
+  <a href="src/query_pilot/"><img src="https://img.shields.io/badge/Backend-FastAPI_%2B_Uvicorn-009688.svg" alt="Backend" /></a>
+  <a href="#testing"><img src="https://img.shields.io/badge/Tests-1903_Python_%7C_516_Frontend_Passing-brightgreen.svg" alt="Tests" /></a>
+  <a href="#supported-database-engines"><img src="https://img.shields.io/badge/Engines-SQL_Server_%26_SQLite-purple.svg" alt="Engines" /></a>
+</p>
 
 > [!IMPORTANT]
 > **Controlled Technical Preview**: QueryPilot is an open-source technical prototype authorized strictly for local development, research evaluation, and authorized demonstrations. It is **not** certified under SOC2, HIPAA, or general enterprise production compliance frameworks. Public distribution to PyPI is currently blocked until final release criteria are met.
