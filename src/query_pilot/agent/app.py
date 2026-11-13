@@ -1090,6 +1090,19 @@ def create_agent_app(
     # Production Frontend Static Serving & SPA Fallback
     # --------------------------------------------------------------------------
 
+    @app.get("/logo.svg", include_in_schema=False)
+    @app.get("/logo.png", include_in_schema=False)
+    @app.get("/favicon.svg", include_in_schema=False)
+    @app.get("/favicon.ico", include_in_schema=False)
+    def serve_root_brand_asset(request: Request):
+        """Serve brand icon assets at root URL for direct browser and link resolution."""
+        path = request.url.path.lstrip("/")
+        target = resolved_config.resolved_static_dir / path
+        if target.is_file():
+            media = "image/svg+xml" if path.endswith(".svg") else ("image/png" if path.endswith(".png") else "image/x-icon")
+            return FileResponse(target, media_type=media)
+        return Response(status_code=404)
+
     @app.get("/", include_in_schema=False)
     @app.get("/app", include_in_schema=False)
     def redirect_to_app():

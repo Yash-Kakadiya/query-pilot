@@ -20,6 +20,15 @@ pub struct AppState {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
+        let app_id: Vec<u16> = "QueryPilot.Desktop.App\0".encode_utf16().collect();
+        unsafe {
+            SetCurrentProcessExplicitAppUserModelID(app_id.as_ptr());
+        }
+    }
+
     let show_popups = std::env::var("QUERYPILOT_NO_POPUP").is_err();
 
     // 1. Single-Instance Enforcement
@@ -168,7 +177,12 @@ pub fn run() {
                 .resizable(true)
                 .fullscreen(false);
 
-            let window_builder = if let Some(icon) = app.default_window_icon() {
+            let app_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/128x128@2x.png"))
+                .ok();
+
+            let window_builder = if let Some(ref icon) = app_icon {
+                window_builder.icon(icon.clone()).expect("Failed to set window icon")
+            } else if let Some(icon) = app.default_window_icon() {
                 window_builder.icon(icon.clone()).expect("Failed to set window icon")
             } else {
                 window_builder
@@ -191,6 +205,9 @@ pub fn run() {
                 });
 
             let window = window_builder.build()?;
+            if let Some(ref icon) = app_icon {
+                let _ = window.set_icon(icon.clone());
+            }
 
             // Steps 2-5: Wait for WebView2 controller, create and inject session cookie
             #[cfg(windows)]
