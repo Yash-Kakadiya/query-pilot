@@ -344,6 +344,39 @@ def create_agent_app(
         return LogoutResponse()
 
     @app.post(
+        "/agent/v1/system/open-browser",
+        responses={400: {"model": AgentErrorResponse}},
+    )
+    async def open_external_browser(
+        request: Request,
+    ) -> Response:
+        """Securely launch an approved external HTTPS URL in the default system browser."""
+        import webbrowser
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        target_url = str(body.get("url", "")).strip()
+        allowed_prefixes = (
+            "https://aistudio.google.com/",
+            "https://ai.google.dev/",
+            "https://github.com/",
+        )
+        if any(target_url.startswith(prefix) for prefix in allowed_prefixes):
+            try:
+                webbrowser.open(target_url)
+                return JSONResponse({"status": "ok", "opened": target_url})
+            except Exception as exc:
+                return JSONResponse(
+                    {"status": "error", "detail": f"Failed to open browser: {exc}"},
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+        return JSONResponse(
+            {"status": "error", "detail": "Target URL is not in permitted domain allowlist."},
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
+    @app.post(
         "/agent/v1/auth/rotate-token",
         response_model=RotateTokenResponse,
         responses={

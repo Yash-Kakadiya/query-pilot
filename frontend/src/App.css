@@ -308,18 +308,6 @@
   color: #ffffff;
 }
 
-.agent-logout-btn {
-  background: var(--pill-bg);
-  border: 1px solid var(--border-color);
-  color: var(--text-muted);
-}
-
-.agent-logout-btn:hover {
-  color: #dc2626;
-  background-color: rgba(220, 38, 38, 0.08);
-  border-color: rgba(220, 38, 38, 0.25);
-}
-
 .agent-auth-btn {
   background: #2563eb;
   border: 1px solid #1d4ed8;

@@ -175,7 +175,8 @@ pub fn run() {
                 .min_inner_size(960.0, 640.0)
                 .center()
                 .resizable(true)
-                .fullscreen(false);
+                .fullscreen(false)
+                .maximized(true);
 
             let app_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/128x128@2x.png"))
                 .ok();
@@ -205,6 +206,7 @@ pub fn run() {
                 });
 
             let window = window_builder.build()?;
+            let _ = window.maximize();
             if let Some(ref icon) = app_icon {
                 let _ = window.set_icon(icon.clone());
             }

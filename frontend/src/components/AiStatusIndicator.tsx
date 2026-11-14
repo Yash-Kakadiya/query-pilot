@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import type { AiAvailabilityStatus } from '../services/aiStatus.ts'
 import { getStoredGeminiKey, setStoredGeminiKey } from '../services/geminiKeyStorage.ts'
+import { openExternalUrl } from '../services/systemBrowser.ts'
 import './AiStatusIndicator.css'
 
 export interface AiStatusIndicatorProps {
@@ -143,15 +144,16 @@ export function AiStatusIndicator({
             </button>
           </div>
 
-          <a
-            href="https://aistudio.google.com/api-keys"
-            target="_blank"
-            rel="noopener noreferrer"
+          <button
+            type="button"
             className="ai-gemini-get-key-btn"
+            onClick={() => {
+              void openExternalUrl('https://aistudio.google.com/api-keys')
+            }}
             title="Open Google AI Studio to generate a free Gemini API key"
           >
             Get Free Gemini 🗝️
-          </a>
+          </button>
         </div>
 
         <div className="ai-gemini-key-status-indicator">

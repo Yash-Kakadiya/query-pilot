@@ -28,7 +28,7 @@ import {
 } from './services/aiStatus'
 import { AiStatusIndicator } from './components/AiStatusIndicator'
 import { QueryPilotLogo } from './components/QueryPilotLogo'
-import { getPairingToken } from './services/agentClient'
+import { SettingsModal } from './components/SettingsModal'
 import './App.css'
 
 export interface AppProps {
@@ -47,6 +47,7 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator, ai
   const [isOnboardingOpen, setIsOnboardingOpen] = useState<boolean>(false)
   const [isMetricModalOpen, setIsMetricModalOpen] = useState<boolean>(false)
   const [isHistoryDrawerOpen, setIsHistoryDrawerOpen] = useState<boolean>(false)
+  const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false)
 
   // 3. Decoupled SQL Generation coordinator (Phase 7.3 / F28-A9-B6)
   const { state: sqlGenState, coordinator: sqlGenCoordinator } = useSqlGeneration(sqlCoordinator)
@@ -202,26 +203,6 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator, ai
 
   const handleAgentBootstrap = async (token: string) => {
     return coordinator.submitBootstrap(token)
-  }
-
-  const [copiedToken, setCopiedToken] = useState<boolean>(false)
-
-  const handleCopyPairingKey = async () => {
-    try {
-      const res = await getPairingToken()
-      if (res.pairing_token) {
-        await navigator.clipboard.writeText(res.pairing_token)
-        setCopiedToken(true)
-        setTimeout(() => setCopiedToken(false), 3000)
-      }
-    } catch {
-      // Ignore or fall back gracefully
-    }
-  }
-
-  const handleAgentLogout = async () => {
-    sqlGenCoordinator.clearConversationContext()
-    await coordinator.logout()
   }
 
   const handleResetConversation = () => {
@@ -495,25 +476,6 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator, ai
             </div>
 
             <div className="agent-session-actions">
-              {agentSession.status === 'authenticated' && (
-                <>
-                  <button
-                    type="button"
-                    className="agent-action-btn agent-copy-token-btn"
-                    onClick={handleCopyPairingKey}
-                    title="Copy pairing token to connect web app hosted on Render"
-                  >
-                    {copiedToken ? '✓ Copied Pairing Key!' : '🔗 Copy Web Pairing Key'}
-                  </button>
-                  <button
-                    type="button"
-                    className="agent-action-btn agent-logout-btn"
-                    onClick={handleAgentLogout}
-                  >
-                    Disconnect / Logout
-                  </button>
-                </>
-              )}
               {agentSession.status === 'auth_required' && (
                 <button
                   type="button"
@@ -814,6 +776,23 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator, ai
           setReviewedSql('')
         }}
         onNewTopic={handleResetConversation}
+      />
+
+      {/* Floating Bottom-Left Settings Trigger */}
+      <button
+        type="button"
+        className="settings-bottom-left-trigger"
+        onClick={() => setIsSettingsOpen(true)}
+        title="Application Settings (⚙️)"
+        aria-label="Open Application Settings"
+      >
+        <span className="settings-trigger-icon" aria-hidden="true">⚙️</span>
+      </button>
+
+      {/* Settings Modal */}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
       />
     </div>
   )
