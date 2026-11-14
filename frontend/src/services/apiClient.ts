@@ -5,6 +5,7 @@ import {
   type QueryResponse,
   type ValidationErrorDetail,
 } from '../types/api.ts'
+import { getStoredGeminiKey } from './geminiKeyStorage.ts'
 
 /**
  * Options for client requests.
@@ -67,9 +68,6 @@ export function getApiBaseUrl(customEnvUrl?: string): string {
       : (import.meta as { env?: Record<string, string | undefined> })?.env?.VITE_API_BASE_URL
 
   if (envUrl === undefined || envUrl === null || envUrl.trim() === '') {
-    if (typeof window !== 'undefined' && window.location.hostname === 'querypilot-frontend-3tz3.onrender.com') {
-      return 'https://querypilot-backend-7bug.onrender.com'
-    }
     return '/api'
   }
 
@@ -132,11 +130,16 @@ export async function getHealth(signal?: AbortSignal): Promise<HealthResponse> {
   let response: Response
   try {
     const url = resolveEndpoint('/health')
+    const storedGeminiKey = getStoredGeminiKey()
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+    }
+    if (storedGeminiKey) {
+      headers['X-Gemini-API-Key'] = storedGeminiKey
+    }
     response = await fetch(url, {
       method: 'GET',
-      headers: {
-        Accept: 'application/json',
-      },
+      headers,
       signal,
     })
   } catch (err: unknown) {

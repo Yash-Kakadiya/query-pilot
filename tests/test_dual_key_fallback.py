@@ -258,3 +258,31 @@ def test_no_credentials_leakage_in_logs_or_errors(minimal_request, caplog):
     if diag.retry_guidance:
         assert secret_key_1 not in diag.retry_guidance
         assert secret_key_2 not in diag.retry_guidance
+
+
+def test_primary_auth_failure_falls_back_when_fallback_on_any_error_enabled(
+    minimal_request, mock_success_response, caplog
+):
+    primary_client = MagicMock()
+    primary_client.models.generate_content.side_effect = Exception("403 Forbidden: API_KEY_INVALID")
+
+    secondary_client = MagicMock()
+    secondary_client.models.generate_content.return_value = mock_success_response
+
+    generator = GeminiSQLGenerator(
+        api_key="custom-user-primary-key",
+        client=primary_client,
+        secondary_client=secondary_client,
+        enable_retrieval=False,
+        fallback_on_any_error=True,
+    )
+
+    with caplog.at_level(logging.INFO):
+        result = generator.generate(minimal_request)
+
+    assert result.status == SQLGenerationStatus.ANSWERABLE
+    assert "SELECT student_id FROM students;" in result.sql
+    assert primary_client.models.generate_content.call_count == 1
+    assert secondary_client.models.generate_content.call_count == 1
+    assert "Attempting bounded fallback using backup keys" in caplog.text
+

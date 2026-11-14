@@ -158,6 +158,8 @@ class GeminiSQLGenerator(SQLGenerator):
         client: Optional[Any] = None,
         secondary_api_key: Optional[str] = None,
         secondary_client: Optional[Any] = None,
+        fallback_on_any_error: bool = False,
+        backup_keys: Optional[List[str]] = None,
     ):
         """Initialize Gemini SQL Generator.
 
@@ -186,6 +188,29 @@ class GeminiSQLGenerator(SQLGenerator):
 
         if api_key is not None:
             resolved_key = api_key.strip()
+            # If user provided an explicit custom key in production runtime, auto-resolve environment keys as backups
+            if client is None and cfg is None:
+                try:
+                    cfg = get_settings()
+                except Exception:
+                    pass
+            if client is None and cfg and cfg.GEMINI_API_KEY:
+                env_k1 = cfg.GEMINI_API_KEY.get_secret_value().strip()
+                if env_k1 and env_k1 != resolved_key and env_k1 != "your_gemini_api_key_here":
+                    if secondary_api_key is None and resolved_secondary_key is None and secondary_client is None:
+                        resolved_secondary_key = env_k1
+                    else:
+                        if backup_keys is None:
+                            backup_keys = []
+                        if env_k1 not in backup_keys:
+                            backup_keys.append(env_k1)
+            if client is None and cfg and getattr(cfg, "GEMINI_API_KEY_2", None):
+                env_k2 = cfg.GEMINI_API_KEY_2.get_secret_value().strip()
+                if env_k2 and env_k2 not in (resolved_key, resolved_secondary_key, "your_gemini_api_key_2_here"):
+                    if backup_keys is None:
+                        backup_keys = []
+                    if env_k2 not in backup_keys:
+                        backup_keys.append(env_k2)
         else:
             if cfg is None:
                 try:
@@ -201,7 +226,7 @@ class GeminiSQLGenerator(SQLGenerator):
 
         if secondary_api_key is not None:
             resolved_secondary_key = secondary_api_key.strip()
-        elif cfg and getattr(cfg, "GEMINI_API_KEY_2", None):
+        elif cfg and getattr(cfg, "GEMINI_API_KEY_2", None) and resolved_secondary_key is None:
             resolved_secondary_key = cfg.GEMINI_API_KEY_2.get_secret_value().strip()
 
         if not resolved_key or resolved_key == "your_gemini_api_key_here":
@@ -211,6 +236,8 @@ class GeminiSQLGenerator(SQLGenerator):
 
         self.model_name = model_name or resolved_model
         self.last_usage: Optional[LLMUsageMetadata] = None
+        self.fallback_on_any_error = fallback_on_any_error
+        self.backup_clients: list[tuple[Any, str]] = []
 
         if not enable_retrieval:
             self.retriever: Optional[DomainContextRetriever] = None
@@ -236,15 +263,27 @@ class GeminiSQLGenerator(SQLGenerator):
 
         if secondary_client is not None:
             self.secondary_client = secondary_client
+            self.backup_clients.append((secondary_client, "secondary"))
         elif resolved_secondary_key:
             try:
                 logger.debug("Initializing secondary Gemini Client for quota fallback")
                 self.secondary_client = genai.Client(api_key=resolved_secondary_key, http_options=opts)
+                self.backup_clients.append((self.secondary_client, "secondary"))
             except Exception as exc:
                 logger.warning("Failed to initialize secondary Gemini Client: %s", type(exc).__name__)
                 self.secondary_client = None
         else:
             self.secondary_client = None
+
+        if backup_keys:
+            for b_idx, b_key in enumerate(backup_keys, start=1):
+                clean_b = b_key.strip() if isinstance(b_key, str) else None
+                if clean_b and clean_b not in (resolved_key, resolved_secondary_key):
+                    try:
+                        b_cl = genai.Client(api_key=clean_b, http_options=opts)
+                        self.backup_clients.append((b_cl, f"backup_{b_idx}"))
+                    except Exception as b_exc:
+                        logger.warning("Failed to initialize backup Gemini Client #%d: %s", b_idx, type(b_exc).__name__)
 
     @trace_gemini_call(name="gemini_generate_sql", run_type="llm")
     def generate(self, request: SQLGenerationRequest) -> SQLGenerationResponse:
@@ -355,18 +394,33 @@ class GeminiSQLGenerator(SQLGenerator):
             from query_pilot.api.models import GenerationFailureClassification
 
             diagnostic = classify_generation_failure(exc)
-            if (
-                diagnostic.classification == GenerationFailureClassification.QUOTA_EXHAUSTED
-                and self.secondary_client is not None
-            ):
-                logger.info(
-                    "Primary Gemini key quota exhausted. Attempting bounded fallback using secondary key."
-                )
-                try:
-                    response = _call_client_with_models(self.secondary_client, candidate_models)
-                except Exception as sec_exc:
-                    logger.warning("Secondary Gemini key attempt also failed: %s", type(sec_exc).__name__)
-                    raise ProviderAPIError(f"Gemini API request failed on fallback key: {sec_exc}") from sec_exc
+            is_quota = diagnostic.classification == GenerationFailureClassification.QUOTA_EXHAUSTED
+            should_fallback = (self.fallback_on_any_error or is_quota)
+
+            if should_fallback and self.backup_clients:
+                if is_quota:
+                    logger.info(
+                        "Primary Gemini key quota exhausted. Attempting bounded fallback using secondary key."
+                    )
+                else:
+                    logger.info(
+                        "Primary Gemini key failed (%s: %s). Attempting bounded fallback using backup keys.",
+                        type(exc).__name__,
+                        exc,
+                    )
+                fallback_success = False
+                fallback_error = exc
+                for b_client, b_label in self.backup_clients:
+                    try:
+                        response = _call_client_with_models(b_client, candidate_models)
+                        fallback_success = True
+                        break
+                    except Exception as sec_exc:
+                        fallback_error = sec_exc
+                        logger.warning("%s Gemini key attempt also failed: %s", b_label, type(sec_exc).__name__)
+
+                if not fallback_success:
+                    raise ProviderAPIError(f"Gemini API request failed on fallback key: {fallback_error}") from fallback_error
             else:
                 raise ProviderAPIError(
                     f"Gemini API request failed: {exc}"

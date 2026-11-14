@@ -58,14 +58,7 @@ jobs:
         env:
           GEMINI_API_KEY: "ci-dummy-key-for-test-collection"
         run: |
-          pytest -o pythonpath="src ." -m "not integration" --ignore-glob="tests/test_browser_*.py"
-
-      - name: Run browser acceptance journeys
-        env:
-          GEMINI_API_KEY: "ci-dummy-key-for-test-collection"
-        run: |
-          google-chrome --version || which google-chrome || which chromium-browser
-          pytest -o pythonpath="src ." tests/test_browser_*.py
+          pytest -o pythonpath="src ." -m "not integration"
 
       - name: Build distribution wheel
         run: |
@@ -73,4 +66,4 @@ jobs:
 
       - name: Verify clean dependency-resolved installation
         run: |
-          python scripts/verify_clean_install.py --mode dependency-resolved --wheel dist/query_pilot-0.1.0-py3-none-any.whl --skip-loopback
+          python scripts/verify_clean_install.py --mode dependency-resolved --wheel dist/query_pilot-0.2.0-py3-none-any.whl --skip-loopback

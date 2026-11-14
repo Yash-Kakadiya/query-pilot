@@ -24,6 +24,7 @@ import {
   getSessionAccessKey,
   type RequestOptions,
 } from './apiClient.ts'
+import { getStoredGeminiKey } from './geminiKeyStorage.ts'
 import {
   ApiClientError,
   type GenerateSQLRequest,
@@ -56,9 +57,6 @@ export function getV1ApiBaseUrl(customEnvUrl?: string): string {
           : (import.meta as { env?: Record<string, string | undefined> })?.env?.VITE_API_BASE_URL)
 
   if (envUrl === undefined || envUrl === null || envUrl.trim() === '') {
-    if (typeof window !== 'undefined' && window.location.hostname === 'querypilot-frontend-3tz3.onrender.com') {
-      return 'https://querypilot-backend-7bug.onrender.com'
-    }
     return ''
   }
 
@@ -156,6 +154,11 @@ async function sendV1Request<T>(
   const effectiveProfileId = options?.profileId?.trim()
   if (effectiveProfileId) {
     headers['X-Profile-ID'] = effectiveProfileId
+  }
+
+  const effectiveGeminiKey = getStoredGeminiKey()
+  if (effectiveGeminiKey) {
+    headers['X-Gemini-API-Key'] = effectiveGeminiKey
   }
 
   let response: Response

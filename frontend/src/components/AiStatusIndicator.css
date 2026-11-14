@@ -4,8 +4,8 @@
   display: inline-flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.3rem;
-  padding: 0.6rem 1.25rem;
+  gap: 0.45rem;
+  padding: 0.8rem 1.4rem;
   background: var(--card-bg, #1e293b);
   border: 1px solid var(--border-color, #334155);
   border-radius: 12px;
@@ -114,7 +114,7 @@
   font-size: 0.78rem;
   color: var(--text-muted, #94a3b8);
   margin: 0;
-  max-width: 600px;
+  max-width: 650px;
   line-height: 1.35;
 }
 
@@ -129,11 +129,153 @@
   margin-top: 0.1rem;
 }
 
+/* Gemini API Key Section */
+.ai-gemini-key-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+  width: 100%;
+  max-width: 650px;
+}
+
+.ai-gemini-key-input-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  width: 100%;
+  flex-wrap: wrap;
+}
+
+.ai-gemini-key-input-wrapper {
+  display: inline-flex;
+  align-items: center;
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid var(--border-color, #334155);
+  border-radius: 8px;
+  padding: 0.2rem 0.5rem;
+  flex: 1 1 280px;
+  max-width: 440px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.ai-gemini-key-input-wrapper:focus-within {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.ai-gemini-key-icon {
+  font-size: 0.85rem;
+  margin-right: 0.35rem;
+  opacity: 0.8;
+}
+
+.ai-gemini-key-input {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-heading, #f8fafc);
+  font-size: 0.78rem;
+  font-family: var(--font-mono, monospace);
+  flex: 1;
+  min-width: 150px;
+}
+
+.ai-gemini-key-input::placeholder {
+  color: #64748b;
+  font-family: inherit;
+}
+
+.ai-gemini-key-clear-btn {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font-size: 0.75rem;
+  cursor: pointer;
+  padding: 0.15rem 0.3rem;
+  border-radius: 4px;
+}
+
+.ai-gemini-key-clear-btn:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.ai-gemini-key-toggle-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #cbd5e1;
+  font-size: 0.68rem;
+  cursor: pointer;
+  padding: 0.18rem 0.45rem;
+  border-radius: 4px;
+  margin-left: 0.25rem;
+  transition: background 0.15s ease;
+}
+
+.ai-gemini-key-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.ai-gemini-get-key-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #ffffff;
+  background: linear-gradient(135deg, #2563eb, #7c3aed);
+  border: 1px solid rgba(124, 58, 237, 0.5);
+  border-radius: 8px;
+  text-decoration: none;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.3);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+  white-space: nowrap;
+}
+
+.ai-gemini-get-key-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.45);
+  opacity: 0.95;
+}
+
+.ai-gemini-get-key-btn:active {
+  transform: translateY(0);
+}
+
+.ai-gemini-key-status-indicator {
+  font-size: 0.7rem;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+.ai-gemini-badge-custom {
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  padding: 0.12rem 0.5rem;
+  border-radius: 4px;
+}
+
+.ai-gemini-badge-default {
+  color: #94a3b8;
+  background: rgba(148, 163, 184, 0.06);
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  padding: 0.12rem 0.5rem;
+  border-radius: 4px;
+}
+
 .ai-status-scope-notice {
   font-size: 0.68rem;
   color: var(--text-muted, #64748b);
   opacity: 0.85;
-  margin-top: 0.1rem;
+  margin-top: 0.15rem;
 }
 
 .ai-status-retry-button {
@@ -156,4 +298,15 @@
 .ai-status-retry-button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+@keyframes pulse-dot {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.85);
+  }
 }

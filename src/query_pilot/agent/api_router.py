@@ -66,6 +66,8 @@ ALLOWED_FORWARD_HEADERS: Set[str] = {
     "accept",
     "x-request-id",
     "x-querypilot-access-key",
+    "x-profile-id",
+    "x-gemini-api-key",
     "user-agent",
 }
 
@@ -166,8 +168,36 @@ async def _forward_post_request(
 
 @api_router.get("/health")
 async def proxy_health(request: Request) -> Response:
-    """Proxy health check to upstream API, representing upstream liveness truthfully."""
+    """Proxy health check to upstream API or report in-process health in desktop mode."""
     config: AgentConfig = request.app.state.config
+    custom_gemini_key = request.headers.get("x-gemini-api-key")
+    if custom_gemini_key:
+        custom_gemini_key = custom_gemini_key.strip()
+
+    # In desktop mode, evaluate local in-process AI readiness directly
+    if getattr(config, "desktop_mode", False):
+        import os
+        from pathlib import Path
+        from dotenv import load_dotenv
+
+        user_env = Path.home() / ".query_pilot" / ".env"
+        if user_env.is_file():
+            load_dotenv(user_env)
+        load_dotenv()
+
+        has_key = bool(custom_gemini_key or os.getenv("GEMINI_API_KEY"))
+        if has_key:
+            return JSONResponse(
+                status_code=status.HTTP_200_OK,
+                content={
+                    "status": "healthy",
+                    "version": "0.2.0",
+                    "dialect": "T-SQL",
+                    "mode": "in_process",
+                    "primary_key": "custom" if custom_gemini_key else "environment",
+                },
+            )
+
     client = get_upstream_client(request)
     target_url = f"{config.upstream_api_url}/health"
     timeout = min(config.upstream_timeout_seconds, 5.0)
@@ -211,7 +241,7 @@ async def proxy_health(request: Request) -> Response:
                 status_code=status.HTTP_200_OK,
                 content={
                     "status": "healthy",
-                    "version": "0.1.0",
+                    "version": "0.2.0",
                     "dialect": "T-SQL",
                     "mode": "in_process",
                 },
@@ -238,8 +268,19 @@ def _try_local_generate_sql(request: Request, body_bytes: bytes) -> Optional[Res
         from query_pilot.sql.generation import SQLGenerationRequest, SQLGenerationStatus
 
         req_model = GenerateSQLRequest.model_validate_json(body_bytes)
-        generator = getattr(request.app.state, "sql_generator", None)
-        if generator is None:
+
+        # Extract client-supplied custom Gemini key (header or payload)
+        custom_key = request.headers.get("x-gemini-api-key")
+        if not custom_key:
+            try:
+                raw_dict = json.loads(body_bytes.decode("utf-8"))
+                custom_key = raw_dict.get("gemini_api_key")
+            except Exception:
+                pass
+        custom_key = custom_key.strip() if custom_key else None
+
+        cached_gen, cached_key = getattr(request.app.state, "sql_generator_cache", (None, None))
+        if cached_gen is None or cached_key != custom_key:
             import sys
             catalog_candidates = [
                 Path(sys.executable).parent / "data" / "knowledge" / "catalog.json",
@@ -248,11 +289,15 @@ def _try_local_generate_sql(request: Request, body_bytes: bytes) -> Optional[Res
                 Path.cwd() / "data" / "knowledge" / "catalog.json",
             ]
             cat_path = next((p for p in catalog_candidates if p.is_file()), None)
-            if cat_path:
-                generator = GeminiSQLGenerator(catalog_path=cat_path)
-            else:
-                generator = GeminiSQLGenerator(enable_retrieval=False)
-            request.app.state.sql_generator = generator
+            generator = GeminiSQLGenerator(
+                api_key=custom_key,
+                catalog_path=cat_path,
+                enable_retrieval=(cat_path is not None),
+                fallback_on_any_error=True,
+            )
+            request.app.state.sql_generator_cache = (generator, custom_key)
+        else:
+            generator = cached_gen
 
         db_schema = req_model.schema_context.to_database_schema()
         instructions: Optional[str] = None
