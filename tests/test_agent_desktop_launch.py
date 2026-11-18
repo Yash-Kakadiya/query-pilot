@@ -234,18 +234,16 @@ class TestDesktopEndToEndExecution:
         # Run desktop sidecar in a background thread
         server_instance = None
 
-        server_cls = _get_desktop_agent_server_class()
-        orig_init = server_cls.__init__
-
-        def intercepted_init(self, *args, **kwargs):
+        def on_server_created(srv):
             nonlocal server_instance
-            orig_init(self, *args, **kwargs)
-            server_instance = self
-
-        server_cls.__init__ = intercepted_init
+            server_instance = srv
 
         t = threading.Thread(
-            target=lambda: run_desktop_sidecar(config=config, on_ready=on_ready),
+            target=lambda: run_desktop_sidecar(
+                config=config,
+                on_ready=on_ready,
+                on_server_created=on_server_created,
+            ),
             daemon=True,
         )
         t.start()
@@ -260,9 +258,9 @@ class TestDesktopEndToEndExecution:
             with urllib.request.urlopen(req, timeout=2.0) as resp:
                 assert resp.status in {200, 503}  # 200 if static files exist, 503 HTML if static_dir unbuilt
         finally:
-            if server_instance is not None:
-                server_instance.should_exit = True
-            t.join(timeout=4.0)
+            assert server_instance is not None, "Failed to capture running server instance for shutdown"
+            server_instance.should_exit = True
+            t.join(timeout=6.0)
 
         # Verify port is released after shutdown (poll briefly with SO_REUSEADDR to allow OS socket release)
         port_released = False

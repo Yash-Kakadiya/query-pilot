@@ -631,8 +631,15 @@ def emit_desktop_ready_handshake(port: int, pid: int) -> None:
     sys.stdout.flush()
 
 
+_DESKTOP_AGENT_SERVER_CLS: Optional[type] = None
+
+
 def _get_desktop_agent_server_class() -> type:
     """Dynamically define and return DesktopAgentServer subclassing uvicorn.Server."""
+    global _DESKTOP_AGENT_SERVER_CLS
+    if _DESKTOP_AGENT_SERVER_CLS is not None:
+        return _DESKTOP_AGENT_SERVER_CLS
+
     import uvicorn
 
     class DesktopAgentServer(uvicorn.Server):
@@ -664,12 +671,14 @@ def _get_desktop_agent_server_class() -> type:
                         pass
                 self.on_ready(bound_port, os.getpid())
 
-    return DesktopAgentServer
+    _DESKTOP_AGENT_SERVER_CLS = DesktopAgentServer
+    return _DESKTOP_AGENT_SERVER_CLS
 
 
 def run_desktop_sidecar(
     config: AgentConfig,
     on_ready: Optional[Callable[[int, int], None]] = None,
+    on_server_created: Optional[Callable[[Any], None]] = None,
 ) -> int:
     """Run local agent in desktop sidecar mode with pre-bound ephemeral loopback socket.
 
@@ -753,6 +762,8 @@ def run_desktop_sidecar(
         config=uvicorn_config,
         on_ready=on_ready or emit_desktop_ready_handshake,
     )
+    if on_server_created is not None:
+        on_server_created(server)
 
     try:
         server.run(sockets=[server_sock])
