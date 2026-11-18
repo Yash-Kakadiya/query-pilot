@@ -221,6 +221,7 @@ class TestDesktopEndToEndExecution:
             token_dir=token_dir,
             profiles_file=profiles_file,
             desktop_mode=True,
+            bind_port=0,
         )
 
         ready_event = threading.Event()
@@ -263,14 +264,22 @@ class TestDesktopEndToEndExecution:
                 server_instance.should_exit = True
             t.join(timeout=4.0)
 
-        # Verify port is released after shutdown (using SO_REUSEADDR to handle TCP TIME_WAIT)
-        test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        test_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            test_sock.bind(("127.0.0.1", bound_port))
-            # Successfully rebound -> socket was properly closed
-            test_sock.close()
-        except OSError:
+        # Verify port is released after shutdown (poll briefly with SO_REUSEADDR to allow OS socket release)
+        port_released = False
+        deadline = time.time() + 5.0
+        while time.time() < deadline:
+            test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            test_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                test_sock.bind(("127.0.0.1", bound_port))
+                test_sock.close()
+                port_released = True
+                break
+            except OSError:
+                test_sock.close()
+                time.sleep(0.1)
+
+        if not port_released:
             pytest.fail(f"Socket port {bound_port} was leaked after server shutdown")
 
 
