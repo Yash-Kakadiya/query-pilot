@@ -270,11 +270,16 @@ def validate_safe_profile_id(profile_id: str) -> str:
     return trimmed
 
 
-def validate_safe_database_identifier(database_name: str) -> str:
+def validate_safe_database_identifier(database_name: str, is_cloud: bool = False) -> str:
     """Validate SQL Server database name identifier and enforce system database rejection.
 
-    Must be 1-128 characters, conforming to SQL Server regular identifier syntax:
-    ^[a-zA-Z0-9_#$]+$.
+    Must be 1-128 characters.
+    For local profiles:
+    Conforms to SQL Server regular identifier syntax: ^[a-zA-Z0-9_#$]+$.
+    For cloud profiles:
+    Allows dots and hyphens (e.g. 'db52589.databaseasp.net' on MonsterASP.net):
+    ^[a-zA-Z0-9_#$.-]+$ (rejects leading/trailing dots and '..').
+
     Rejects SQL Server system databases (master, msdb, model, tempdb) case-insensitively.
     """
     if not isinstance(database_name, str):
@@ -284,10 +289,16 @@ def validate_safe_database_identifier(database_name: str) -> str:
         raise ProfileConfigurationError("database_name cannot be blank or whitespace.")
     if len(trimmed) > 128:
         raise ProfileConfigurationError(f"database_name exceeds maximum length of 128 characters (got {len(trimmed)}).")
-    if not re.match(r"^[a-zA-Z0-9_#$]+$", trimmed):
-        raise ProfileConfigurationError(
-            f"database_name '{database_name}' contains invalid characters. Must conform to SQL Server regular identifier rules (letters, numbers, underscore, '#', '$')."
-        )
+    if is_cloud:
+        if not re.match(r"^[a-zA-Z0-9_#$.\-]+$", trimmed) or ".." in trimmed or trimmed.startswith(".") or trimmed.endswith("."):
+            raise ProfileConfigurationError(
+                f"database_name '{database_name}' contains invalid characters. Cloud database name must contain only letters, numbers, underscores, '#', '$', '.', or '-'."
+            )
+    else:
+        if not re.match(r"^[a-zA-Z0-9_#$]+$", trimmed):
+            raise ProfileConfigurationError(
+                f"database_name '{database_name}' contains invalid characters. Must conform to SQL Server regular identifier rules (letters, numbers, underscore, '#', '$')."
+            )
     if trimmed.lower() in SQLSERVER_SYSTEM_DATABASES:
         raise ProfileConfigurationError(
             f"SECURITY REJECTION: Target database '{trimmed}' is a SQL Server system database. Direct connection to system databases is prohibited."
@@ -450,6 +461,89 @@ def validate_local_server_target_policy(server: str) -> str:
     return clean_syntax
 
 
+def validate_cloud_server_target_policy(server: str) -> str:
+    """Validate server target string for cloud-hosted database profiles.
+
+    Enforces:
+    - Standard syntax validation (length, characters, no UNC paths, no protocol schemes).
+    - Accepts hostnames (e.g. 'sqlXX.monsterasp.net', 'mydb.database.windows.net')
+      and valid public IP addresses.
+    - Handles comma-separated ports ('<host>,<port>') and normalizes
+      colon-separated ports ('<host>:<port>') to comma notation for ODBC compatibility.
+    - Rejects cloud metadata service addresses (169.254.169.254, 169.254.*) to prevent SSRF.
+    - Rejects invalid characters in hostname and instance components.
+    """
+    clean_syntax = validate_server_target_syntax(server)
+
+    # Convert single colon to comma if used as port delimiter (e.g. 'sql.monsterasp.net:1433' -> 'sql.monsterasp.net,1433')
+    if ":" in clean_syntax and not clean_syntax.startswith("["):
+        if clean_syntax.count(":") == 1:
+            clean_syntax = clean_syntax.replace(":", ",")
+        else:
+            raise ProfileConfigurationError(
+                f"SECURITY REJECTION: Server target '{clean_syntax}' is an unbracketed IPv6 literal. "
+                "SQL Server ODBC requires IPv6 addresses to be enclosed in brackets (e.g. '[::1]')."
+            )
+
+    # Parse optional port
+    if "," in clean_syntax:
+        parts = clean_syntax.split(",")
+        if len(parts) != 2:
+            raise ProfileConfigurationError(
+                f"Invalid server target '{clean_syntax}'. Port format must be '<host>,<port>'."
+            )
+        host_inst_part = parts[0].strip()
+        port_str = parts[1].strip()
+        if not port_str.isdigit():
+            raise ProfileConfigurationError(f"Server port '{port_str}' must be a numeric integer.")
+        port = int(port_str)
+        if not (1 <= port <= 65535):
+            raise ProfileConfigurationError(f"Server port {port} is out of valid range (1-65535).")
+        clean_syntax = f"{host_inst_part},{port}"
+    else:
+        host_inst_part = clean_syntax
+
+    # Parse optional instance name (backslash-separated)
+    if "\\" in host_inst_part:
+        h_parts = host_inst_part.split("\\")
+        if len(h_parts) != 2:
+            raise ProfileConfigurationError(
+                f"Invalid server target '{clean_syntax}'. Instance format must be '<host>\\<instance>'."
+            )
+        host_part = h_parts[0].strip()
+        instance = h_parts[1].strip()
+        if not instance:
+            raise ProfileConfigurationError("Instance name cannot be empty when backslash is present.")
+        if not re.match(r"^[a-zA-Z0-9_]+$", instance):
+            raise ProfileConfigurationError(
+                f"Instance name '{instance}' contains invalid characters. Instance names must contain only letters, numbers, and underscores."
+            )
+    else:
+        host_part = host_inst_part
+
+    if not host_part:
+        raise ProfileConfigurationError("Server host component cannot be empty.")
+
+    # Reject cloud metadata services and link-local addresses
+    host_clean = host_part.strip("[]").lower()
+    if host_clean == "169.254.169.254" or host_clean.startswith("169.254."):
+        raise ProfileConfigurationError(
+            f"SECURITY REJECTION: Server target '{host_part}' targets a cloud metadata or link-local service."
+        )
+    if host_clean in {"metadata.google.internal", "instance-data"}:
+        raise ProfileConfigurationError(
+            f"SECURITY REJECTION: Server target '{host_part}' targets a cloud metadata endpoint."
+        )
+
+    # Validate host part characters (letters, numbers, hyphens, dots, underscores)
+    if not re.match(r"^[a-zA-Z0-9_.\-]+$", host_clean):
+        raise ProfileConfigurationError(
+            f"Server target host '{host_part}' contains invalid characters."
+        )
+
+    return clean_syntax
+
+
 class ConnectionProfile(BaseModel):
     """Typed representation of an approved local SQL Server database profile.
 
@@ -496,6 +590,10 @@ class ConnectionProfile(BaseModel):
         default="mssql",
         description="Database engine type ('mssql' or 'sqlite').",
     )
+    is_cloud: bool = Field(
+        default=False,
+        description="True if this is a cloud-hosted or remote database profile.",
+    )
     use_trusted_connection: bool = Field(
         default=True,
         description="If True, use Windows Integrated Authentication (Trusted_Connection=yes).",
@@ -507,6 +605,14 @@ class ConnectionProfile(BaseModel):
     password: Optional[SecretStr] = Field(
         default=None,
         description="SQL Authentication password (required if use_trusted_connection is False).",
+    )
+    encrypt: bool = Field(
+        default=True,
+        description="Enforce TLS/SSL transport encryption (Encrypt=yes for MSSQL).",
+    )
+    trust_server_certificate: bool = Field(
+        default=True,
+        description="Trust server TLS certificate (TrustServerCertificate=yes for MSSQL).",
     )
     timeout_seconds: int = Field(
         default=GLOBAL_MAX_TIMEOUT_SECONDS,
@@ -603,11 +709,20 @@ class ConnectionProfile(BaseModel):
                 object.__setattr__(self, "driver", "ODBC Driver 17 for SQL Server")
             if not self.schema_name or not self.schema_name.strip():
                 object.__setattr__(self, "schema_name", "dbo")
-            if not self.use_trusted_connection:
-                if not self.user or not self.user.strip():
-                    raise ValueError("user must be specified when use_trusted_connection is False.")
-                if not self.password or not self.password.get_secret_value():
-                    raise ValueError("password must be specified when use_trusted_connection is False.")
+            if self.is_cloud:
+                clean_srv = validate_cloud_server_target_policy(self.server)
+                object.__setattr__(self, "server", clean_srv)
+                if not self.use_trusted_connection:
+                    if not self.user or not self.user.strip():
+                        raise ValueError("user must be specified for cloud mssql profiles.")
+                    if not self.password or not self.password.get_secret_value():
+                        raise ValueError("password must be specified for cloud mssql profiles.")
+            else:
+                if not self.use_trusted_connection:
+                    if not self.user or not self.user.strip():
+                        raise ValueError("user must be specified when use_trusted_connection is False.")
+                    if not self.password or not self.password.get_secret_value():
+                        raise ValueError("password must be specified when use_trusted_connection is False.")
         elif self.engine_type == "sqlite":
             if not self.database_path or not self.database_path.strip():
                 raise ValueError("database_path must be specified for sqlite profiles.")
@@ -683,6 +798,11 @@ class ConnectionProfile(BaseModel):
                 parts.append("PWD=********")
             else:
                 parts.append(f"PWD={escape_odbc_value(self.password.get_secret_value())}")
+        if self.is_cloud or not self.use_trusted_connection:
+            if self.encrypt:
+                parts.append("Encrypt=yes")
+            if self.trust_server_certificate:
+                parts.append("TrustServerCertificate=yes")
         return ";".join(parts) + ";"
 
     def get_dialect(self) -> str:
@@ -1214,15 +1334,12 @@ def _inspect_forbidden_keys_recursive(obj: Any, path: str = "") -> None:
 
 
 def validate_safe_profile_data(data: Dict[str, Any]) -> None:
-    """Validate that raw profile dictionary strictly adheres to Windows Integrated Authentication
-    and contains zero plaintext credentials or SQL authentication flags.
-    Fails closed if any credential keys, SQL auth flags, or unsupported drivers are present.
+    """Validate that raw profile dictionary strictly adheres to profile policy.
+    For local profiles: requires Windows Integrated Authentication and zero plaintext credentials.
+    For cloud profiles: allows user/password credentials with required is_cloud flag.
     """
     if not isinstance(data, dict):
         raise ProfileConfigurationError(f"Profile configuration must be a dictionary, got {type(data).__name__}.")
-
-    # 1. Normalize and recursively reject any password or username credentials at any depth
-    _inspect_forbidden_keys_recursive(data)
 
     norm_dict = {str(k).strip().lower(): v for k, v in data.items() if isinstance(k, str)}
     engine = str(norm_dict.get("engine_type", "mssql")).strip().lower()
@@ -1232,13 +1349,26 @@ def validate_safe_profile_data(data: Dict[str, Any]) -> None:
             f"Unsupported engine_type '{engine}'. Only 'mssql' and 'sqlite' are supported in this milestone."
         )
 
-    if engine == "mssql":
-        trusted = norm_dict.get("use_trusted_connection", norm_dict.get("trusted_connection", True))
-        if trusted is False or str(trusted).strip().lower() in {"false", "0", "no"}:
-            raise ProfileConfigurationError(
-                "SECURITY REJECTION: SQL-authenticated profiles (trusted_connection=False) are rejected. "
-                "QueryPilot currently requires Windows Integrated Authentication (use_trusted_connection=True)."
-            )
+    is_cloud = bool(norm_dict.get("is_cloud", False))
+
+    if not is_cloud:
+        # 1. Normalize and recursively reject any password or username credentials at any depth
+        _inspect_forbidden_keys_recursive(data)
+        if engine == "mssql":
+            trusted = norm_dict.get("use_trusted_connection", norm_dict.get("trusted_connection", True))
+            if trusted is False or str(trusted).strip().lower() in {"false", "0", "no"}:
+                raise ProfileConfigurationError(
+                    "SECURITY REJECTION: SQL-authenticated profiles (trusted_connection=False) are rejected for local profiles. "
+                    "Use Windows Integrated Authentication (use_trusted_connection=True)."
+                )
+    else:
+        if engine == "mssql":
+            u = norm_dict.get("user") or norm_dict.get("username") or norm_dict.get("uid")
+            p = norm_dict.get("password") or norm_dict.get("pwd")
+            if not u or not str(u).strip():
+                raise ProfileConfigurationError("Cloud SQL Server profile requires a non-blank username.")
+            if not p or not str(p).strip():
+                raise ProfileConfigurationError("Cloud SQL Server profile requires a non-blank password.")
 
 
 @contextmanager
@@ -1362,8 +1492,14 @@ def load_trusted_profiles_file(path: Path | str) -> ProfileStore:
         if engine not in ("mssql", "sqlite"):
             raise ProfileConfigurationError(f"Unsupported engine_type '{engine}'.")
         entry["engine_type"] = engine
+        is_cloud = bool(entry.get("is_cloud", False)) or (entry.get("use_trusted_connection") is False)
         if engine == "mssql":
-            entry["use_trusted_connection"] = True
+            if not is_cloud:
+                entry["use_trusted_connection"] = True
+                entry["is_cloud"] = False
+            else:
+                entry["use_trusted_connection"] = False
+                entry["is_cloud"] = True
 
         try:
             profile = ConnectionProfile(**entry)
@@ -1434,12 +1570,12 @@ def save_trusted_profiles_file(
                     f"Custom profile directory '{parent}' is not accessible for read/write."
                 )
 
-    # 3. Serialize trusted profile data (strictly non-secret, Windows Integrated Auth only)
+    # 3. Serialize trusted profile data (Windows Integrated Auth for local, credentials for cloud)
     profiles_dict: Dict[str, Any] = {}
     for pid, profile in store.profiles.items():
-        if profile.engine_type == "mssql" and not profile.use_trusted_connection:
+        if profile.engine_type == "mssql" and not profile.is_cloud and not profile.use_trusted_connection:
             raise ProfileConfigurationError(
-                f"Cannot serialize profile '{pid}': SQL authentication is prohibited."
+                f"Cannot serialize profile '{pid}': SQL authentication is prohibited for local profiles."
             )
         entry: Dict[str, Any] = {
             "profile_id": profile.profile_id,
@@ -1447,6 +1583,7 @@ def save_trusted_profiles_file(
             "engine_type": profile.engine_type,
             "timeout_seconds": profile.timeout_seconds,
             "max_row_limit": profile.max_row_limit,
+            "is_cloud": profile.is_cloud,
         }
         if profile.engine_type == "sqlite":
             entry["database_path"] = profile.database_path
@@ -1458,9 +1595,15 @@ def save_trusted_profiles_file(
                 "server": profile.server,
                 "database_name": profile.database_name,
                 "driver": profile.driver,
-                "use_trusted_connection": True,
+                "use_trusted_connection": profile.use_trusted_connection,
                 "schema_name": profile.schema_name or "dbo",
+                "encrypt": profile.encrypt,
+                "trust_server_certificate": profile.trust_server_certificate,
             })
+            if profile.is_cloud:
+                entry["user"] = profile.user
+                if profile.password:
+                    entry["password"] = profile.password.get_secret_value()
         if profile.allowed_tables is not None:
             entry["allowed_tables"] = list(profile.allowed_tables)
         if profile.sensitive_columns is not None:

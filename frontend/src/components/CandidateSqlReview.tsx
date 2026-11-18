@@ -356,16 +356,51 @@ export function CandidateSqlReview({
             className="candidate-textarea"
             placeholder={
               conversationContext && conversationContext.length > 0
-                ? "Ask a follow-up question (e.g. 'Now show only 2024') or continue query thread..."
-                : "Ask a question about your database (e.g. 'Show total courses offered by department')..."
+                ? "Ask a follow-up question (e.g. 'Now show only 2024') or continue query thread... (Ctrl+Enter to send)"
+                : "Ask a question about your database (e.g. 'Show total courses offered by department')... (Ctrl+Enter to send)"
             }
             value={question}
             onChange={(e) => onQuestionChange(e.target.value)}
+            onKeyDown={(e) => {
+              if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                e.preventDefault()
+                if (!isLoading && !isExecuting && question.trim() && !isOverLimit) {
+                  onSubmit()
+                }
+              }
+            }}
             disabled={isLoading || isExecuting}
             rows={3}
             aria-required="true"
             aria-invalid={isOverLimit}
           />
+
+          {question.trim().length === 0 && !isLoading && !response && (
+            <div className="candidate-starter-chips" role="group" aria-label="Suggested sample questions">
+              <span className="starter-chips-label">💡 Try asking:</span>
+              <button
+                type="button"
+                className="starter-chip"
+                onClick={() => onQuestionChange('Show total records and top 5 recent entries')}
+              >
+                "Show total records and top 5 recent entries"
+              </button>
+              <button
+                type="button"
+                className="starter-chip"
+                onClick={() => onQuestionChange('List all tables with row counts')}
+              >
+                "List all tables with row counts"
+              </button>
+              <button
+                type="button"
+                className="starter-chip"
+                onClick={() => onQuestionChange('Summarize records grouped by category or month')}
+              >
+                "Summarize records grouped by category or month"
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Question Invalidation / Stale Notice */}
@@ -381,6 +416,10 @@ export function CandidateSqlReview({
         )}
 
         <div className="candidate-form-actions">
+          <span className="candidate-shortcut-hint">
+            <kbd>Ctrl</kbd> + <kbd>Enter</kbd> to generate
+          </span>
+
           <button
             type="button"
             className={`candidate-manual-toggle-btn ${isManualModeActive ? 'active' : ''}`}
@@ -388,7 +427,7 @@ export function CandidateSqlReview({
             disabled={isLoading || isExecuting}
             aria-pressed={isManualModeActive}
           >
-            {isManualModeActive ? 'Close Custom SQL' : 'Write Custom SQL'}
+            {isManualModeActive ? '✕ Close Custom SQL' : '✏️ Write Custom SQL'}
           </button>
 
           {question.trim().length > 0 && !isLoading && !isExecuting && (
@@ -422,7 +461,7 @@ export function CandidateSqlReview({
                 <span>Generating Candidate SQL...</span>
               </>
             ) : (
-              'Generate Candidate SQL'
+              '✨ Generate Candidate SQL'
             )}
           </button>
         </div>

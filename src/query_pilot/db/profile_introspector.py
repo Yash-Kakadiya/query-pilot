@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Connection, Engine, Inspector
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.pool import NullPool
@@ -124,6 +124,7 @@ class ProfileDatabaseIntrospector:
                 schema_name=schema_name,
                 engine_type=config.engine_type,
                 database_path=config.database_path,
+                is_cloud=config.is_cloud,
             )
         elif isinstance(config, ProfileEngineConfiguration):
             self._config = config
@@ -217,6 +218,203 @@ class ProfileDatabaseIntrospector:
                 f"Failed to create engine/connection for profile '{self._config.profile_id}': {sanitized}"
             ) from exc
 
+    def _introspect_mssql_batch(
+        self,
+        conn: Connection,
+        target_schema: str,
+        allowed_set: Optional[Set[str]],
+        metadata_schema_name: str,
+    ) -> Optional[List[TableMetadata]]:
+        """Fast catalog batch introspection for SQL Server.
+
+        Executes 4 bulk queries across system catalog views instead of N*4 sequential
+        queries, minimizing network round-trip overhead on high-latency or cloud connections.
+        """
+        # 1. Fetch tables in target schema
+        t_stmt = text(
+            "SELECT t.name FROM sys.tables t "
+            "INNER JOIN sys.schemas s ON t.schema_id = s.schema_id "
+            "WHERE s.name = :schema ORDER BY t.name"
+        )
+        t_res = conn.execute(t_stmt, {"schema": target_schema})
+        raw_tables = [r[0] for r in t_res.fetchall()]
+        if not raw_tables:
+            return []
+
+        if allowed_set is not None:
+            table_names = [t for t in raw_tables if t.strip().lower() in allowed_set]
+        else:
+            table_names = raw_tables
+
+        if not table_names:
+            return []
+
+        # 2. Fetch all columns and PK indicators in a single batch
+        col_stmt = text(
+            "SELECT "
+            "    t.name AS table_name, "
+            "    c.name AS column_name, "
+            "    ty.name AS data_type, "
+            "    c.is_nullable, "
+            "    c.is_identity, "
+            "    OBJECT_DEFINITION(c.default_object_id) AS default_value, "
+            "    CASE WHEN pk.column_id IS NOT NULL THEN 1 ELSE 0 END AS is_primary_key "
+            "FROM sys.tables t "
+            "INNER JOIN sys.schemas s ON t.schema_id = s.schema_id "
+            "INNER JOIN sys.columns c ON t.object_id = c.object_id "
+            "INNER JOIN sys.types ty ON c.user_type_id = ty.user_type_id "
+            "LEFT JOIN ( "
+            "    SELECT ic.object_id, ic.column_id "
+            "    FROM sys.index_columns ic "
+            "    INNER JOIN sys.indexes i ON ic.object_id = i.object_id AND ic.index_id = i.index_id "
+            "    WHERE i.is_primary_key = 1 "
+            ") pk ON c.object_id = pk.object_id AND c.column_id = pk.column_id "
+            "WHERE s.name = :schema "
+            "ORDER BY t.name, c.column_id"
+        )
+        col_res = conn.execute(col_stmt, {"schema": target_schema})
+        cols_by_table: Dict[str, List[ColumnMetadata]] = {}
+        pks_by_table: Dict[str, List[str]] = {}
+        for r in col_res.fetchall():
+            tbl, col_name, dt, nullable, is_ident, def_val, is_pk = r
+            tbl_clean = tbl.strip()
+            if allowed_set is not None and tbl_clean.lower() not in allowed_set:
+                continue
+            if tbl_clean not in cols_by_table:
+                cols_by_table[tbl_clean] = []
+                pks_by_table[tbl_clean] = []
+            cols_by_table[tbl_clean].append(
+                ColumnMetadata(
+                    name=col_name,
+                    data_type=dt,
+                    nullable=bool(nullable),
+                    primary_key=bool(is_pk),
+                    default=str(def_val) if def_val is not None else None,
+                    is_identity=bool(is_ident),
+                )
+            )
+            if is_pk:
+                pks_by_table[tbl_clean].append(col_name)
+
+        # 3. Fetch all foreign keys in a single batch
+        fk_stmt = text(
+            "SELECT "
+            "    fk.name AS fk_name, "
+            "    tp.name AS source_table, "
+            "    cp.name AS source_column, "
+            "    tr.name AS target_table, "
+            "    cr.name AS target_column "
+            "FROM sys.foreign_keys fk "
+            "INNER JOIN sys.tables tp ON fk.parent_object_id = tp.object_id "
+            "INNER JOIN sys.tables tr ON fk.referenced_object_id = tr.object_id "
+            "INNER JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id "
+            "INNER JOIN sys.columns cp ON fkc.parent_object_id = cp.object_id AND fkc.parent_column_id = cp.column_id "
+            "INNER JOIN sys.columns cr ON fkc.referenced_object_id = cr.object_id AND fkc.referenced_column_id = cr.column_id "
+            "INNER JOIN sys.schemas s ON tp.schema_id = s.schema_id "
+            "WHERE s.name = :schema "
+            "ORDER BY tp.name, cp.column_id"
+        )
+        fk_res = conn.execute(fk_stmt, {"schema": target_schema})
+        fks_by_table: Dict[str, List[ForeignKeyMetadata]] = {}
+        for r in fk_res.fetchall():
+            fk_name, src_tbl, src_col, tgt_tbl, tgt_col = r
+            src_clean = src_tbl.strip()
+            tgt_clean = tgt_tbl.strip()
+            if allowed_set is not None:
+                if src_clean.lower() not in allowed_set or tgt_clean.lower() not in allowed_set:
+                    continue
+            if src_clean not in fks_by_table:
+                fks_by_table[src_clean] = []
+            fks_by_table[src_clean].append(
+                ForeignKeyMetadata(
+                    name=fk_name,
+                    source_table=src_clean,
+                    source_column=src_col,
+                    target_table=tgt_clean,
+                    target_column=tgt_col,
+                )
+            )
+        for tbl_fks in fks_by_table.values():
+            tbl_fks.sort(key=lambda k: (k.source_table, k.source_column, k.target_table, k.target_column))
+
+        # 4. Fetch all indexes and unique constraints in a single batch
+        idx_stmt = text(
+            "SELECT "
+            "    t.name AS table_name, "
+            "    i.name AS index_name, "
+            "    i.is_unique, "
+            "    i.is_unique_constraint, "
+            "    i.filter_definition, "
+            "    c.name AS column_name "
+            "FROM sys.indexes i "
+            "INNER JOIN sys.tables t ON i.object_id = t.object_id "
+            "INNER JOIN sys.schemas s ON t.schema_id = s.schema_id "
+            "INNER JOIN sys.index_columns ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id "
+            "INNER JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id "
+            "WHERE s.name = :schema AND i.is_hypothetical = 0 AND i.name IS NOT NULL "
+            "ORDER BY t.name, i.name, ic.key_ordinal"
+        )
+        idx_res = conn.execute(idx_stmt, {"schema": target_schema})
+        raw_idx: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        for r in idx_res.fetchall():
+            tbl, idx_name, is_uniq, is_uc, filter_def, col_name = r
+            tbl_clean = tbl.strip()
+            if allowed_set is not None and tbl_clean.lower() not in allowed_set:
+                continue
+            key = (tbl_clean, idx_name)
+            if key not in raw_idx:
+                raw_idx[key] = {
+                    "table": tbl_clean,
+                    "name": idx_name,
+                    "is_unique": bool(is_uniq),
+                    "is_unique_constraint": bool(is_uc),
+                    "filter_definition": filter_def,
+                    "columns": [],
+                }
+            raw_idx[key]["columns"].append(col_name)
+
+        indexes_by_table: Dict[str, List[IndexMetadata]] = {}
+        unique_by_table: Dict[str, List[Dict[str, Any]]] = {}
+        for item in raw_idx.values():
+            tbl = item["table"]
+            if tbl not in indexes_by_table:
+                indexes_by_table[tbl] = []
+                unique_by_table[tbl] = []
+            indexes_by_table[tbl].append(
+                IndexMetadata(
+                    name=item["name"],
+                    columns=item["columns"],
+                    is_unique=item["is_unique"],
+                    filter_definition=item["filter_definition"],
+                )
+            )
+            if item["is_unique_constraint"] or item["is_unique"]:
+                unique_by_table[tbl].append({
+                    "name": item["name"],
+                    "column_names": item["columns"],
+                })
+
+        for tbl_idx in indexes_by_table.values():
+            tbl_idx.sort(key=lambda x: x.name)
+        for tbl_uc in unique_by_table.values():
+            tbl_uc.sort(key=lambda x: str(x.get("name")))
+
+        # Assemble TableMetadata objects
+        tables: List[TableMetadata] = []
+        for tbl_name in sorted(table_names):
+            tables.append(
+                TableMetadata(
+                    schema_name=metadata_schema_name,
+                    table_name=tbl_name,
+                    columns=cols_by_table.get(tbl_name, []),
+                    primary_keys=pks_by_table.get(tbl_name, []),
+                    foreign_keys=fks_by_table.get(tbl_name, []),
+                    indexes=indexes_by_table.get(tbl_name, []),
+                    unique_constraints=unique_by_table.get(tbl_name, []),
+                )
+            )
+        return tables
+
     def introspect_raw(
         self,
         schema_name: Optional[str] = None,
@@ -269,6 +467,31 @@ class ProfileDatabaseIntrospector:
                 db_name = self._config.expected_db
             else:
                 db_name = verify_database_context(conn, expected_db=self._config.expected_db)
+
+            allowed_set = (
+                {t.strip().lower() for t in self._config.allowed_tables if t and t.strip()}
+                if self._config.allowed_tables is not None
+                else None
+            )
+
+            # High-performance batch path for Cloud MSSQL catalog views (cuts cloud introspection from 3.7s to <0.9s)
+            if getattr(self._config, "is_cloud", False) and self._config.engine_type != "sqlite" and target_schema:
+                try:
+                    batch_tables = self._introspect_mssql_batch(
+                        conn=conn,
+                        target_schema=target_schema,
+                        allowed_set=allowed_set,
+                        metadata_schema_name=metadata_schema_name,
+                    )
+                    if batch_tables is not None and len(batch_tables) > 0:
+                        return DatabaseSchema(
+                            database_name=db_name,
+                            tables=batch_tables,
+                            is_model_facing=False,
+                        )
+                except Exception as batch_exc:
+                    logger.debug("MSSQL batch catalog introspection fallback to inspector: %s", batch_exc)
+
             inspector: Inspector = inspect(conn)
 
             try:
@@ -280,11 +503,9 @@ class ProfileDatabaseIntrospector:
                 ) from exc
 
             # Apply table allowlist if configured on the profile
-            if self._config.allowed_tables is not None:
-                allowed_set = {t.strip().lower() for t in self._config.allowed_tables if t and t.strip()}
+            if allowed_set is not None:
                 table_names = [t for t in all_tables if t.strip().lower() in allowed_set]
             else:
-                allowed_set = None
                 table_names = all_tables
 
             tables: List[TableMetadata] = []

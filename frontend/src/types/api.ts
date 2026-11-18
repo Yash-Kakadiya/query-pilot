@@ -171,6 +171,7 @@ export interface ProfileSummary {
   has_allowlist: boolean
   allowed_tables?: string[] | null
   is_default?: boolean
+  is_cloud?: boolean
 }
 
 export interface ProfileListResponse {
@@ -208,7 +209,12 @@ export interface ValidateProfileConfigRequest {
   schema_name?: string
   driver?: string
   engine_type?: 'mssql' | 'sqlite'
+  is_cloud?: boolean
   use_trusted_connection?: boolean
+  user?: string
+  password?: string
+  encrypt?: boolean
+  trust_server_certificate?: boolean
   timeout_seconds?: number
   max_row_limit?: number
   allowed_tables?: string[] | null

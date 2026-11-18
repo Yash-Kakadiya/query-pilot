@@ -709,11 +709,26 @@ function validateProfileConfigPayload(payload: ValidateProfileConfigRequest): vo
       })
     }
 
-    if (payload.use_trusted_connection !== undefined && payload.use_trusted_connection !== true) {
-      throw new AgentClientError({
-        message: 'QueryPilot requires Windows Integrated Authentication (use_trusted_connection=true).',
-        kind: 'validation',
-      })
+    if (!payload.is_cloud) {
+      if (payload.use_trusted_connection !== undefined && payload.use_trusted_connection !== true) {
+        throw new AgentClientError({
+          message: 'QueryPilot requires Windows Integrated Authentication (use_trusted_connection=true) for local profiles.',
+          kind: 'validation',
+        })
+      }
+    } else {
+      if (!payload.user?.trim()) {
+        throw new AgentClientError({
+          message: 'Username is required for cloud database profiles.',
+          kind: 'validation',
+        })
+      }
+      if (!payload.password) {
+        throw new AgentClientError({
+          message: 'Password is required for cloud database profiles.',
+          kind: 'validation',
+        })
+      }
     }
   }
 }

@@ -9,13 +9,15 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
 from query_pilot.db.profile import (
+    validate_cloud_server_target_policy,
     validate_local_server_target_policy,
     validate_safe_database_identifier,
     validate_safe_profile_id,
     validate_safe_schema_identifier,
+    validate_server_target_syntax,
 )
 
 
@@ -106,6 +108,10 @@ class ProfileSummary(BaseModel):
     is_default: bool = Field(
         default=False,
         description="True if this profile was designated as the default profile.",
+    )
+    is_cloud: bool = Field(
+        default=False,
+        description="True if this is a cloud-hosted or remote database profile.",
     )
 
 
@@ -237,9 +243,30 @@ class ValidateProfileConfigRequest(BaseModel):
         default="mssql",
         description="Database engine type ('mssql' or 'sqlite').",
     )
+    is_cloud: bool = Field(
+        default=False,
+        description="True for cloud-hosted or remote database targets.",
+    )
     use_trusted_connection: Optional[bool] = Field(
+        default=None,
+        description="Must be True for local mssql; False for cloud mssql.",
+    )
+    user: Optional[str] = Field(
+        default=None,
+        max_length=128,
+        description="SQL Authentication username (required for cloud MSSQL).",
+    )
+    password: Optional[SecretStr] = Field(
+        default=None,
+        description="SQL Authentication password (required for cloud MSSQL).",
+    )
+    encrypt: Optional[bool] = Field(
         default=True,
-        description="Must be True (Windows Integrated Authentication) for mssql.",
+        description="Enforce TLS/SSL transport encryption.",
+    )
+    trust_server_certificate: Optional[bool] = Field(
+        default=True,
+        description="Trust server TLS certificate.",
     )
     timeout_seconds: int = Field(
         default=15,
@@ -266,6 +293,17 @@ class ValidateProfileConfigRequest(BaseModel):
         description="Optionally designate this profile as the default. If False and no default exists, it becomes default automatically.",
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def check_local_credentials_forbidden(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            is_cloud = bool(data.get("is_cloud", False))
+            if not is_cloud:
+                for k in ("password", "pwd", "user", "username", "uid", "secret", "token", "api_key"):
+                    if k in data:
+                        raise ValueError(f"extra inputs are not permitted: '{k}' is forbidden for local profiles.")
+        return data
+
     @field_validator("profile_id")
     @classmethod
     def validate_pid(cls, v: str) -> str:
@@ -283,14 +321,14 @@ class ValidateProfileConfigRequest(BaseModel):
     @classmethod
     def validate_srv(cls, v: Optional[str]) -> Optional[str]:
         if v is not None:
-            return validate_local_server_target_policy(v)
+            return validate_server_target_syntax(v)
         return None
 
     @field_validator("database_name")
     @classmethod
     def validate_dbname(cls, v: Optional[str]) -> Optional[str]:
         if v is not None:
-            return validate_safe_database_identifier(v)
+            return validate_safe_database_identifier(v, is_cloud=True)
         return None
 
     @field_validator("schema_name")
@@ -324,16 +362,6 @@ class ValidateProfileConfigRequest(BaseModel):
             raise ValueError(f"Unsupported engine_type '{v}'. QueryPilot supports 'mssql' and 'sqlite'.")
         return clean
 
-    @field_validator("use_trusted_connection")
-    @classmethod
-    def validate_trusted_auth(cls, v: Optional[bool]) -> Optional[bool]:
-        if v is False:
-            raise ValueError(
-                "SECURITY REJECTION: SQL-authenticated profiles (use_trusted_connection=False) are rejected. "
-                "QueryPilot currently requires Windows Integrated Authentication (use_trusted_connection=True)."
-            )
-        return True
-
     @model_validator(mode="after")
     def validate_engine_and_fields(self) -> ValidateProfileConfigRequest:
         if self.engine_type == "mssql":
@@ -341,15 +369,28 @@ class ValidateProfileConfigRequest(BaseModel):
                 raise ValueError("server must be specified for mssql profiles.")
             if not self.database_name or not self.database_name.strip():
                 raise ValueError("database_name must be specified for mssql profiles.")
+            self.database_name = validate_safe_database_identifier(self.database_name, is_cloud=self.is_cloud)
             if not self.driver or not self.driver.strip():
                 self.driver = "ODBC Driver 17 for SQL Server"
             if not self.schema_name or not self.schema_name.strip():
                 self.schema_name = "dbo"
-            if not self.use_trusted_connection:
-                raise ValueError(
-                    "SECURITY REJECTION: SQL-authenticated profiles (use_trusted_connection=False) are rejected. "
-                    "QueryPilot currently requires Windows Integrated Authentication (use_trusted_connection=True)."
-                )
+            if self.is_cloud:
+                self.server = validate_cloud_server_target_policy(self.server)
+                if self.use_trusted_connection is True:
+                    raise ValueError("Windows Integrated Authentication cannot be used for cloud profiles. Provide username and password.")
+                self.use_trusted_connection = False
+                if not self.user or not self.user.strip():
+                    raise ValueError("user must be specified for cloud mssql profiles.")
+                if not self.password or not self.password.get_secret_value():
+                    raise ValueError("password must be specified for cloud mssql profiles.")
+            else:
+                self.server = validate_local_server_target_policy(self.server)
+                if self.use_trusted_connection is False:
+                    raise ValueError(
+                        "SECURITY REJECTION: SQL-authenticated profiles (use_trusted_connection=False) are rejected. "
+                        "QueryPilot currently requires Windows Integrated Authentication (use_trusted_connection=True)."
+                    )
+                self.use_trusted_connection = True
         elif self.engine_type == "sqlite":
             if not self.database_path or not self.database_path.strip():
                 raise ValueError("database_path must be specified for sqlite profiles.")

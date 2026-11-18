@@ -78,6 +78,7 @@ class ProfileEngineConfiguration:
     schema_name: str
     engine_type: str = "mssql"
     database_path: Optional[str] = None
+    is_cloud: bool = False
 
 
 class ProfileConnectionFactory:
@@ -190,6 +191,7 @@ class ProfileConnectionFactory:
             schema_name=schema_name,
             engine_type=profile.engine_type,
             database_path=profile.database_path,
+            is_cloud=profile.is_cloud,
         )
 
     def create_engine(

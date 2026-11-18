@@ -415,16 +415,20 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator, ai
   return (
     <div className="app-container">
       <header className="app-header">
-        <div className="brand">
-          <QueryPilotLogo size={38} className="brand-logo" />
-          <h1 className="brand-title">QueryPilot</h1>
+        {/* Tier 1: Centered Brand Logo, Title, Badge & Subtitle */}
+        <div className="header-brand-tier">
+          <div className="brand">
+            <QueryPilotLogo size={42} className="brand-logo" />
+            <h1 className="brand-title">QueryPilot</h1>
+            <span className="brand-badge">v0.2</span>
+          </div>
+          <p className="brand-subtitle">
+            Autonomous Data Analyst
+          </p>
         </div>
-        <p className="brand-subtitle">
-          Ask questions about your data in natural language.
-        </p>
 
-        <div className="status-bars-container">
-          {/* AI Availability Status Indicator (Milestone B29-C) */}
+        {/* Tier 2: Centered AI Service & Gemini API Key Section */}
+        <div className="header-ai-tier">
           <AiStatusIndicator
             status={aiStatus.status}
             label={aiStatus.label}
@@ -435,7 +439,10 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator, ai
               void aiStatusCoordinator.checkStatus()
             }}
           />
+        </div>
 
+        {/* Tier 3: Centered Agent Status Bar & Primary Toolbar Navigation */}
+        <div className="header-agent-toolbar-tier">
           {/* Local Agent Session Status Bar */}
           <div className="agent-session-bar" role="region" aria-label="Local Agent Session">
             <div className="agent-session-group">
@@ -449,13 +456,13 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator, ai
                 }`}
                 aria-hidden="true"
               />
-              <span className="agent-session-label">Local Agent:</span>
+              <span className="agent-session-label">Agent:</span>
               {agentSession.status === 'probing' && (
                 <span className="agent-session-text">Checking session...</span>
               )}
               {agentSession.status === 'authenticated' && (
                 <span className="agent-session-text agent-authenticated">
-                  Connected &bull; {agentSession.profiles.length} profile{agentSession.profiles.length === 1 ? '' : 's'} available
+                  Ready &bull; {agentSession.profiles.length} profile{agentSession.profiles.length === 1 ? '' : 's'}
                 </span>
               )}
               {agentSession.status === 'auth_required' && (
@@ -495,6 +502,48 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator, ai
                 </button>
               )}
             </div>
+          </div>
+
+          {/* Primary Navigation Actions */}
+          <div className="header-nav-actions">
+            <button
+              type="button"
+              className="header-action-btn"
+              onClick={() => setIsMetricModalOpen(true)}
+              title="Configure business metrics"
+              aria-label="Configure business metrics"
+            >
+              <span className="header-action-icon" aria-hidden="true">📐</span>
+              <span className="header-action-text">Metrics</span>
+              {sqlGenState.businessMetrics.length > 0 && (
+                <span className="header-action-count">{sqlGenState.businessMetrics.length}</span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              className="header-action-btn"
+              onClick={() => setIsHistoryDrawerOpen(true)}
+              title="View conversation history drawer"
+              aria-label="View conversation history drawer"
+            >
+              <span className="header-action-icon" aria-hidden="true">📜</span>
+              <span className="header-action-text">History</span>
+              {sqlGenState.conversationHistory.length > 0 && (
+                <span className="header-action-count">{sqlGenState.conversationHistory.length}</span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              className="header-action-btn header-settings-btn"
+              onClick={() => setIsSettingsOpen(true)}
+              title="Open application settings"
+              aria-label="Open application settings"
+            >
+              <span className="header-action-icon" aria-hidden="true">⚙️</span>
+              <span className="header-action-text">Settings</span>
+            </button>
           </div>
         </div>
       </header>
@@ -661,6 +710,17 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator, ai
                       <span className="guide-step-num">3</span>
                       <span className="guide-step-text">Review and safely execute candidate SQL queries</span>
                     </div>
+                  </div>
+                )}
+                {agentSession.schemaStatus !== 'loading' && agentSession.profiles.length === 0 && (
+                  <div style={{ marginTop: '1.25rem' }}>
+                    <button
+                      type="button"
+                      className="profile-add-header-btn"
+                      onClick={() => setIsOnboardingOpen(true)}
+                    >
+                      + Connect Your First Database
+                    </button>
                   </div>
                 )}
               </div>

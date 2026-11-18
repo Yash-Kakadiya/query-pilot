@@ -2,6 +2,11 @@ import assert from 'node:assert'
 import test from 'node:test'
 import { AgentSessionCoordinator } from '../src/services/agentSession.ts'
 import { AgentClientError } from '../src/services/agentClient.ts'
+import {
+  CLOUD_PROVIDER_CONFIGS,
+  sanitizeServerInput,
+  type CloudProvider,
+} from '../src/utils/cloudProviders.ts'
 import type {
   AgentDatabaseSchema,
   CreateProfileRequest,
@@ -921,4 +926,143 @@ test('Profile Onboarding - Strict Sequence, Failure Gating & Session Invalidatio
       assert.strictEqual(state.profiles.length, remainingProfiles.length)
     }
   )
+})
+
+// ==============================================================================
+// 5. Multi-Cloud Database Profile & Input Sanitization
+// ==============================================================================
+
+test('Profile Onboarding - Multi-Cloud Profiles and Input Sanitization', async (t) => {
+  await t.test('sanitizeServerInput cleans AWS RDS endpoints and extracts port', () => {
+    const raw = 'https://database-1.c9xxxx.us-east-1.rds.amazonaws.com:1433/'
+    const result = sanitizeServerInput(raw)
+    assert.strictEqual(result.cleanServer, 'database-1.c9xxxx.us-east-1.rds.amazonaws.com')
+    assert.strictEqual(result.extractedPort, '1433')
+  })
+
+  await t.test('sanitizeServerInput cleans Azure SQL tcp: and comma port', () => {
+    const raw = 'tcp:myserver.database.windows.net,1433'
+    const result = sanitizeServerInput(raw)
+    assert.strictEqual(result.cleanServer, 'myserver.database.windows.net')
+    assert.strictEqual(result.extractedPort, '1433')
+  })
+
+  await t.test('sanitizeServerInput preserves plain host and IPv4 without port', () => {
+    const hostResult = sanitizeServerInput('db52589.public.databaseasp.net')
+    assert.strictEqual(hostResult.cleanServer, 'db52589.public.databaseasp.net')
+    assert.strictEqual(hostResult.extractedPort, undefined)
+
+    const ipResult = sanitizeServerInput('34.123.45.67')
+    assert.strictEqual(ipResult.cleanServer, '34.123.45.67')
+    assert.strictEqual(ipResult.extractedPort, undefined)
+  })
+
+  await t.test('CLOUD_PROVIDER_CONFIGS includes comprehensive naive-user guides for all 5 platforms', () => {
+    const expectedProviders: CloudProvider[] = [
+      'monsterasp',
+      'aws_rds',
+      'gcp_sql',
+      'azure_sql',
+      'custom_cloud',
+    ]
+
+    for (const provider of expectedProviders) {
+      const cfg = CLOUD_PROVIDER_CONFIGS[provider]
+      assert.ok(cfg, `Missing config for cloud provider ${provider}`)
+      assert.ok(cfg.name.length > 0, `Provider ${provider} must have a name`)
+      assert.ok(cfg.badge.length > 0, `Provider ${provider} must have a badge`)
+      assert.ok(cfg.icon.length > 0, `Provider ${provider} must have an icon`)
+      assert.ok(cfg.serverPlaceholder.length > 0, `Provider ${provider} must have serverPlaceholder`)
+      assert.ok(cfg.serverHelp.length > 0, `Provider ${provider} must have serverHelp`)
+      assert.ok(cfg.dbPlaceholder.length > 0, `Provider ${provider} must have dbPlaceholder`)
+      assert.ok(cfg.dbHelp.length > 0, `Provider ${provider} must have dbHelp`)
+      assert.ok(cfg.userPlaceholder.length > 0, `Provider ${provider} must have userPlaceholder`)
+      assert.ok(cfg.userHelp.length > 0, `Provider ${provider} must have userHelp`)
+      assert.ok(cfg.steps.length >= 2, `Provider ${provider} must have at least 2 onboarding steps`)
+      for (const step of cfg.steps) {
+        assert.ok(step.title.length > 0, `Step in ${provider} must have a title`)
+        assert.ok(step.detail.length > 0, `Step in ${provider} must have a detail`)
+      }
+      assert.ok(cfg.fieldGuides && cfg.fieldGuides.length >= 5, `Provider ${provider} must have fieldGuides for at least 5 fields`)
+      for (const fg of cfg.fieldGuides) {
+        assert.ok(fg.fieldName.length > 0, `Field guidance in ${provider} must have a fieldName`)
+        assert.ok(fg.howToFind.length > 0, `Field guidance in ${provider} must have howToFind`)
+        assert.ok(fg.example.length > 0, `Field guidance in ${provider} must have an example`)
+      }
+    }
+
+    // Verify firewall tips for major clouds
+    assert.ok(CLOUD_PROVIDER_CONFIGS.aws_rds.firewallTip?.includes('Security Group'))
+    assert.ok(CLOUD_PROVIDER_CONFIGS.gcp_sql.firewallTip?.includes('Authorized networks'))
+    assert.ok(CLOUD_PROVIDER_CONFIGS.azure_sql.firewallTip?.includes('firewall'))
+  })
+
+  await t.test('Cloud profile request payloads for AWS, GCP, and Azure have valid structures', () => {
+    const awsPayload: CreateProfileRequest = {
+      profile_id: 'aws_rds_prod',
+      display_name: 'AWS RDS SQL Server',
+      engine_type: 'mssql',
+      is_cloud: true,
+      server: 'database-1.c9xxxx.us-east-1.rds.amazonaws.com,1433',
+      database_name: 'production_db',
+      schema_name: 'dbo',
+      driver: 'ODBC Driver 17 for SQL Server',
+      use_trusted_connection: false,
+      user: 'admin',
+      password: 'SamplePassword123!',
+      encrypt: true,
+      trust_server_certificate: true,
+      timeout_seconds: 15,
+      max_row_limit: 100,
+      set_as_default: false,
+    }
+
+    const gcpPayload: CreateProfileRequest = {
+      profile_id: 'gcp_sql_prod',
+      display_name: 'GCP Cloud SQL',
+      engine_type: 'mssql',
+      is_cloud: true,
+      server: '34.123.45.67,1433',
+      database_name: 'cloud_db',
+      schema_name: 'dbo',
+      driver: 'ODBC Driver 17 for SQL Server',
+      use_trusted_connection: false,
+      user: 'sqlserver',
+      password: 'GcpSecurePassword!',
+      encrypt: true,
+      trust_server_certificate: true,
+      timeout_seconds: 15,
+      max_row_limit: 100,
+      set_as_default: false,
+    }
+
+    const azurePayload: CreateProfileRequest = {
+      profile_id: 'azure_sql_prod',
+      display_name: 'Azure SQL Database',
+      engine_type: 'mssql',
+      is_cloud: true,
+      server: 'myserver.database.windows.net,1433',
+      database_name: 'azure_db',
+      schema_name: 'dbo',
+      driver: 'ODBC Driver 17 for SQL Server',
+      use_trusted_connection: false,
+      user: 'serveradmin',
+      password: 'AzurePassword456!',
+      encrypt: true,
+      trust_server_certificate: true,
+      timeout_seconds: 15,
+      max_row_limit: 100,
+      set_as_default: false,
+    }
+
+    for (const payload of [awsPayload, gcpPayload, azurePayload]) {
+      assert.strictEqual(payload.engine_type, 'mssql')
+      assert.strictEqual(payload.is_cloud, true)
+      assert.strictEqual(payload.use_trusted_connection, false)
+      assert.ok(payload.user && payload.user.length > 0)
+      assert.ok(payload.password && payload.password.length > 0)
+      assert.ok(payload.server && payload.server.length > 0)
+      assert.strictEqual(payload.encrypt, true)
+    }
+  })
 })

@@ -443,6 +443,7 @@ def create_agent_app(
                         resolved_store.default_profile_id is not None
                         and profile.profile_id == resolved_store.default_profile_id
                     ),
+                    is_cloud=profile.is_cloud,
                 )
             )
         return ProfileListResponse(profiles=summaries)
@@ -525,7 +526,12 @@ def create_agent_app(
             database_path=body.database_path,
             driver=body.driver,
             engine_type=body.engine_type,
+            is_cloud=body.is_cloud,
             use_trusted_connection=body.use_trusted_connection if body.engine_type == "mssql" else True,
+            user=body.user,
+            password=body.password,
+            encrypt=body.encrypt if body.encrypt is not None else True,
+            trust_server_certificate=body.trust_server_certificate if body.trust_server_certificate is not None else True,
             timeout_seconds=body.timeout_seconds,
             max_row_limit=body.max_row_limit,
             allowed_tables=tuple(body.allowed_tables) if body.allowed_tables is not None else None,
@@ -618,6 +624,7 @@ def create_agent_app(
             has_allowlist=new_profile.allowed_tables is not None,
             allowed_tables=list(new_profile.allowed_tables) if new_profile.allowed_tables is not None else None,
             is_default=is_default,
+            is_cloud=new_profile.is_cloud,
         )
         return CreateProfileResponse(
             profile=summary,
@@ -842,7 +849,11 @@ def create_agent_app(
                 msg = "Connection attempt timed out. The database server did not respond within the configured timeout limit."
             elif any(s in err_str for s in ("login failed", "sspi", "ssspi", "28000", "access is denied", "untrusted domain")):
                 failure_code = "AUTH_FAILED"
-                msg = "Authentication failed. Windows Integrated Authentication was rejected by the database server."
+                msg = (
+                    "Authentication failed. Invalid SQL Server username or password."
+                    if not profile.use_trusted_connection
+                    else "Authentication failed. Windows Integrated Authentication was rejected by the database server."
+                )
             elif any(s in err_str for s in ("server does not exist", "access denied", "network-related", "instance failure", "connection refused", "could not open a connection", "08001", "named pipes provider", "tcp provider")):
                 failure_code = "UNREACHABLE"
                 msg = "Database server is unreachable or the specified instance is not accepting connections."
@@ -1193,7 +1204,11 @@ def create_agent_app(
 
         clean_subpath = subpath.strip("/")
         if not clean_subpath:
-            return FileResponse(path=index_file, media_type="text/html")
+            return FileResponse(
+                path=index_file,
+                media_type="text/html",
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+            )
 
         # Resolve requested file path securely
         try:
@@ -1218,7 +1233,11 @@ def create_agent_app(
             )
 
         # Otherwise, client-side route fallback to index.html
-        return FileResponse(path=index_file, media_type="text/html")
+        return FileResponse(
+            path=index_file,
+            media_type="text/html",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
 
     # --------------------------------------------------------------------------
     # Mount Constrained Same-Origin Upstream API Routes

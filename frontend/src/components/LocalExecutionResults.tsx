@@ -68,6 +68,57 @@ export function LocalExecutionResults({
   repairError = null,
 }: LocalExecutionResultsProps) {
   const [viewMode, setViewMode] = useState<'table' | 'chart'>('table')
+  const [copiedCsv, setCopiedCsv] = useState<boolean>(false)
+
+  const handleDownloadCsv = () => {
+    if (!result || !result.rows.length) return
+    const cols = result.columns
+    const csvRows = [
+      cols.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','),
+      ...result.rows.map((row) =>
+        cols
+          .map((col) => {
+            const val = row[col]
+            if (val === null || val === undefined) return '""'
+            return `"${String(val).replace(/"/g, '""')}"`
+          })
+          .join(',')
+      ),
+    ]
+    const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.setAttribute('download', `query_results_${Date.now()}.csv`)
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  }
+
+  const handleCopyCsv = async () => {
+    if (!result || !result.rows.length) return
+    const cols = result.columns
+    const csvRows = [
+      cols.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','),
+      ...result.rows.map((row) =>
+        cols
+          .map((col) => {
+            const val = row[col]
+            if (val === null || val === undefined) return '""'
+            return `"${String(val).replace(/"/g, '""')}"`
+          })
+          .join(',')
+      ),
+    ]
+    try {
+      await navigator.clipboard.writeText(csvRows.join('\n'))
+      setCopiedCsv(true)
+      setTimeout(() => setCopiedCsv(false), 2000)
+    } catch {
+      // fallback
+    }
+  }
 
   const synthesizedAnswer = useMemo(() => {
     if (isLoading) {
@@ -292,7 +343,7 @@ export function LocalExecutionResults({
             </div>
           )}
 
-          {/* Presentation Mode Toggle (Table / Chart) */}
+          {/* Presentation Mode & Export Bar */}
           {result.rows.length > 0 && (
             <div className="local-results-view-toggle-bar">
               <div className="local-view-toggle" role="group" aria-label="Result presentation mode">
@@ -302,7 +353,7 @@ export function LocalExecutionResults({
                   onClick={() => setViewMode('table')}
                   aria-pressed={viewMode === 'table'}
                 >
-                  📄 Table View
+                  📋 Table View
                 </button>
                 <button
                   type="button"
@@ -310,7 +361,26 @@ export function LocalExecutionResults({
                   onClick={() => setViewMode('chart')}
                   aria-pressed={viewMode === 'chart'}
                 >
-                  📈 Interactive Chart
+                  📊 Data Chart
+                </button>
+              </div>
+
+              <div className="local-results-export-actions">
+                <button
+                  type="button"
+                  className="local-export-btn"
+                  onClick={handleCopyCsv}
+                  title="Copy results as CSV text to clipboard"
+                >
+                  {copiedCsv ? '✓ Copied CSV' : '📋 Copy CSV'}
+                </button>
+                <button
+                  type="button"
+                  className="local-export-btn"
+                  onClick={handleDownloadCsv}
+                  title="Download results as a .csv file"
+                >
+                  ⬇️ Download CSV
                 </button>
               </div>
             </div>
