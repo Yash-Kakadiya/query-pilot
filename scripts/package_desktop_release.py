@@ -79,16 +79,37 @@ def build_desktop_release(
 
     # 3. Tauri release compilation check / build
     tauri_target_exe = REPO_ROOT / "src-tauri" / "target" / "release" / ("querypilot.exe" if sys.platform == "win32" else "querypilot")
+    nsis_bundle_dir = REPO_ROOT / "src-tauri" / "target" / "release" / "bundle" / "nsis"
+
     if rebuild or not tauri_target_exe.is_file():
-        print("\n[3/5] Compiling Tauri desktop binary in release mode (cargo build --release)...")
-        cargo_cmd = "cargo"
-        proc = subprocess.run(
-            [cargo_cmd, "build", "--release", "--manifest-path", str(REPO_ROOT / "src-tauri" / "Cargo.toml")],
-            cwd=str(REPO_ROOT),
-            check=False,
-        )
-        if proc.returncode != 0:
-            raise RuntimeError(f"Cargo build --release failed with exit code {proc.returncode}")
+        print("\n[3/5] Compiling Tauri desktop binary and installer bundle...")
+        npx_cmd = "npx.cmd" if sys.platform == "win32" else "npx"
+        # Attempt to run Tauri CLI to build both the release executable and NSIS installer
+        tauri_build_ok = False
+        try:
+            print("  -> Attempting Tauri bundler (npx @tauri-apps/cli build --bundles nsis)...")
+            proc = subprocess.run(
+                [npx_cmd, "--yes", "@tauri-apps/cli", "build", "--bundles", "nsis"],
+                cwd=str(REPO_ROOT),
+                check=False,
+            )
+            if proc.returncode == 0:
+                tauri_build_ok = True
+                print("  + Tauri build and NSIS installer bundling succeeded.")
+        except Exception as e:
+            print(f"  ! Tauri CLI bundling encountered error: {e}")
+
+        # Fallback to direct cargo release build if Tauri CLI was not available or makensis missing
+        if not tauri_build_ok and not tauri_target_exe.is_file():
+            print("  -> Running cargo build --release fallback...")
+            cargo_cmd = "cargo"
+            fallback_proc = subprocess.run(
+                [cargo_cmd, "build", "--release", "--manifest-path", str(REPO_ROOT / "src-tauri" / "Cargo.toml")],
+                cwd=str(REPO_ROOT),
+                check=False,
+            )
+            if fallback_proc.returncode != 0:
+                raise RuntimeError(f"Cargo build --release failed with exit code {fallback_proc.returncode}")
     else:
         print("\n[3/5] Using existing compiled Tauri release executable.")
 
@@ -164,9 +185,22 @@ on your machine. Your database credentials never leave your local environment.
     zip_sha = compute_sha256(zip_path)
     checksum_lines.append(f"{zip_sha}  {zip_path.name}")
 
-    # Check for setup exe if NSIS was built
+    # Copy and catalog setup exe if NSIS was built
+    setup_candidates = list(nsis_bundle_dir.glob("*.exe")) if nsis_bundle_dir.is_dir() else []
+    for cand in setup_candidates:
+        dest_installer = output_dir / f"QueryPilot-v{version}-Setup.exe"
+        shutil.copy2(cand, dest_installer)
+        dest_installer_std = output_dir / f"QueryPilot_{version}_x64-setup.exe"
+        shutil.copy2(cand, dest_installer_std)
+        print(f"  + Bundled Windows installer executable: {dest_installer.name}")
+
+    dest_installer = output_dir / f"QueryPilot-v{version}-Setup.exe"
+    if dest_installer.is_file():
+        setup_sha = compute_sha256(dest_installer)
+        checksum_lines.append(f"{setup_sha}  {dest_installer.name}")
+
     nsis_setup = output_dir / f"QueryPilot_{version}_x64-setup.exe"
-    if nsis_setup.is_file():
+    if nsis_setup.is_file() and nsis_setup != dest_installer:
         setup_sha = compute_sha256(nsis_setup)
         checksum_lines.append(f"{setup_sha}  {nsis_setup.name}")
 

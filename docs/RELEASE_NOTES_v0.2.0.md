@@ -8,16 +8,16 @@ Welcome to **QueryPilot v0.2.0**! This milestone release brings QueryPilot to yo
 
 | Asset | Platform | Description |
 | :--- | :--- | :--- |
-| **`QueryPilot-v0.2.0-windows-x64.zip`** | Windows 10/11 (64-bit) | **Recommended**: Portable standalone release bundle (No installation required). Includes `QueryPilot.exe`, supervised Python sidecar, sample `university_demo.db`, and docs. |
-| **`SHA256SUMS.txt`** | All | Cryptographic SHA-256 verification checksums for release integrity. |
+| 🪟 **`QueryPilot-v0.2.0-Setup.exe`** | Windows 10/11 (64-bit) | **Recommended (Installer)**: Standalone Windows installer wizard. Installs QueryPilot with desktop and start menu shortcuts, bundles the sidecar engine and demo database. |
+| 📦 **`QueryPilot-v0.2.0-windows-x64.zip`** | Windows 10/11 (64-bit) | **Portable**: Standalone portable zip archive (No installation or admin rights required). Extract and double-click `QueryPilot.exe`! |
+| 🔒 **`SHA256SUMS.txt`** | All | Cryptographic SHA-256 verification checksums for release integrity. |
 
 ### Quick Start (Under 1 Minute)
-1. Download **`QueryPilot-v0.2.0-windows-x64.zip`** below.
-2. Extract the archive to any folder (e.g. `C:\Users\YourName\QueryPilot`).
-3. Double-click **`QueryPilot.exe`** to launch.
-4. Click **+ Add Profile** -> **Select SQLite File** and choose the included **`university_demo.db`** (or connect to AWS RDS, Azure SQL, GCP Cloud SQL, or MonsterASP).
-5. Paste your free Google Gemini API key into the top header (or click **Get Free Gemini 🗝️**).
-6. Start asking questions in plain English or write SQL!
+1. **Using the Installer**: Download and run **`QueryPilot-v0.2.0-Setup.exe`**, then launch from your Desktop or Start Menu.
+2. **Using the Portable Zip**: Download **`QueryPilot-v0.2.0-windows-x64.zip`**, extract to any folder, and double-click **`QueryPilot.exe`**.
+3. Click **+ Add Profile** -> **Select SQLite File** and choose the included **`university_demo.db`** (or connect your cloud database: AWS RDS, Azure SQL, GCP Cloud SQL, or MonsterASP).
+4. Paste your free Google Gemini API key into the top header (or click **Get Free Gemini 🗝️**).
+5. Start asking questions in plain English or write SQL!
 
 ---
 

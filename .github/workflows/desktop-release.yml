@@ -56,6 +56,15 @@ jobs:
         run: |
           npm ci --prefix frontend
 
+      - name: Ensure NSIS Compiler is Available
+        run: |
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
+            choco install nsis -y
+          }
+          if (Test-Path "C:\Program Files (x86)\NSIS") {
+            echo "C:\Program Files (x86)\NSIS" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+
       - name: Build and Package Desktop Release Bundle
         run: |
           $ver = "${{ github.event.inputs.version || github.ref_name }}"
@@ -67,6 +76,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
+            release/QueryPilot-*.exe
             release/QueryPilot-*.zip
             release/SHA256SUMS.txt
           body_path: docs/RELEASE_NOTES_v0.2.0.md

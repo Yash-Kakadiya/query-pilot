@@ -26,14 +26,19 @@
 ## ⬇️ Download QueryPilot for Windows (v0.2.0)
 
 > [!TIP]
-> **No installation or admin rights required!** QueryPilot is packaged as a standalone portable Windows application.
+> **Direct Executable & Portable**: Choose the direct Windows installer (`.exe`) or the zero-installation portable archive (`.zip`). Both run 100% locally with all dependencies included!
 
-👉 **[Download QueryPilot v0.2.0 Portable (.zip)](https://github.com/Yash-Kakadiya/query-pilot/releases)**
+👉 **[Download QueryPilot v0.2.0 from GitHub Releases](https://github.com/Yash-Kakadiya/query-pilot/releases)**
 
-1. Download **`QueryPilot-v0.2.0-windows-x64.zip`** from the [Releases page](https://github.com/Yash-Kakadiya/query-pilot/releases).
-2. Extract the archive to any folder on your computer.
-3. Double-click **`QueryPilot.exe`** to launch!
-4. Select the included **`university_demo.db`** (or connect your cloud database) and start asking questions!
+| Download Link | Type | Description |
+| :--- | :--- | :--- |
+| 🪟 **[QueryPilot-v0.2.0-Setup.exe](https://github.com/Yash-Kakadiya/query-pilot/releases)** | **Windows Installer (.exe)** | **Recommended**: Direct executable setup wizard. Automatically installs desktop & start menu shortcuts. |
+| 📦 **[QueryPilot-v0.2.0-windows-x64.zip](https://github.com/Yash-Kakadiya/query-pilot/releases)** | **Portable Archive (.zip)** | Standalone runnable bundle. Unzip anywhere and double-click `QueryPilot.exe`—no installation needed! |
+
+### Getting Started in 3 Steps:
+1. Download **`QueryPilot-v0.2.0-Setup.exe`** (or extract the `.zip`).
+2. Launch **`QueryPilot`** and select the bundled **`university_demo.db`** (or connect your cloud database).
+3. Paste your free Google Gemini API key into the top header and start asking questions in plain English!
 
 ---
 
