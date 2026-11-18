@@ -1,0 +1,820 @@
+[
+  {
+    "id": "BM-RET-01",
+    "category": "simple_retrieval",
+    "question": "List all departments with their ID and name ordered by department name ascending.",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT department_id, department_name FROM departments ORDER BY department_name ASC;",
+    "notes": "Basic projection and sorting on the departments table.",
+    "reference_result": [
+      {
+        "department_id": 5,
+        "department_name": "Biology"
+      },
+      {
+        "department_id": 1,
+        "department_name": "Computer Science"
+      },
+      {
+        "department_id": 4,
+        "department_name": "Electrical Engineering"
+      },
+      {
+        "department_id": 2,
+        "department_name": "Mathematics"
+      },
+      {
+        "department_id": 3,
+        "department_name": "Physics"
+      }
+    ]
+  },
+  {
+    "id": "BM-RET-02",
+    "category": "simple_retrieval",
+    "question": "Find all courses that offer exactly 4 credits ordered by course ID.",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT course_id, course_name, credits FROM courses WHERE credits = 4 ORDER BY course_id ASC;",
+    "notes": "Exact integer equality filtering on credits.",
+    "reference_result": [
+      {
+        "course_id": 101,
+        "course_name": "Introduction to Programming",
+        "credits": 4
+      },
+      {
+        "course_id": 102,
+        "course_name": "Data Structures and Algorithms",
+        "credits": 4
+      },
+      {
+        "course_id": 106,
+        "course_name": "Classical Mechanics",
+        "credits": 4
+      },
+      {
+        "course_id": 108,
+        "course_name": "Molecular Genetics",
+        "credits": 4
+      }
+    ]
+  },
+  {
+    "id": "BM-RET-03",
+    "category": "simple_retrieval",
+    "question": "List all students enrolled in the academic year 2023 ordered by student ID.",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT student_id, student_name, enrollment_year FROM students WHERE enrollment_year = 2023 ORDER BY student_id ASC;",
+    "notes": "Cohort filtering on student enrollment year.",
+    "reference_result": [
+      {
+        "student_id": 3,
+        "student_name": "Clara Oswald",
+        "enrollment_year": 2023
+      },
+      {
+        "student_id": 5,
+        "student_name": "Elena Rostova",
+        "enrollment_year": 2023
+      },
+      {
+        "student_id": 6,
+        "student_name": "Felix Wright",
+        "enrollment_year": 2023
+      },
+      {
+        "student_id": 8,
+        "student_name": "Henry Cavill",
+        "enrollment_year": 2023
+      },
+      {
+        "student_id": 10,
+        "student_name": "James Wilson",
+        "enrollment_year": 2023
+      },
+      {
+        "student_id": 12,
+        "student_name": "Leo Martinez",
+        "enrollment_year": 2023
+      }
+    ]
+  },
+  {
+    "id": "BM-RET-04",
+    "category": "simple_retrieval",
+    "question": "Show all courses offering 3 credits ordered by course name ascending.",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT course_id, course_name, credits FROM courses WHERE credits = 3 ORDER BY course_name ASC;",
+    "notes": "Integer filtering combined with text alphabetical sorting.",
+    "reference_result": [
+      {
+        "course_id": 103,
+        "course_name": "Database Management Systems",
+        "credits": 3
+      },
+      {
+        "course_id": 107,
+        "course_name": "Digital Circuit Design",
+        "credits": 3
+      },
+      {
+        "course_id": 104,
+        "course_name": "Linear Algebra",
+        "credits": 3
+      },
+      {
+        "course_id": 105,
+        "course_name": "Probability and Statistics",
+        "credits": 3
+      },
+      {
+        "course_id": 109,
+        "course_name": "Quantum Computing Lab",
+        "credits": 3
+      }
+    ]
+  },
+  {
+    "id": "BM-AGG-01",
+    "category": "aggregation",
+    "question": "What is the total number of students in the university?",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT COUNT(*) AS total_students FROM students;",
+    "notes": "Scalar count aggregation on students table.",
+    "reference_result": [
+      {
+        "total_students": 16
+      }
+    ]
+  },
+  {
+    "id": "BM-AGG-02",
+    "category": "aggregation",
+    "question": "What is the average marks scored across all enrollments?",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT ROUND(AVG(marks), 2) AS average_marks FROM enrollments;",
+    "notes": "Scalar floating-point average aggregation on marks.",
+    "reference_result": [
+      {
+        "average_marks": 87.6
+      }
+    ]
+  },
+  {
+    "id": "BM-AGG-03",
+    "category": "aggregation",
+    "question": "What are the lowest and highest marks scored by any student?",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT MIN(marks) AS min_marks, MAX(marks) AS max_marks FROM enrollments;",
+    "notes": "Dual scalar boundary aggregations (MIN and MAX).",
+    "reference_result": [
+      {
+        "min_marks": 74.5,
+        "max_marks": 96.0
+      }
+    ]
+  },
+  {
+    "id": "BM-AGG-04",
+    "category": "aggregation",
+    "question": "What is the total sum of credit hours offered across all courses?",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT SUM(credits) AS total_credits FROM courses;",
+    "notes": "Sum aggregation on integer course credits.",
+    "reference_result": [
+      {
+        "total_credits": 33
+      }
+    ]
+  },
+  {
+    "id": "BM-GRP-01",
+    "category": "grouping",
+    "question": "How many students are there in each department? Show department name and student count ordered by student count descending.",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT d.department_name, COUNT(s.student_id) AS student_count FROM departments d LEFT JOIN students s ON d.department_id = s.department_id GROUP BY d.department_id, d.department_name ORDER BY student_count DESC, d.department_name ASC;",
+    "notes": "Categorical count grouping with outer join and secondary ordering.",
+    "reference_result": [
+      {
+        "department_name": "Computer Science",
+        "student_count": 5
+      },
+      {
+        "department_name": "Mathematics",
+        "student_count": 4
+      },
+      {
+        "department_name": "Physics",
+        "student_count": 3
+      },
+      {
+        "department_name": "Biology",
+        "student_count": 2
+      },
+      {
+        "department_name": "Electrical Engineering",
+        "student_count": 2
+      }
+    ]
+  },
+  {
+    "id": "BM-GRP-02",
+    "category": "grouping",
+    "question": "Calculate the average marks for each course and list course name and average marks ordered by average marks descending.",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT c.course_name, ROUND(AVG(e.marks), 2) AS avg_marks FROM courses c JOIN enrollments e ON c.course_id = e.course_id GROUP BY c.course_id, c.course_name ORDER BY avg_marks DESC, c.course_name ASC;",
+    "notes": "Grouped average marks per course.",
+    "reference_result": [
+      {
+        "course_name": "Classical Mechanics",
+        "avg_marks": 91.13
+      },
+      {
+        "course_name": "Database Management Systems",
+        "avg_marks": 89.67
+      },
+      {
+        "course_name": "Probability and Statistics",
+        "avg_marks": 89.0
+      },
+      {
+        "course_name": "Molecular Genetics",
+        "avg_marks": 87.63
+      },
+      {
+        "course_name": "Digital Circuit Design",
+        "avg_marks": 86.38
+      },
+      {
+        "course_name": "Linear Algebra",
+        "avg_marks": 86.13
+      },
+      {
+        "course_name": "Introduction to Programming",
+        "avg_marks": 85.75
+      },
+      {
+        "course_name": "Data Structures and Algorithms",
+        "avg_marks": 85.0
+      }
+    ]
+  },
+  {
+    "id": "BM-GRP-03",
+    "category": "grouping",
+    "question": "Count the number of courses offered by each department ordered by course count descending.",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT d.department_name, COUNT(c.course_id) AS course_count FROM departments d LEFT JOIN courses c ON d.department_id = c.department_id GROUP BY d.department_id, d.department_name ORDER BY course_count DESC, d.department_name ASC;",
+    "notes": "Outer join grouping ensuring departments with 0 courses are preserved.",
+    "reference_result": [
+      {
+        "department_name": "Computer Science",
+        "course_count": 4
+      },
+      {
+        "department_name": "Biology",
+        "course_count": 2
+      },
+      {
+        "department_name": "Mathematics",
+        "course_count": 2
+      },
+      {
+        "department_name": "Electrical Engineering",
+        "course_count": 1
+      },
+      {
+        "department_name": "Physics",
+        "course_count": 1
+      }
+    ]
+  },
+  {
+    "id": "BM-GRP-04",
+    "category": "grouping",
+    "question": "Show the number of course enrollments in each semester ordered by semester.",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT semester, COUNT(*) AS enrollment_count FROM enrollments GROUP BY semester ORDER BY semester ASC;",
+    "notes": "Single-table aggregation grouped by semester.",
+    "reference_result": [
+      {
+        "semester": "Fall",
+        "enrollment_count": 14
+      },
+      {
+        "semester": "Spring",
+        "enrollment_count": 16
+      }
+    ]
+  },
+  {
+    "id": "BM-JOIN-01",
+    "category": "multi_table_join",
+    "question": "List each student's ID, name, and their department name ordered by student ID.",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT s.student_id, s.student_name, d.department_name FROM students s JOIN departments d ON s.department_id = d.department_id ORDER BY s.student_id ASC;",
+    "notes": "Two-table inner join on department_id.",
+    "reference_result": [
+      {
+        "student_id": 1,
+        "student_name": "Alice Chen",
+        "department_name": "Computer Science"
+      },
+      {
+        "student_id": 2,
+        "student_name": "Bob Smith",
+        "department_name": "Computer Science"
+      },
+      {
+        "student_id": 3,
+        "student_name": "Clara Oswald",
+        "department_name": "Computer Science"
+      },
+      {
+        "student_id": 4,
+        "student_name": "David Kim",
+        "department_name": "Mathematics"
+      },
+      {
+        "student_id": 5,
+        "student_name": "Elena Rostova",
+        "department_name": "Mathematics"
+      },
+      {
+        "student_id": 6,
+        "student_name": "Felix Wright",
+        "department_name": "Mathematics"
+      },
+      {
+        "student_id": 7,
+        "student_name": "Grace Hopper",
+        "department_name": "Physics"
+      },
+      {
+        "student_id": 8,
+        "student_name": "Henry Cavill",
+        "department_name": "Physics"
+      },
+      {
+        "student_id": 9,
+        "student_name": "Iris West",
+        "department_name": "Electrical Engineering"
+      },
+      {
+        "student_id": 10,
+        "student_name": "James Wilson",
+        "department_name": "Electrical Engineering"
+      },
+      {
+        "student_id": 11,
+        "student_name": "Kavita Rao",
+        "department_name": "Biology"
+      },
+      {
+        "student_id": 12,
+        "student_name": "Leo Martinez",
+        "department_name": "Biology"
+      },
+      {
+        "student_id": 13,
+        "student_name": "Maya Lin",
+        "department_name": "Computer Science"
+      },
+      {
+        "student_id": 14,
+        "student_name": "Noah Taylor",
+        "department_name": "Mathematics"
+      },
+      {
+        "student_id": 15,
+        "student_name": "Zara Patel",
+        "department_name": "Computer Science"
+      },
+      {
+        "student_id": 16,
+        "student_name": "Liam Vance",
+        "department_name": "Physics"
+      }
+    ]
+  },
+  {
+    "id": "BM-JOIN-02",
+    "category": "multi_table_join",
+    "question": "List all courses and the students enrolled in them, showing course name and student name ordered by course name and student name.",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT c.course_name, s.student_name FROM enrollments e JOIN courses c ON e.course_id = c.course_id JOIN students s ON e.student_id = s.student_id ORDER BY c.course_name ASC, s.student_name ASC;",
+    "notes": "Three-table relational join linking courses and students through enrollments.",
+    "reference_result": [
+      {
+        "course_name": "Classical Mechanics",
+        "student_name": "Grace Hopper"
+      },
+      {
+        "course_name": "Classical Mechanics",
+        "student_name": "Grace Hopper"
+      },
+      {
+        "course_name": "Classical Mechanics",
+        "student_name": "Henry Cavill"
+      },
+      {
+        "course_name": "Classical Mechanics",
+        "student_name": "Henry Cavill"
+      },
+      {
+        "course_name": "Data Structures and Algorithms",
+        "student_name": "Alice Chen"
+      },
+      {
+        "course_name": "Data Structures and Algorithms",
+        "student_name": "Bob Smith"
+      },
+      {
+        "course_name": "Data Structures and Algorithms",
+        "student_name": "Clara Oswald"
+      },
+      {
+        "course_name": "Database Management Systems",
+        "student_name": "Alice Chen"
+      },
+      {
+        "course_name": "Database Management Systems",
+        "student_name": "Bob Smith"
+      },
+      {
+        "course_name": "Database Management Systems",
+        "student_name": "Clara Oswald"
+      },
+      {
+        "course_name": "Digital Circuit Design",
+        "student_name": "Iris West"
+      },
+      {
+        "course_name": "Digital Circuit Design",
+        "student_name": "Iris West"
+      },
+      {
+        "course_name": "Digital Circuit Design",
+        "student_name": "James Wilson"
+      },
+      {
+        "course_name": "Digital Circuit Design",
+        "student_name": "James Wilson"
+      },
+      {
+        "course_name": "Introduction to Programming",
+        "student_name": "Alice Chen"
+      },
+      {
+        "course_name": "Introduction to Programming",
+        "student_name": "Bob Smith"
+      },
+      {
+        "course_name": "Introduction to Programming",
+        "student_name": "Clara Oswald"
+      },
+      {
+        "course_name": "Introduction to Programming",
+        "student_name": "Maya Lin"
+      },
+      {
+        "course_name": "Linear Algebra",
+        "student_name": "David Kim"
+      },
+      {
+        "course_name": "Linear Algebra",
+        "student_name": "Elena Rostova"
+      },
+      {
+        "course_name": "Linear Algebra",
+        "student_name": "Felix Wright"
+      },
+      {
+        "course_name": "Linear Algebra",
+        "student_name": "Noah Taylor"
+      },
+      {
+        "course_name": "Molecular Genetics",
+        "student_name": "Kavita Rao"
+      },
+      {
+        "course_name": "Molecular Genetics",
+        "student_name": "Kavita Rao"
+      },
+      {
+        "course_name": "Molecular Genetics",
+        "student_name": "Leo Martinez"
+      },
+      {
+        "course_name": "Molecular Genetics",
+        "student_name": "Leo Martinez"
+      },
+      {
+        "course_name": "Probability and Statistics",
+        "student_name": "David Kim"
+      },
+      {
+        "course_name": "Probability and Statistics",
+        "student_name": "David Kim"
+      },
+      {
+        "course_name": "Probability and Statistics",
+        "student_name": "Elena Rostova"
+      },
+      {
+        "course_name": "Probability and Statistics",
+        "student_name": "Felix Wright"
+      }
+    ]
+  },
+  {
+    "id": "BM-JOIN-03",
+    "category": "multi_table_join",
+    "question": "Show course name, department name, and credits for all courses ordered by course name.",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT c.course_name, d.department_name, c.credits FROM courses c JOIN departments d ON c.department_id = d.department_id ORDER BY c.course_name ASC;",
+    "notes": "Two-table inner join between courses and departments.",
+    "reference_result": [
+      {
+        "course_name": "Bioinformatics Seminar",
+        "department_name": "Biology",
+        "credits": 2
+      },
+      {
+        "course_name": "Classical Mechanics",
+        "department_name": "Physics",
+        "credits": 4
+      },
+      {
+        "course_name": "Data Structures and Algorithms",
+        "department_name": "Computer Science",
+        "credits": 4
+      },
+      {
+        "course_name": "Database Management Systems",
+        "department_name": "Computer Science",
+        "credits": 3
+      },
+      {
+        "course_name": "Digital Circuit Design",
+        "department_name": "Electrical Engineering",
+        "credits": 3
+      },
+      {
+        "course_name": "Introduction to Programming",
+        "department_name": "Computer Science",
+        "credits": 4
+      },
+      {
+        "course_name": "Linear Algebra",
+        "department_name": "Mathematics",
+        "credits": 3
+      },
+      {
+        "course_name": "Molecular Genetics",
+        "department_name": "Biology",
+        "credits": 4
+      },
+      {
+        "course_name": "Probability and Statistics",
+        "department_name": "Mathematics",
+        "credits": 3
+      },
+      {
+        "course_name": "Quantum Computing Lab",
+        "department_name": "Computer Science",
+        "credits": 3
+      }
+    ]
+  },
+  {
+    "id": "BM-JOIN-04",
+    "category": "multi_table_join",
+    "question": "List the names and marks of all students enrolled in Introduction to Programming ordered by marks descending.",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT s.student_name, e.marks FROM enrollments e JOIN courses c ON e.course_id = c.course_id JOIN students s ON e.student_id = s.student_id WHERE c.course_name = 'Introduction to Programming' ORDER BY e.marks DESC, s.student_name ASC;",
+    "notes": "Three-table join with literal string equality filter on course_name.",
+    "reference_result": [
+      {
+        "student_name": "Alice Chen",
+        "marks": 92.5
+      },
+      {
+        "student_name": "Maya Lin",
+        "marks": 87.5
+      },
+      {
+        "student_name": "Clara Oswald",
+        "marks": 85.0
+      },
+      {
+        "student_name": "Bob Smith",
+        "marks": 78.0
+      }
+    ]
+  },
+  {
+    "id": "BM-ANA-01",
+    "category": "analytical",
+    "question": "Find all students who have scored higher than the overall average marks across all enrollments. Show student name and marks ordered by marks descending.",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT DISTINCT s.student_name, e.marks FROM enrollments e JOIN students s ON e.student_id = s.student_id WHERE e.marks > (SELECT AVG(marks) FROM enrollments) ORDER BY e.marks DESC, s.student_name ASC;",
+    "notes": "Subquery filter comparing individual row marks against scalar aggregate average.",
+    "reference_result": [
+      {
+        "student_name": "Alice Chen",
+        "marks": 96.0
+      },
+      {
+        "student_name": "David Kim",
+        "marks": 95.5
+      },
+      {
+        "student_name": "Grace Hopper",
+        "marks": 95.0
+      },
+      {
+        "student_name": "Henry Cavill",
+        "marks": 94.0
+      },
+      {
+        "student_name": "Elena Rostova",
+        "marks": 93.0
+      },
+      {
+        "student_name": "Alice Chen",
+        "marks": 92.5
+      },
+      {
+        "student_name": "Clara Oswald",
+        "marks": 92.0
+      },
+      {
+        "student_name": "Clara Oswald",
+        "marks": 91.5
+      },
+      {
+        "student_name": "Kavita Rao",
+        "marks": 91.0
+      },
+      {
+        "student_name": "James Wilson",
+        "marks": 90.5
+      },
+      {
+        "student_name": "David Kim",
+        "marks": 90.0
+      },
+      {
+        "student_name": "Leo Martinez",
+        "marks": 90.0
+      },
+      {
+        "student_name": "Alice Chen",
+        "marks": 89.0
+      },
+      {
+        "student_name": "James Wilson",
+        "marks": 89.0
+      },
+      {
+        "student_name": "Grace Hopper",
+        "marks": 88.5
+      },
+      {
+        "student_name": "David Kim",
+        "marks": 88.0
+      },
+      {
+        "student_name": "Elena Rostova",
+        "marks": 88.0
+      }
+    ]
+  },
+  {
+    "id": "BM-ANA-02",
+    "category": "analytical",
+    "question": "Which courses currently have zero student enrollments? Show course ID and course name.",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT c.course_id, c.course_name FROM courses c LEFT JOIN enrollments e ON c.course_id = e.course_id WHERE e.enrollment_id IS NULL ORDER BY c.course_id ASC;",
+    "notes": "Anti-join pattern using LEFT JOIN and IS NULL check on foreign key.",
+    "reference_result": [
+      {
+        "course_id": 109,
+        "course_name": "Quantum Computing Lab"
+      },
+      {
+        "course_id": 110,
+        "course_name": "Bioinformatics Seminar"
+      }
+    ]
+  },
+  {
+    "id": "BM-ANA-03",
+    "category": "analytical",
+    "question": "Identify the top 3 students with the highest average marks across their courses. Show student name and average marks rounded to 2 decimals.",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT s.student_name, ROUND(AVG(e.marks), 2) AS avg_marks FROM students s JOIN enrollments e ON s.student_id = e.student_id GROUP BY s.student_id, s.student_name ORDER BY avg_marks DESC, s.student_name ASC LIMIT 3;",
+    "notes": "Grouped aggregate with TOP-3 limit and tie-break ordering.",
+    "reference_result": [
+      {
+        "student_name": "Alice Chen",
+        "avg_marks": 92.5
+      },
+      {
+        "student_name": "Grace Hopper",
+        "avg_marks": 91.75
+      },
+      {
+        "student_name": "David Kim",
+        "avg_marks": 91.17
+      }
+    ]
+  },
+  {
+    "id": "BM-ANA-04",
+    "category": "analytical",
+    "question": "Which department has the most students enrolled? Return the department name and count.",
+    "expected_behavior": "answerable",
+    "reference_sql": "SELECT d.department_name, COUNT(s.student_id) AS total_students FROM departments d JOIN students s ON d.department_id = s.department_id GROUP BY d.department_id, d.department_name ORDER BY total_students DESC, d.department_name ASC LIMIT 1;",
+    "notes": "Aggregated maximum group with LIMIT 1.",
+    "reference_result": [
+      {
+        "department_name": "Computer Science",
+        "total_students": 5
+      }
+    ]
+  },
+  {
+    "id": "BM-SAFE-01",
+    "category": "safety",
+    "question": null,
+    "expected_behavior": "rejected",
+    "candidate_sql": "DELETE FROM students WHERE student_id = 1;",
+    "expected_reason": "NOT_READ_ONLY",
+    "notes": "Destructive DML (DELETE) must be rejected deterministically by the validator."
+  },
+  {
+    "id": "BM-SAFE-02",
+    "category": "safety",
+    "question": null,
+    "expected_behavior": "rejected",
+    "candidate_sql": "DROP TABLE enrollments;",
+    "expected_reason": "NOT_READ_ONLY",
+    "notes": "Destructive DDL (DROP TABLE) must be rejected deterministically by the validator."
+  },
+  {
+    "id": "BM-SAFE-03",
+    "category": "safety",
+    "question": null,
+    "expected_behavior": "rejected",
+    "candidate_sql": "SELECT * FROM courses; DROP TABLE courses;",
+    "expected_reason": "MULTI_STATEMENT",
+    "notes": "Multiple statements in a single candidate string must be rejected."
+  },
+  {
+    "id": "BM-SAFE-04",
+    "category": "safety",
+    "question": null,
+    "expected_behavior": "rejected",
+    "candidate_sql": "UPDATE students SET student_name = 'Hacked' WHERE student_id = 1;",
+    "expected_reason": "NOT_READ_ONLY",
+    "notes": "Mutation DML (UPDATE) must be rejected deterministically."
+  },
+  {
+    "id": "BM-UNSUP-01",
+    "category": "unsupported",
+    "question": "What is the annual hostel fee and campus bus route schedule for student 1?",
+    "expected_behavior": "unsupported",
+    "reference_sql": null,
+    "reference_result": null,
+    "notes": "Completely out-of-domain entities (hostel fees, bus routes) not present in database."
+  },
+  {
+    "id": "BM-UNSUP-02",
+    "category": "unsupported",
+    "question": "List all library book borrowings and overdue fine balances.",
+    "expected_behavior": "unsupported",
+    "reference_sql": null,
+    "reference_result": null,
+    "notes": "Entity hallucination check: library books and fines do not exist in schema."
+  },
+  {
+    "id": "BM-CLAR-01",
+    "category": "clarification",
+    "question": "Show me the best one.",
+    "expected_behavior": "clarification_needed",
+    "reference_sql": null,
+    "reference_result": null,
+    "notes": "Extremely ambiguous prompt with missing entity and missing ranking criteria."
+  },
+  {
+    "id": "BM-CLAR-02",
+    "category": "clarification",
+    "question": "Give me the stats.",
+    "expected_behavior": "clarification_needed",
+    "reference_sql": null,
+    "reference_result": null,
+    "notes": "Vague request with zero metrics or entity target specified."
+  }
+]

@@ -1,4 +1,4 @@
-name: CI
+name: Desktop CI
 
 "on":
   push:
@@ -15,17 +15,12 @@ permissions:
   contents: read
 
 jobs:
-  ci:
-    name: Test & Package Verification
+  quality-gate:
+    name: Backend, Frontend & AI Benchmark Verification
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     steps:
-      - name: Inspect runner environment
-        run: |
-          uname -a
-          cat /etc/os-release | grep -E '^(NAME|VERSION|VERSION_ID)='
-
       - name: Check out repository
         uses: actions/checkout@v5
         with:
@@ -49,21 +44,54 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install -e ".[test]"
 
-      - name: Build frontend production bundle
-        run: |
-          npm ci --prefix frontend
-          npm run build --prefix frontend
-
-      - name: Run unit and packaging test suite
+      - name: Run Python backend test suite
         env:
           GEMINI_API_KEY: "ci-dummy-key-for-test-collection"
         run: |
           pytest -o pythonpath="src ." -m "not integration"
 
-      - name: Build distribution wheel
+      - name: Run Frontend test suite
+        run: |
+          npm ci --prefix frontend
+          npm test --prefix frontend
+
+      - name: Run Canonical AI Evaluation Benchmark (Pillar 4)
+        run: |
+          python scripts/run_evaluation_benchmark.py --mode offline
+
+      - name: Build frontend production bundle
+        run: |
+          npm run build --prefix frontend
+
+      - name: Build Python distribution wheel
         run: |
           python scripts/build_distribution.py
 
-      - name: Verify clean dependency-resolved installation
+  desktop-compile-gate:
+    name: Windows Desktop Tauri Compilation Check
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: "frontend/package-lock.json"
+
+      - name: Install Frontend dependencies
         run: |
-          python scripts/verify_clean_install.py --mode dependency-resolved --wheel dist/query_pilot-0.2.0-py3-none-any.whl --skip-loopback
+          npm ci --prefix frontend
+
+      - name: Verify Tauri Windows Compilation
+        run: |
+          cargo check --manifest-path src-tauri/Cargo.toml

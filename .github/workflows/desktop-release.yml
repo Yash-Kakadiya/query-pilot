@@ -1,0 +1,74 @@
+name: Desktop Release
+
+"on":
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version tag (e.g. 0.2.0)"
+        required: true
+        default: "0.2.0"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build & Publish Windows Desktop Release
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: "frontend/package-lock.json"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Python build dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -e ".[test]"
+          python -m pip install "pyinstaller>=6.5.0"
+
+      - name: Install Frontend dependencies
+        run: |
+          npm ci --prefix frontend
+
+      - name: Build and Package Desktop Release Bundle
+        run: |
+          $ver = "${{ github.event.inputs.version || github.ref_name }}"
+          $ver = $ver.TrimStart('v')
+          if (-not $ver) { $ver = "0.2.0" }
+          python scripts/package_desktop_release.py --version $ver --rebuild
+
+      - name: Upload Artifacts to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/QueryPilot-*.zip
+            release/SHA256SUMS.txt
+          draft: false
+          prerelease: false
+          generate_release_notes: true
