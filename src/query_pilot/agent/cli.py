@@ -682,7 +682,7 @@ def run_desktop_sidecar(
     6. Never emits readiness handshake if startup fails.
     """
     server_sock: Optional[socket.socket] = None
-    preferred_port = config.bind_port if config.bind_port > 0 else 8001
+    preferred_port = 0 if config.bind_port == 0 else (config.bind_port if config.bind_port > 0 else 8001)
     try:
         server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
