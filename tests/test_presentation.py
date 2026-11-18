@@ -347,10 +347,11 @@ def test_sanitize_message_credentials_and_tokens():
     assert "SuperSecretPassword123!" not in cleaned
     assert "[REDACTED]" in cleaned
 
-    # Gemini API Key pattern
-    raw_key_err = "API error: AIzaSyD1234567890abcdefghijklmnopqrstuv"
+    # Gemini API Key pattern (constructed dynamically to avoid false-positive secret scanning alerts)
+    dummy_key = "".join(["AI", "za", "Sy", "D1234567890", "abcdefghijklmnopqrstuv"])
+    raw_key_err = f"API error: {dummy_key}"
     cleaned_key = sanitize_message(raw_key_err)
-    assert "AIzaSy" not in cleaned_key
+    assert "AIza" not in cleaned_key
     assert "[REDACTED]" in cleaned_key
 
     # Bearer token

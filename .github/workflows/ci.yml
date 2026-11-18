@@ -44,24 +44,24 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install -e ".[test]"
 
+      - name: Build frontend production bundle
+        run: |
+          npm ci --prefix frontend
+          npm run build --prefix frontend
+
+      - name: Run Frontend test suite
+        run: |
+          npm test --prefix frontend
+
       - name: Run Python backend test suite
         env:
           GEMINI_API_KEY: "ci-dummy-key-for-test-collection"
         run: |
           pytest -o pythonpath="src ." -m "not integration"
 
-      - name: Run Frontend test suite
-        run: |
-          npm ci --prefix frontend
-          npm test --prefix frontend
-
       - name: Run Canonical AI Evaluation Benchmark (Pillar 4)
         run: |
           python scripts/run_evaluation_benchmark.py --mode offline
-
-      - name: Build frontend production bundle
-        run: |
-          npm run build --prefix frontend
 
       - name: Build Python distribution wheel
         run: |
@@ -88,9 +88,15 @@ jobs:
           cache: "npm"
           cache-dependency-path: "frontend/package-lock.json"
 
-      - name: Install Frontend dependencies
+      - name: Install Frontend dependencies & build bundle
         run: |
           npm ci --prefix frontend
+          npm run build --prefix frontend
+
+      - name: Create sidecar placeholder for Tauri glob check
+        run: |
+          New-Item -ItemType Directory -Path dist/querypilot-agent -Force | Out-Null
+          New-Item -ItemType File -Path dist/querypilot-agent/.placeholder -Force | Out-Null
 
       - name: Verify Tauri Windows Compilation
         run: |
