@@ -1,6 +1,14 @@
 import type { ConnectionFailureCode } from '../types/api.ts'
 
-export type CloudProvider = 'monsterasp' | 'aws_rds' | 'gcp_sql' | 'azure_sql' | 'custom_cloud'
+export type CloudProvider =
+  | 'monsterasp'
+  | 'aws_rds'
+  | 'gcp_sql'
+  | 'azure_sql'
+  | 'supabase'
+  | 'neon'
+  | 'planetscale'
+  | 'custom_cloud'
 
 export interface ProviderStep {
   title: string
@@ -20,6 +28,8 @@ export interface ProviderGuideInfo {
   badge: string
   icon: string
   desc: string
+  engineType?: 'mssql' | 'postgresql' | 'mysql'
+  defaultPort?: string
   serverPlaceholder: string
   serverHelp: string
   dbPlaceholder: string
@@ -235,6 +245,8 @@ export const CLOUD_PROVIDER_CONFIGS: Record<CloudProvider, ProviderGuideInfo> = 
     badge: 'Azure SQL',
     icon: '🔷',
     desc: 'Connect to Azure SQL Database or Azure SQL Managed Instance with SQL Authentication.',
+    engineType: 'mssql',
+    defaultPort: '1433',
     serverPlaceholder: 'e.g. myserver.database.windows.net',
     serverHelp: 'Server name from Azure SQL Database Overview page.',
     dbPlaceholder: 'e.g. my_azure_database',
@@ -296,6 +308,147 @@ export const CLOUD_PROVIDER_CONFIGS: Record<CloudProvider, ProviderGuideInfo> = 
       },
     ],
     firewallTip: '💡 Azure Firewall: Make sure to click "Add your client IPv4 address" under Set server firewall, otherwise Azure will block the connection attempt.',
+  },
+  supabase: {
+    name: 'Supabase (PostgreSQL)',
+    badge: 'Supabase',
+    icon: '⚡',
+    desc: 'Connect to your Supabase PostgreSQL project using Session or Transaction mode with SSL.',
+    engineType: 'postgresql',
+    defaultPort: '5432',
+    serverPlaceholder: 'e.g. aws-0-us-east-1.pooler.supabase.com or db.xxxx.supabase.co',
+    serverHelp: 'Host from Supabase Dashboard -> Project Settings -> Database -> Connection string.',
+    dbPlaceholder: 'postgres',
+    dbHelp: 'Target PostgreSQL database name (typically "postgres").',
+    userPlaceholder: 'postgres.xxxx (or postgres)',
+    userHelp: 'Database username from Supabase connection settings.',
+    profileIdPlaceholder: 'e.g. supabase_prod',
+    displayNamePlaceholder: 'e.g. Supabase Production DB',
+    fieldGuides: [
+      {
+        fieldName: 'Host / Endpoint',
+        howToFind: 'Supabase Dashboard -> Project Settings -> Database -> Connection parameters -> Host.',
+        example: 'aws-0-us-east-1.pooler.supabase.com',
+      },
+      {
+        fieldName: 'Port',
+        howToFind: 'Port 5432 (Session mode) or 6543 (Transaction pooler mode).',
+        example: '5432',
+      },
+      {
+        fieldName: 'Database Name',
+        howToFind: 'Default Supabase database is usually postgres.',
+        example: 'postgres',
+      },
+      {
+        fieldName: 'Username',
+        howToFind: 'User from connection parameters (e.g. postgres.your_project_ref).',
+        example: 'postgres.your_project_ref',
+      },
+    ],
+    steps: [
+      {
+        title: 'Step 1: Get Connection Settings from Supabase',
+        detail: 'Log into app.supabase.com -> Select your project -> Project Settings -> Database.',
+        substeps: [
+          'Under Connection parameters, find Host, Port (5432/6543), Database name, and User.',
+          'Copy Host and Port into QueryPilot.',
+        ],
+      },
+      {
+        title: 'Step 2: Enter Password & Connect',
+        detail: 'Use the database password you set when creating the Supabase project.',
+      },
+    ],
+    firewallTip: '💡 Supabase uses TLS by default. QueryPilot automatically enables SSL mode for secure cloud transit.',
+  },
+  neon: {
+    name: 'Neon Serverless Postgres',
+    badge: 'Neon',
+    icon: '🟢',
+    desc: 'Connect to Neon Serverless PostgreSQL with auto-scaling compute and SSL encryption.',
+    engineType: 'postgresql',
+    defaultPort: '5432',
+    serverPlaceholder: 'e.g. ep-cool-fog-123456.us-east-2.aws.neon.tech',
+    serverHelp: 'Host from Neon Console dashboard Connection Details.',
+    dbPlaceholder: 'neondb (or postgres)',
+    dbHelp: 'Default database name created in Neon.',
+    userPlaceholder: 'e.g. alex or neondb_owner',
+    userHelp: 'Database user from Neon connection details.',
+    profileIdPlaceholder: 'e.g. neon_prod',
+    displayNamePlaceholder: 'e.g. Neon Serverless Postgres',
+    fieldGuides: [
+      {
+        fieldName: 'Host / Endpoint',
+        howToFind: 'Neon Console -> Dashboard -> Connection Details -> copy Host.',
+        example: 'ep-cool-fog-123456.us-east-2.aws.neon.tech',
+      },
+      {
+        fieldName: 'Port',
+        howToFind: 'Standard PostgreSQL port 5432.',
+        example: '5432',
+      },
+      {
+        fieldName: 'Database Name',
+        howToFind: 'Default Neon database is typically neondb.',
+        example: 'neondb',
+      },
+    ],
+    steps: [
+      {
+        title: 'Step 1: Open Neon Console',
+        detail: 'Log into console.neon.tech -> Open your project -> Dashboard -> Connection Details widget.',
+      },
+      {
+        title: 'Step 2: Copy Connection Parameters',
+        detail: 'Select Parameters or Connection string tab and copy Host, Database, and User.',
+      },
+    ],
+    firewallTip: '💡 Neon databases require SSL. QueryPilot connects using sslmode=require automatically.',
+  },
+  planetscale: {
+    name: 'PlanetScale / Cloud MySQL',
+    badge: 'Cloud MySQL',
+    icon: '🐬',
+    desc: 'Connect to PlanetScale, AWS RDS MySQL, or any remote MySQL / MariaDB database.',
+    engineType: 'mysql',
+    defaultPort: '3306',
+    serverPlaceholder: 'e.g. aws.connect.psdb.cloud or mysql-db.xxxx.rds.amazonaws.com',
+    serverHelp: 'Host from your Cloud MySQL provider dashboard.',
+    dbPlaceholder: 'e.g. my_mysql_db',
+    dbHelp: 'Target MySQL database / schema name.',
+    userPlaceholder: 'e.g. root or db_user',
+    userHelp: 'MySQL username.',
+    profileIdPlaceholder: 'e.g. mysql_prod',
+    displayNamePlaceholder: 'e.g. Production MySQL Database',
+    fieldGuides: [
+      {
+        fieldName: 'Server Host / Endpoint',
+        howToFind: 'Database overview -> Endpoint / Hostname.',
+        example: 'mysql-db.xxxx.rds.amazonaws.com',
+      },
+      {
+        fieldName: 'TCP Port',
+        howToFind: 'Standard MySQL TCP port 3306.',
+        example: '3306',
+      },
+      {
+        fieldName: 'Database Name',
+        howToFind: 'The MySQL database / schema name.',
+        example: 'my_mysql_db',
+      },
+    ],
+    steps: [
+      {
+        title: 'Step 1: Get MySQL Connection Parameters',
+        detail: 'Copy Host, Port (3306), Database name, and credentials from your cloud provider console.',
+      },
+      {
+        title: 'Step 2: Firewall & Access Control',
+        detail: 'Ensure your MySQL instance allows connections from your IP address or security group.',
+      },
+    ],
+    firewallTip: '💡 MySQL Cloud: Verify that the MySQL user has SELECT privileges and the server firewall allows port 3306.',
   },
   custom_cloud: {
     name: 'Custom Cloud / Remote MSSQL',

@@ -353,9 +353,11 @@ def _try_local_generate_sql(request: Request, body_bytes: bytes) -> Optional[Res
         logger.warning("Local in-process SQL generation fallback failed: %s", exc)
         try:
             from query_pilot.sql.failure_classifier import classify_generation_failure
+            from query_pilot.agent.diagnostics import classify_diagnostic
             from query_pilot.api.models import GenerateSQLResponse, GenerationStatus
 
             diag = classify_generation_failure(exc)
+            diag_sol = classify_diagnostic(str(exc))
             effective_dialect = "tsql"
             try:
                 if "req_model" in locals() and req_model and req_model.dialect:
@@ -371,6 +373,7 @@ def _try_local_generate_sql(request: Request, body_bytes: bytes) -> Optional[Res
                 failure_classification=diag.classification,
                 failure_message=str(exc),
                 retry_guidance=diag.retry_guidance,
+                diagnostic_solution=diag_sol.model_dump(mode="json"),
                 execution_disclaimer="Candidate SQL is unexecuted.",
                 is_executed=False,
                 request_id=req_id,

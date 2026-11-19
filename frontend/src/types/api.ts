@@ -163,7 +163,7 @@ export interface RotateTokenResponse {
 export interface ProfileSummary {
   profile_id: string
   display_name: string
-  engine_type?: 'mssql' | 'sqlite'
+  engine_type?: 'mssql' | 'sqlite' | 'postgresql' | 'mysql'
   database_name?: string | null
   schema_name?: string | null
   timeout_seconds: number
@@ -208,7 +208,7 @@ export interface ValidateProfileConfigRequest {
   database_path?: string
   schema_name?: string
   driver?: string
-  engine_type?: 'mssql' | 'sqlite'
+  engine_type?: 'mssql' | 'sqlite' | 'postgresql' | 'mysql'
   is_cloud?: boolean
   use_trusted_connection?: boolean
   user?: string
@@ -261,6 +261,7 @@ export interface TestConnectionResponse {
   latency_ms?: number | null
   message: string
   failure_code?: ConnectionFailureCode | null
+  diagnostic?: Record<string, unknown> | null
 }
 
 
@@ -436,6 +437,7 @@ export interface GenerateSQLResponse {
   failure_classification?: GenerationFailureClassification | null
   failure_message?: string | null
   retry_guidance?: string | null
+  diagnostic_solution?: Record<string, unknown> | null
 }
 
 export type AnswerGroundingStatus =

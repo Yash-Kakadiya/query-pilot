@@ -517,7 +517,7 @@ def test_sqlite_symlink_to_protected_file_rejected(tmp_path: Path):
 # ==============================================================================
 
 
-@pytest.mark.parametrize("invalid_engine", ["postgres", "mysql", "oracle", "mariadb", ""])
+@pytest.mark.parametrize("invalid_engine", ["oracle", "snowflake", "redshift", "bigquery", ""])
 def test_invalid_engine_type_rejected(invalid_engine: str, sqlite_test_db: Path):
     """Unsupported engine types are rejected by ConnectionProfile and ValidateProfileConfigRequest."""
     with pytest.raises(ValueError, match="Unsupported engine_type"):

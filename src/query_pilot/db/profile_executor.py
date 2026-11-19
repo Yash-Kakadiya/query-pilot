@@ -141,6 +141,18 @@ class ProfileExecutionBoundary:
                     "poolclass": NullPool,
                 }
                 schema_name = config.schema_name or "main"
+            elif config.engine_type == "postgresql":
+                engine_kwargs = {
+                    "pool_pre_ping": True,
+                    "connect_args": {"connect_timeout": int(timeout)},
+                }
+                schema_name = config.schema_name or "public"
+            elif config.engine_type == "mysql":
+                engine_kwargs = {
+                    "pool_pre_ping": True,
+                    "connect_args": {"connect_timeout": int(timeout)},
+                }
+                schema_name = config.schema_name or config.database_name or "default"
             else:
                 engine_kwargs = {
                     "pool_pre_ping": True,
@@ -261,6 +273,26 @@ class ProfileExecutionBoundary:
                 f"Failed to create engine/connection for profile '{self._config.profile_id}': {sanitized}"
             ) from None
 
+    @staticmethod
+    def _configure_connection_guards(conn: Connection, engine_type: str, timeout_seconds: int) -> None:
+        """Apply engine-specific read-only session guards and statement execution timeouts."""
+        if engine_type == "postgresql":
+            try:
+                conn.execute(text("SET default_transaction_read_only = ON;"))
+                conn.execute(text(f"SET statement_timeout = {int(timeout_seconds * 1000)};"))
+            except Exception as exc:
+                raise ProfileExecutionError(
+                    f"Failed to set PostgreSQL read-only guard or statement timeout: {sanitize_message(str(exc))}"
+                ) from None
+        elif engine_type == "mysql":
+            try:
+                conn.execute(text("SET SESSION TRANSACTION READ ONLY;"))
+                conn.execute(text(f"SET max_execution_time = {int(timeout_seconds * 1000)};"))
+            except Exception as exc:
+                raise ProfileExecutionError(
+                    f"Failed to set MySQL read-only guard or execution timeout: {sanitize_message(str(exc))}"
+                ) from None
+
     def execute(
         self,
         sql: str,
@@ -339,7 +371,7 @@ class ProfileExecutionBoundary:
 
         # Step 4: Pre-execution SQL Validation
         sensitive_policy = self.get_sensitive_column_policy()
-        dialect = "sqlite" if self._config.engine_type == "sqlite" else "tsql"
+        dialect = self._config.get_dialect()
         val_result = validate_sql(
             sql=sql,
             schema=active_schema,
@@ -452,21 +484,29 @@ class ProfileExecutionBoundary:
                     )
 
             else:
-                # MSSQL runtime verification: SELECT DB_NAME()
-                verify_database_context(conn, expected_db=self._config.expected_db)
+                # Runtime database verification across engines
+                verify_database_context(conn, expected_db=self._config.expected_db, engine_type=self._config.engine_type)
 
-                # Statement execution timeout applied at DBAPI level
-                raw_conn = getattr(conn.connection, "dbapi_connection", None)
-                if raw_conn is None or not hasattr(raw_conn, "timeout"):
-                    raise ProfileExecutionError(
-                        "Hard driver-level query timeout enforcement is unavailable for this connection."
+                # Engine-specific read-only session guards and statement timeouts
+                if self._config.engine_type in ("postgresql", "mysql"):
+                    self._configure_connection_guards(
+                        conn,
+                        engine_type=self._config.engine_type,
+                        timeout_seconds=effective_timeout,
                     )
-                try:
-                    raw_conn.timeout = effective_timeout
-                except Exception as exc:
-                    raise ProfileExecutionError(
-                        f"Failed to set driver-level query timeout: {sanitize_message(str(exc))}"
-                    ) from None
+                else:
+                    # MSSQL statement execution timeout applied at DBAPI level
+                    raw_conn = getattr(conn.connection, "dbapi_connection", None)
+                    if raw_conn is None or not hasattr(raw_conn, "timeout"):
+                        raise ProfileExecutionError(
+                            "Hard driver-level query timeout enforcement is unavailable for this connection."
+                        )
+                    try:
+                        raw_conn.timeout = effective_timeout
+                    except Exception as exc:
+                        raise ProfileExecutionError(
+                            f"Failed to set driver-level query timeout: {sanitize_message(str(exc))}"
+                        ) from None
 
                 start_time = time.perf_counter()
                 try:

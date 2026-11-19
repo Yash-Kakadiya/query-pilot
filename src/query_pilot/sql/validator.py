@@ -57,14 +57,19 @@ SUPPORTED_DIALECTS: dict[str, str] = {
     "mssql": "tsql",
     "sqlite": "sqlite",
     "sqlite3": "sqlite",
+    "postgres": "postgres",
+    "postgresql": "postgres",
+    "pg": "postgres",
+    "mysql": "mysql",
+    "mariadb": "mysql",
 }
 
 
 def normalize_dialect(dialect: Optional[str]) -> str:
-    """Normalize a dialect alias to its canonical dialect name ('tsql' or 'sqlite').
+    """Normalize a dialect alias to its canonical dialect name ('tsql', 'sqlite', 'postgres', or 'mysql').
 
     Defaults omitted or empty values to 'tsql'.
-    Normalizes 'mssql' and 't-sql' to 'tsql', 'sqlite3' to 'sqlite'.
+    Normalizes 'mssql'/'t-sql' to 'tsql', 'sqlite3' to 'sqlite', 'postgresql'/'pg' to 'postgres', 'mariadb' to 'mysql'.
     Raises ValueError for unsupported dialects.
     """
     if dialect is None or not str(dialect).strip():
@@ -74,7 +79,7 @@ def normalize_dialect(dialect: Optional[str]) -> str:
         return SUPPORTED_DIALECTS[cleaned]
     raise ValueError(
         f"Unsupported SQL dialect '{dialect}'. "
-        f"Supported dialects are 'tsql' and 'sqlite'."
+        f"Supported dialects are 'tsql', 'sqlite', 'postgres', and 'mysql'."
     )
 
 

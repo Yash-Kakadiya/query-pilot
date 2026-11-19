@@ -4,6 +4,8 @@ import {
   synthesizeDeterministicAnswer,
   resolveCellPresentation,
 } from '../services/answerSynthesis.ts'
+import { resolveDiagnostic } from '../services/errorDiagnostics.ts'
+import { ActionableErrorCard } from './ActionableErrorCard.tsx'
 const ResultVisualizer = React.lazy(() => import('./ResultVisualizer.tsx'))
 import './LocalExecutionResults.css'
 
@@ -131,6 +133,8 @@ export function LocalExecutionResults({
     })
   }, [result, error, isLoading, isAmbiguousFailure, isConfirmedTimeout])
 
+  const diagnostic = useMemo(() => (error ? resolveDiagnostic(error) : null), [error])
+
   if (!isLoading && !result && !error) {
     return null
   }
@@ -175,11 +179,20 @@ export function LocalExecutionResults({
       {/* Error state */}
       {error && !isLoading && (
         <div className="local-error-card" role="alert">
-          <div className="local-error-header">
-            <span aria-hidden="true">⚠️</span>
-            <strong>Query Execution Failed</strong>
-          </div>
-          <p className="local-error-message">{error.message}</p>
+          {diagnostic ? (
+            <ActionableErrorCard
+              diagnostic={diagnostic}
+              onRetry={onRetry}
+            />
+          ) : (
+            <>
+              <div className="local-error-header">
+                <span aria-hidden="true">⚠️</span>
+                <strong>Query Execution Failed</strong>
+              </div>
+              <p className="local-error-message">{error.message}</p>
+            </>
+          )}
 
           {isConfirmedTimeout && (
             <div className="local-timeout-notice" role="note">

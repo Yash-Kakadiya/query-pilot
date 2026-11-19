@@ -103,6 +103,18 @@ class ProfileDatabaseIntrospector:
                     "poolclass": NullPool,
                 }
                 schema_name = config.schema_name or "main"
+            elif config.engine_type == "postgresql":
+                engine_kwargs = {
+                    "pool_pre_ping": True,
+                    "connect_args": {"connect_timeout": int(timeout)},
+                }
+                schema_name = config.schema_name or "public"
+            elif config.engine_type == "mysql":
+                engine_kwargs = {
+                    "pool_pre_ping": True,
+                    "connect_args": {"connect_timeout": int(timeout)},
+                }
+                schema_name = config.schema_name or config.database_name or "default"
             else:
                 engine_kwargs = {
                     "pool_pre_ping": True,
@@ -148,8 +160,16 @@ class ProfileDatabaseIntrospector:
 
     @property
     def default_schema_name(self) -> str:
-        """Return the target relational schema name (e.g. 'dbo')."""
-        return self._config.schema_name or "dbo"
+        """Return the target relational schema name (e.g. 'dbo', 'public', etc.)."""
+        if self._config.schema_name:
+            return self._config.schema_name
+        if self._config.engine_type == "postgresql":
+            return "public"
+        if self._config.engine_type == "mysql":
+            return self._config.expected_db or "default"
+        if self._config.engine_type == "sqlite":
+            return "main"
+        return "dbo"
 
     def get_sensitive_column_policy(self) -> SensitiveColumnPolicy:
         """Return the SensitiveColumnPolicy enforcing canonical defaults plus additive profile entries."""
@@ -456,6 +476,12 @@ class ProfileDatabaseIntrospector:
         if self._config.engine_type == "sqlite":
             target_schema = None
             metadata_schema_name = "main"
+        elif self._config.engine_type == "mysql":
+            target_schema = self._config.schema_name or self._config.expected_db or None
+            metadata_schema_name = target_schema or "default"
+        elif self._config.engine_type == "postgresql":
+            target_schema = self.default_schema_name
+            metadata_schema_name = target_schema
         else:
             target_schema = self.default_schema_name
             metadata_schema_name = target_schema
@@ -466,7 +492,11 @@ class ProfileDatabaseIntrospector:
                 verify_sqlite_database_context(conn, expected_path=self._config.database_path or "")
                 db_name = self._config.expected_db
             else:
-                db_name = verify_database_context(conn, expected_db=self._config.expected_db)
+                db_name = verify_database_context(
+                    conn,
+                    expected_db=self._config.expected_db,
+                    engine_type=self._config.engine_type,
+                )
 
             allowed_set = (
                 {t.strip().lower() for t in self._config.allowed_tables if t and t.strip()}

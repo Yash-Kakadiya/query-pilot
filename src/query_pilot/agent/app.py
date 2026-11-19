@@ -434,7 +434,7 @@ def create_agent_app(
                     display_name=profile.display_name,
                     engine_type=profile.engine_type,
                     database_name=profile.database_name,
-                    schema_name=profile.schema_name or ("dbo" if profile.engine_type == "mssql" else "main"),
+                    schema_name=profile.schema_name or ("dbo" if profile.engine_type == "mssql" else ("public" if profile.engine_type == "postgresql" else ("default" if profile.engine_type == "mysql" else "main"))),
                     timeout_seconds=profile.timeout_seconds,
                     max_row_limit=profile.max_row_limit,
                     has_allowlist=profile.allowed_tables is not None,
@@ -527,7 +527,7 @@ def create_agent_app(
             driver=body.driver,
             engine_type=body.engine_type,
             is_cloud=body.is_cloud,
-            use_trusted_connection=body.use_trusted_connection if body.engine_type == "mssql" else True,
+            use_trusted_connection=body.use_trusted_connection if body.engine_type == "mssql" else False if body.engine_type in ("postgresql", "mysql") else True,
             user=body.user,
             password=body.password,
             encrypt=body.encrypt if body.encrypt is not None else True,
@@ -618,7 +618,7 @@ def create_agent_app(
             display_name=new_profile.display_name,
             engine_type=new_profile.engine_type,
             database_name=new_profile.database_name,
-            schema_name=new_profile.schema_name or ("dbo" if new_profile.engine_type == "mssql" else "main"),
+            schema_name=new_profile.schema_name or ("dbo" if new_profile.engine_type == "mssql" else ("public" if new_profile.engine_type == "postgresql" else ("default" if new_profile.engine_type == "mysql" else "main"))),
             timeout_seconds=new_profile.timeout_seconds,
             max_row_limit=new_profile.max_row_limit,
             has_allowlist=new_profile.allowed_tables is not None,
@@ -799,12 +799,15 @@ def create_agent_app(
                     failure_code = "CONNECTION_FAILED"
                     msg = "Failed to establish a database connection."
 
+                from query_pilot.agent.diagnostics import classify_diagnostic
+                diag_sol = classify_diagnostic(str(exc))
                 return TestConnectionResponse(
                     connected=False,
                     database_name=None,
                     latency_ms=round(elapsed_ms, 2),
                     message=msg,
                     failure_code=failure_code,
+                    diagnostic=diag_sol.model_dump(mode="json"),
                 )
             finally:
                 if temp_engine is not None:
@@ -821,7 +824,11 @@ def create_agent_app(
                 poolclass=NullPool,
             )
             with temp_engine.connect() as conn:
-                actual_db = verify_database_context(conn, expected_db=profile.database_name)
+                actual_db = verify_database_context(
+                    conn,
+                    expected_db=profile.database_name,
+                    engine_type=profile.engine_type,
+                )
                 elapsed_ms = (time.perf_counter() - start_time) * 1000.0
                 return TestConnectionResponse(
                     connected=True,
@@ -864,12 +871,20 @@ def create_agent_app(
                 failure_code = "CONNECTION_FAILED"
                 msg = "Failed to establish a database connection."
 
+            from query_pilot.agent.diagnostics import classify_diagnostic
+            diag_sol = classify_diagnostic(
+                str(exc),
+                context={"server": getattr(profile, "server", None), "port": getattr(profile, "port", None)},
+            )
+            if failure_code == "AUTH_FAILED":
+                diag_sol.technical_details = None
             return TestConnectionResponse(
                 connected=False,
                 database_name=None,
                 latency_ms=round(elapsed_ms, 2),
                 message=msg,
                 failure_code=failure_code,
+                diagnostic=diag_sol.model_dump(mode="json"),
             )
         finally:
             if temp_engine is not None:

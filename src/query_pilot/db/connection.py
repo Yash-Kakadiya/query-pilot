@@ -37,9 +37,46 @@ class DatabaseConnectionError(Exception):
     pass
 
 
+def verify_engine_database_context(
+    conn: Connection,
+    expected_db: str,
+    engine_type: str = "mssql",
+) -> str:
+    """Query the active session and verify the connected database across MSSQL, PostgreSQL, and MySQL.
+
+    Executes:
+    - 'SELECT current_database()' for PostgreSQL
+    - 'SELECT DATABASE()' for MySQL
+    - 'SELECT DB_NAME()' for MSSQL
+    """
+    if engine_type == "postgresql":
+        query = "SELECT current_database();"
+    elif engine_type == "mysql":
+        query = "SELECT DATABASE();"
+    else:
+        query = "SELECT DB_NAME();"
+
+    try:
+        actual_db = conn.execute(text(query)).scalar()
+    except SQLAlchemyError as exc:
+        raise DatabaseConnectionError(
+            f"Failed to query {engine_type} session context: {exc}"
+        ) from exc
+
+    if not actual_db or str(actual_db).strip().lower() != expected_db.strip().lower():
+        raise DatabaseSecurityError(
+            f"SECURITY VIOLATION: Connected to unauthorized database '{actual_db}'. "
+            f"QueryPilot is strictly restricted to '{expected_db}'. "
+            f"Terminating connection to protect external databases."
+        )
+
+    return str(actual_db).strip()
+
+
 def verify_database_context(
     conn: Connection,
     expected_db: str = ALLOWED_TARGET_DATABASE,
+    engine_type: str = "mssql",
 ) -> str:
     """Query the active SQL Server session and verify the connected database.
 
@@ -49,28 +86,15 @@ def verify_database_context(
     Args:
         conn: An active SQLAlchemy Connection.
         expected_db: Expected database name (default: GradeSense_Local).
+        engine_type: Target engine type ('mssql', 'postgresql', 'mysql').
 
     Returns:
-        The verified database name returned by SQL Server.
+        The verified database name returned by the database server.
 
     Raises:
         DatabaseSecurityError: If the connected database does not match expected_db.
     """
-    try:
-        actual_db = conn.execute(text("SELECT DB_NAME();")).scalar()
-    except SQLAlchemyError as exc:
-        raise DatabaseConnectionError(
-            f"Failed to query SQL Server session context (DB_NAME): {exc}"
-        ) from exc
-
-    if not actual_db or str(actual_db).strip() != expected_db:
-        raise DatabaseSecurityError(
-            f"SECURITY VIOLATION: Connected to unauthorized database '{actual_db}'. "
-            f"QueryPilot is strictly restricted to '{expected_db}'. "
-            f"Terminating connection to protect external databases."
-        )
-
-    return str(actual_db).strip()
+    return verify_engine_database_context(conn, expected_db=expected_db, engine_type=engine_type)
 
 
 def verify_sqlite_database_context(
@@ -294,8 +318,11 @@ def create_profile_db_engine(
 
     engine_kwargs = {
         "pool_pre_ping": True,
-        "connect_args": {"timeout": timeout},
     }
+    if profile.engine_type == "mssql":
+        engine_kwargs["connect_args"] = {"timeout": timeout}
+    elif profile.engine_type in ("postgresql", "mysql"):
+        engine_kwargs["connect_args"] = {"connect_timeout": int(timeout)}
     engine_kwargs.update(kwargs)
 
     try:

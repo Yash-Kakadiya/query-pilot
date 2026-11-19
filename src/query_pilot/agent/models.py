@@ -532,5 +532,9 @@ class TestConnectionResponse(BaseModel):
         default=None,
         description="Bounded diagnostic failure code (e.g. 'AUTH_FAILED', 'UNREACHABLE', 'TIMEOUT', 'DATABASE_MISMATCH', 'DRIVER_ERROR', 'CONNECTION_FAILED')."
     )
+    diagnostic: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Structured self-healing diagnostic solution with 1-click repair actions."
+    )
 
 

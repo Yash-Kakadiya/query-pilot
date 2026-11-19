@@ -80,6 +80,17 @@ class ProfileEngineConfiguration:
     database_path: Optional[str] = None
     is_cloud: bool = False
 
+    def get_dialect(self) -> str:
+        """Derive the canonical SQL dialect from the profile's authoritative engine_type."""
+        engine = (self.engine_type or "mssql").strip().lower()
+        if engine in ("postgresql", "postgres"):
+            return "postgres"
+        if engine in ("mysql", "mariadb"):
+            return "mysql"
+        if engine in ("sqlite", "sqlite3"):
+            return "sqlite"
+        return "tsql"
+
 
 class ProfileConnectionFactory:
     """Factory boundary for resolving connection profiles and constructing engine configs.
@@ -170,11 +181,14 @@ class ProfileConnectionFactory:
             }
             schema_name = profile.schema_name or "main"
         else:
-            # Build engine_kwargs: connect_args["timeout"] configures driver connection login timeout
+            # Build engine_kwargs: connect_args configures driver connection login timeout
             engine_kwargs = {
                 "pool_pre_ping": True,
-                "connect_args": {"timeout": timeout},
             }
+            if profile.engine_type == "mssql":
+                engine_kwargs["connect_args"] = {"timeout": timeout}
+            elif profile.engine_type in ("postgresql", "mysql"):
+                engine_kwargs["connect_args"] = {"connect_timeout": int(timeout)}
             schema_name = profile.schema_name
 
         return ProfileEngineConfiguration(
@@ -273,7 +287,7 @@ class ProfileConnectionFactory:
             if config.engine_type == "sqlite":
                 verify_sqlite_database_context(conn, expected_path=config.database_path or "")
             else:
-                verify_database_context(conn, expected_db=config.expected_db)
+                verify_database_context(conn, expected_db=config.expected_db, engine_type=config.engine_type)
             yield conn
         finally:
             conn.close()

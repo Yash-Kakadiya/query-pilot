@@ -18,6 +18,8 @@ import {
   sanitizeServerInput,
   type CloudProvider,
 } from '../utils/cloudProviders.ts'
+import { resolveDiagnostic, type DiagnosticSolution } from '../services/errorDiagnostics.ts'
+import { ActionableErrorCard } from './ActionableErrorCard.tsx'
 
 export interface ProfileOnboardingModalProps {
   isOpen: boolean
@@ -31,7 +33,7 @@ export type { CloudProvider }
 
 interface FormFields {
   engineCategory: 'local' | 'cloud'
-  engineType: 'mssql' | 'sqlite'
+  engineType: 'mssql' | 'sqlite' | 'postgresql' | 'mysql'
   cloudProvider: CloudProvider
   profileId: string
   displayName: string
@@ -266,26 +268,32 @@ export function ProfileOnboardingModal({
     if (provider === fields.cloudProvider) {
       return
     }
+    const provConfig = CLOUD_PROVIDER_CONFIGS[provider]
     setFields((prev) => ({
       ...prev,
       cloudProvider: provider,
-      // Retain all user-entered credentials and inputs without resetting or overriding them
+      engineType: provConfig?.engineType || 'mssql',
+      port: provConfig?.defaultPort || (provConfig?.engineType === 'postgresql' ? '5432' : provConfig?.engineType === 'mysql' ? '3306' : '1433'),
+      schemaName: provConfig?.engineType === 'postgresql' ? 'public' : provConfig?.engineType === 'mysql' ? '' : 'dbo',
     }))
     setGeneralError(null)
   }
 
-  const handleEngineTypeChange = (newEngine: 'mssql' | 'sqlite') => {
+  const handleEngineTypeChange = (newEngine: 'mssql' | 'sqlite' | 'postgresql' | 'mysql') => {
     if (newEngine === fields.engineType) {
       return
     }
+    const defaultPort = newEngine === 'postgresql' ? '5432' : newEngine === 'mysql' ? '3306' : newEngine === 'mssql' ? '1433' : ''
+    const defaultSchema = newEngine === 'postgresql' ? 'public' : newEngine === 'sqlite' ? 'main' : newEngine === 'mssql' ? 'dbo' : ''
+    const defaultUser = newEngine === 'postgresql' ? 'postgres' : newEngine === 'mysql' ? 'root' : ''
     setFields((prev) => ({
       ...prev,
       engineType: newEngine,
-      schemaName: newEngine === 'sqlite' ? 'main' : 'dbo',
-      // Clear sensitive databasePath when switching away from SQLite
+      port: defaultPort,
+      schemaName: defaultSchema,
+      user: defaultUser,
       databasePath: newEngine === 'sqlite' ? prev.databasePath : '',
     }))
-    // Clear engine-specific validation errors upon engine switch
     setFieldErrors((prev) => {
       const next = { ...prev }
       delete next.server
@@ -348,7 +356,48 @@ export function ProfileOnboardingModal({
       if (!fields.password) {
         errors.password = 'Database password is required.'
       }
-    } else if (fields.engineType === 'mssql') {
+    } else if (fields.engineType === 'sqlite') {
+      // SQLite validation
+      const dbPath = fields.databasePath.trim()
+      if (!dbPath) {
+        errors.databasePath = 'Database file path is required.'
+      } else if (dbPath.length > 1000) {
+        errors.databasePath = 'Database path exceeds maximum allowed length.'
+      } else if (!/^(?:[a-zA-Z]:[\\/]|\\\\|\/)/.test(dbPath)) {
+        errors.databasePath = 'Please provide an absolute path to the SQLite database file (e.g. C:\\... or /...).'
+      }
+    } else if (fields.engineType === 'postgresql' || fields.engineType === 'mysql') {
+      // Local PostgreSQL or MySQL
+      const srv = fields.server.trim()
+      if (!srv) {
+        errors.server = 'Database server host is required (e.g. localhost).'
+      } else if (srv.length > 255) {
+        errors.server = 'Server target cannot exceed 255 characters.'
+      }
+
+      const p = fields.port.trim()
+      if (p) {
+        const portNum = Number(p)
+        if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
+          errors.port = 'Port must be a valid number (1-65535).'
+        }
+      }
+
+      const db = fields.databaseName.trim()
+      if (!db) {
+        errors.databaseName = 'Database name is required.'
+      } else if (db.length > 128) {
+        errors.databaseName = 'Database name cannot exceed 128 characters.'
+      }
+
+      const u = fields.user.trim()
+      if (!u) {
+        errors.user = 'Username is required.'
+      } else if (u.length > 128) {
+        errors.user = 'Username cannot exceed 128 characters.'
+      }
+    } else {
+      // Local MSSQL
       const srv = fields.server.trim()
       if (!srv) {
         errors.server = 'SQL Server host or instance is required.'
@@ -365,16 +414,6 @@ export function ProfileOnboardingModal({
 
       if (fields.schemaName.trim().length > 128) {
         errors.schemaName = 'Schema name cannot exceed 128 characters.'
-      }
-    } else {
-      // SQLite validation
-      const dbPath = fields.databasePath.trim()
-      if (!dbPath) {
-        errors.databasePath = 'Database file path is required.'
-      } else if (dbPath.length > 1000) {
-        errors.databasePath = 'Database path exceeds maximum allowed length.'
-      } else if (!/^(?:[a-zA-Z]:[\\/]|\\\\|\/)/.test(dbPath)) {
-        errors.databasePath = 'Please provide an absolute path to the SQLite database file (e.g. C:\\... or /...).'
       }
     }
 
@@ -411,18 +450,19 @@ export function ProfileOnboardingModal({
     if (fields.engineCategory === 'cloud') {
       let srv = fields.server.trim()
       const port = fields.port.trim()
+      const effectiveEngine = CLOUD_PROVIDER_CONFIGS[fields.cloudProvider]?.engineType || 'mssql'
       if (port && !srv.includes(',') && !srv.includes(':')) {
-        srv = `${srv},${port}`
+        srv = effectiveEngine === 'mssql' ? `${srv},${port}` : `${srv}:${port}`
       }
       payload = {
         profile_id: fields.profileId.trim(),
         display_name: effectiveDisplayName,
-        engine_type: 'mssql',
+        engine_type: effectiveEngine,
         is_cloud: true,
         server: srv,
         database_name: fields.databaseName.trim(),
-        schema_name: fields.schemaName.trim() || 'dbo',
-        driver: 'ODBC Driver 17 for SQL Server',
+        schema_name: fields.schemaName.trim() || (effectiveEngine === 'postgresql' ? 'public' : effectiveEngine === 'mysql' ? '' : 'dbo'),
+        driver: effectiveEngine === 'postgresql' ? 'psycopg' : effectiveEngine === 'mysql' ? 'pymysql' : 'ODBC Driver 17 for SQL Server',
         use_trusted_connection: false,
         user: fields.user.trim(),
         password: fields.password,
@@ -439,6 +479,30 @@ export function ProfileOnboardingModal({
         engine_type: 'sqlite',
         database_path: fields.databasePath.trim(),
         schema_name: 'main',
+        timeout_seconds: fields.timeoutSeconds,
+        max_row_limit: fields.maxRowLimit,
+        set_as_default: fields.setAsDefault,
+      }
+    } else if (fields.engineType === 'postgresql' || fields.engineType === 'mysql') {
+      let srv = fields.server.trim() || 'localhost'
+      const port = fields.port.trim()
+      if (port && !srv.includes(':')) {
+        srv = `${srv}:${port}`
+      }
+      payload = {
+        profile_id: fields.profileId.trim(),
+        display_name: effectiveDisplayName,
+        engine_type: fields.engineType,
+        is_cloud: false,
+        server: srv,
+        database_name: fields.databaseName.trim(),
+        schema_name: fields.schemaName.trim() || (fields.engineType === 'postgresql' ? 'public' : ''),
+        driver: fields.engineType === 'postgresql' ? 'psycopg' : 'pymysql',
+        use_trusted_connection: false,
+        user: fields.user.trim() || (fields.engineType === 'postgresql' ? 'postgres' : 'root'),
+        password: fields.password,
+        encrypt: false,
+        trust_server_certificate: true,
         timeout_seconds: fields.timeoutSeconds,
         max_row_limit: fields.maxRowLimit,
         set_as_default: fields.setAsDefault,
@@ -627,7 +691,29 @@ export function ProfileOnboardingModal({
                       disabled={isSubmitting}
                     >
                       <span className="engine-icon" aria-hidden="true">🏢</span>
-                      <span className="engine-label">Microsoft SQL Server</span>
+                      <span className="engine-label">SQL Server</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={fields.engineType === 'postgresql'}
+                      className={`engine-toggle-btn ${fields.engineType === 'postgresql' ? 'engine-active' : ''}`}
+                      onClick={() => handleEngineTypeChange('postgresql')}
+                      disabled={isSubmitting}
+                    >
+                      <span className="engine-icon" aria-hidden="true">🐘</span>
+                      <span className="engine-label">PostgreSQL</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={fields.engineType === 'mysql'}
+                      className={`engine-toggle-btn ${fields.engineType === 'mysql' ? 'engine-active' : ''}`}
+                      onClick={() => handleEngineTypeChange('mysql')}
+                      disabled={isSubmitting}
+                    >
+                      <span className="engine-icon" aria-hidden="true">🐬</span>
+                      <span className="engine-label">MySQL</span>
                     </button>
                     <button
                       type="button"
@@ -651,6 +737,14 @@ export function ProfileOnboardingModal({
                       <>
                         <strong>Local Security Policy:</strong> SQLite local file engine. Read-only authorizer and watchdog timeout enforced. No database file upload or remote queries permitted.
                       </>
+                    ) : fields.engineType === 'postgresql' ? (
+                      <>
+                        <strong>Local Security Policy:</strong> PostgreSQL native engine. Fail-closed read-only transaction boundary enforced (<code>SET default_transaction_read_only = ON;</code>). Zero schema mutations or writes permitted.
+                      </>
+                    ) : fields.engineType === 'mysql' ? (
+                      <>
+                        <strong>Local Security Policy:</strong> MySQL / MariaDB native engine. Fail-closed read-only session boundary enforced (<code>SET SESSION TRANSACTION READ ONLY;</code>). Zero schema mutations or writes permitted.
+                      </>
                     ) : (
                       <>
                         <strong>Local Security Policy:</strong> Fixed to <strong>Microsoft SQL Server</strong> and{' '}
@@ -665,11 +759,21 @@ export function ProfileOnboardingModal({
                   <div className="guide-card-header">
                     <div className="guide-header-title">
                       <span className="guide-header-icon" aria-hidden="true">
-                        {fields.engineType === 'sqlite' ? '🗃️' : '🏢'}
+                        {fields.engineType === 'sqlite'
+                          ? '🗃️'
+                          : fields.engineType === 'postgresql'
+                          ? '🐘'
+                          : fields.engineType === 'mysql'
+                          ? '🐬'
+                          : '🏢'}
                       </span>
                       <strong>
                         {fields.engineType === 'sqlite'
                           ? 'SQLite Local Database Quick Guide'
+                          : fields.engineType === 'postgresql'
+                          ? 'PostgreSQL Local Quick Guide'
+                          : fields.engineType === 'mysql'
+                          ? 'MySQL Local Quick Guide'
                           : 'Local SQL Server Quick Guide'}
                       </strong>
                     </div>
@@ -702,6 +806,50 @@ export function ProfileOnboardingModal({
                             </div>
                             <p className="guide-step-text">
                               QueryPilot queries locally in read-only mode with strict execution limits. Your database file is never modified or uploaded to the cloud.
+                            </p>
+                          </div>
+                        </div>
+                      ) : fields.engineType === 'postgresql' ? (
+                        <div className="guide-steps-list">
+                          <div className="guide-step-item">
+                            <div className="guide-step-header">
+                              <span className="guide-step-number">1</span>
+                              <span className="guide-step-badge">Local Service or Docker</span>
+                            </div>
+                            <p className="guide-step-text">
+                              Connect to your local Postgres service or spin up a container: <br />
+                              <code>docker run --name pg-local -e POSTGRES_PASSWORD=postgres -p 5432:5432 -d postgres</code>
+                            </p>
+                          </div>
+                          <div className="guide-step-item">
+                            <div className="guide-step-header">
+                              <span className="guide-step-number">2</span>
+                              <span className="guide-step-badge">Connection Parameters</span>
+                            </div>
+                            <p className="guide-step-text">
+                              Host: <code>localhost</code>, Port: <code>5432</code>, User: <code>postgres</code>, Default schema: <code>public</code>.
+                            </p>
+                          </div>
+                        </div>
+                      ) : fields.engineType === 'mysql' ? (
+                        <div className="guide-steps-list">
+                          <div className="guide-step-item">
+                            <div className="guide-step-header">
+                              <span className="guide-step-number">1</span>
+                              <span className="guide-step-badge">Local Service or Docker</span>
+                            </div>
+                            <p className="guide-step-text">
+                              Connect to your local MySQL / MariaDB service or container: <br />
+                              <code>docker run --name mysql-local -e MYSQL_ROOT_PASSWORD=root -p 3306:3306 -d mysql</code>
+                            </p>
+                          </div>
+                          <div className="guide-step-item">
+                            <div className="guide-step-header">
+                              <span className="guide-step-number">2</span>
+                              <span className="guide-step-badge">Connection Parameters</span>
+                            </div>
+                            <p className="guide-step-text">
+                              Host: <code>localhost</code>, Port: <code>3306</code>, User: <code>root</code>.
                             </p>
                           </div>
                         </div>
@@ -1074,6 +1222,98 @@ export function ProfileOnboardingModal({
                       <span className="field-help-text">Default relational schema (typically dbo).</span>
                     </div>
                   </>
+                ) : fields.engineType === 'postgresql' || fields.engineType === 'mysql' ? (
+                  <>
+                    {/* Server Host/IP */}
+                    <div className="profile-form-group">
+                      <label htmlFor="onboarding-server" className="profile-form-label">
+                        {fields.engineType === 'postgresql' ? 'PostgreSQL Host' : 'MySQL Host'} <span className="required-star">*</span>
+                      </label>
+                      <input
+                        id="onboarding-server"
+                        type="text"
+                        className={`profile-form-input ${fieldErrors.server ? 'input-error' : ''}`}
+                        placeholder="localhost"
+                        value={fields.server}
+                        onChange={(e) => handleFieldChange('server', e.target.value)}
+                        disabled={isSubmitting}
+                        maxLength={255}
+                        required
+                      />
+                      {fieldErrors.server && (
+                        <span className="field-error-text" role="alert">{fieldErrors.server}</span>
+                      )}
+                      <span className="field-help-text">Local server target (localhost, 127.0.0.1).</span>
+                    </div>
+
+                    {/* Port */}
+                    <div className="profile-form-group">
+                      <label htmlFor="onboarding-port" className="profile-form-label">
+                        Port
+                      </label>
+                      <input
+                        id="onboarding-port"
+                        type="text"
+                        className={`profile-form-input ${fieldErrors.port ? 'input-error' : ''}`}
+                        placeholder={fields.engineType === 'postgresql' ? '5432' : '3306'}
+                        value={fields.port}
+                        onChange={(e) => handleFieldChange('port', e.target.value)}
+                        disabled={isSubmitting}
+                        maxLength={5}
+                      />
+                      {fieldErrors.port && (
+                        <span className="field-error-text" role="alert">{fieldErrors.port}</span>
+                      )}
+                      <span className="field-help-text">
+                        Standard port: {fields.engineType === 'postgresql' ? '5432' : '3306'}.
+                      </span>
+                    </div>
+
+                    {/* Database Name */}
+                    <div className="profile-form-group">
+                      <label htmlFor="onboarding-database" className="profile-form-label">
+                        Database Name <span className="required-star">*</span>
+                      </label>
+                      <input
+                        id="onboarding-database"
+                        type="text"
+                        className={`profile-form-input ${fieldErrors.databaseName ? 'input-error' : ''}`}
+                        placeholder={fields.engineType === 'postgresql' ? 'e.g. postgres or my_app' : 'e.g. my_app'}
+                        value={fields.databaseName}
+                        onChange={(e) => handleFieldChange('databaseName', e.target.value)}
+                        disabled={isSubmitting}
+                        maxLength={128}
+                        required
+                      />
+                      {fieldErrors.databaseName && (
+                        <span className="field-error-text" role="alert">{fieldErrors.databaseName}</span>
+                      )}
+                      <span className="field-help-text">Target database catalog.</span>
+                    </div>
+
+                    {/* Schema Name (PostgreSQL only) */}
+                    {fields.engineType === 'postgresql' ? (
+                      <div className="profile-form-group">
+                        <label htmlFor="onboarding-schema" className="profile-form-label">
+                          Default Schema
+                        </label>
+                        <input
+                          id="onboarding-schema"
+                          type="text"
+                          className={`profile-form-input ${fieldErrors.schemaName ? 'input-error' : ''}`}
+                          placeholder="public"
+                          value={fields.schemaName}
+                          onChange={(e) => handleFieldChange('schemaName', e.target.value)}
+                          disabled={isSubmitting}
+                          maxLength={128}
+                        />
+                        {fieldErrors.schemaName && (
+                          <span className="field-error-text" role="alert">{fieldErrors.schemaName}</span>
+                        )}
+                        <span className="field-help-text">Postgres schema namespace (defaults to public).</span>
+                      </div>
+                    ) : null}
+                  </>
                 ) : fields.engineType === 'mssql' ? (
                   <>
                     {/* Server Host/Instance */}
@@ -1191,25 +1431,29 @@ export function ProfileOnboardingModal({
               </div>
             </div>
 
-            {/* SECTION 3: SQL Authentication & Credentials (Cloud Only) */}
-            {fields.engineCategory === 'cloud' && (
+            {/* SECTION 3: SQL Authentication & Credentials (Cloud, PostgreSQL, MySQL) */}
+            {(fields.engineCategory === 'cloud' || fields.engineType === 'postgresql' || fields.engineType === 'mysql') && (
               <div className="profile-form-section">
                 <div className="form-section-header">
                   <span className="form-section-icon" aria-hidden="true">🔐</span>
-                  <span className="form-section-title">SQL Authentication & TLS</span>
-                  <span className="form-section-sub">Encrypted remote credentials</span>
+                  <span className="form-section-title">
+                    {fields.engineCategory === 'cloud' ? 'Authentication & TLS' : 'Database Authentication'}
+                  </span>
+                  <span className="form-section-sub">
+                    {fields.engineCategory === 'cloud' ? 'Encrypted remote credentials' : 'Login credentials'}
+                  </span>
                 </div>
                 <div className="profile-form-grid">
                   {/* Username */}
                   <div className="profile-form-group">
                     <label htmlFor="onboarding-user" className="profile-form-label">
-                      SQL Username <span className="required-star">*</span>
+                      Username <span className="required-star">*</span>
                     </label>
                     <input
                       id="onboarding-user"
                       type="text"
                       className={`profile-form-input ${fieldErrors.user ? 'input-error' : ''}`}
-                      placeholder="e.g. db52589, admin, or sqlserver"
+                      placeholder={fields.engineType === 'postgresql' ? 'postgres' : fields.engineType === 'mysql' ? 'root' : 'e.g. admin or db_user'}
                       value={fields.user}
                       onChange={(e) => handleFieldChange('user', e.target.value)}
                       disabled={isSubmitting}
@@ -1221,14 +1465,14 @@ export function ProfileOnboardingModal({
                       <span className="field-error-text" role="alert">{fieldErrors.user}</span>
                     )}
                     <span className="field-help-text">
-                      SQL Server login username.
+                      Database login username.
                     </span>
                   </div>
 
                   {/* Password with Eye Toggle */}
                   <div className="profile-form-group">
                     <label htmlFor="onboarding-password" className="profile-form-label">
-                      SQL Password <span className="required-star">*</span>
+                      Password {fields.engineCategory === 'cloud' && <span className="required-star">*</span>}
                     </label>
                     <div className="profile-password-wrapper">
                       <input
@@ -1239,7 +1483,7 @@ export function ProfileOnboardingModal({
                         value={fields.password}
                         onChange={(e) => handleFieldChange('password', e.target.value)}
                         disabled={isSubmitting}
-                        required
+                        required={fields.engineCategory === 'cloud'}
                         autoComplete="new-password"
                       />
                       <button
@@ -1259,27 +1503,29 @@ export function ProfileOnboardingModal({
                     <span className="field-help-text">Stored securely with local OS-level ACL protection.</span>
                   </div>
 
-                  {/* TLS & Certificate Options */}
-                  <div className="profile-form-group profile-form-full-width profile-checkbox-row">
-                    <label className="profile-checkbox-label">
-                      <input
-                        type="checkbox"
-                        checked={fields.encrypt}
-                        onChange={(e) => handleFieldChange('encrypt', e.target.checked)}
-                        disabled={isSubmitting}
-                      />
-                      <span>Enforce TLS Transport Encryption (<code>Encrypt=yes</code>)</span>
-                    </label>
-                    <label className="profile-checkbox-label">
-                      <input
-                        type="checkbox"
-                        checked={fields.trustServerCertificate}
-                        onChange={(e) => handleFieldChange('trustServerCertificate', e.target.checked)}
-                        disabled={isSubmitting}
-                      />
-                      <span>Trust Server Certificate (<code>TrustServerCertificate=yes</code>)</span>
-                    </label>
-                  </div>
+                  {/* TLS & Certificate Options (Cloud Only) */}
+                  {fields.engineCategory === 'cloud' && (
+                    <div className="profile-form-group profile-form-full-width profile-checkbox-row">
+                      <label className="profile-checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={fields.encrypt}
+                          onChange={(e) => handleFieldChange('encrypt', e.target.checked)}
+                          disabled={isSubmitting}
+                        />
+                        <span>Enforce TLS Transport Encryption (<code>Encrypt=yes</code>)</span>
+                      </label>
+                      <label className="profile-checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={fields.trustServerCertificate}
+                          onChange={(e) => handleFieldChange('trustServerCertificate', e.target.checked)}
+                          disabled={isSubmitting}
+                        />
+                        <span>Trust Server Certificate (<code>TrustServerCertificate=yes</code>)</span>
+                      </label>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -1535,9 +1781,16 @@ export function ProfileOnboardingModal({
                     </span>
                   )}
                   {!connectionTestResult.connected && (
-                    <p className="test-failure-note">
-                      The profile remains safely saved. You can retry the connection test after verifying your database service is running.
-                    </p>
+                    <ActionableErrorCard
+                      diagnostic={
+                        (connectionTestResult.diagnostic as unknown as DiagnosticSolution) ||
+                        resolveDiagnostic(connectionTestResult.message, {
+                          server: fields.server,
+                          port: fields.port ? parseInt(fields.port, 10) : undefined,
+                        })
+                      }
+                      onRetry={handleTestConnection}
+                    />
                   )}
                 </div>
               )}

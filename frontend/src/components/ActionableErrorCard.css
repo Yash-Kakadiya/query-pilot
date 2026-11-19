@@ -1,0 +1,215 @@
+/* ActionableErrorCard styles */
+
+.actionable-error-card {
+  margin: 1.25rem 0;
+  padding: 1.25rem 1.5rem;
+  background-color: #1e1e2d;
+  border: 1px solid #3b3a54;
+  border-left: 5px solid #f59e0b;
+  border-radius: 8px;
+  color: #e2e8f0;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  font-family: inherit;
+  transition: all 0.2s ease-in-out;
+}
+
+/* Category-specific accent borders */
+.actionable-error-card-api_key,
+.actionable-error-card-model_unavailable {
+  border-left-color: #f59e0b; /* Amber */
+}
+
+.actionable-error-card-model_quota {
+  border-left-color: #3b82f6; /* Blue */
+}
+
+.actionable-error-card-db_connection_refused,
+.actionable-error-card-db_host_unreachable,
+.actionable-error-card-db_auth_failed {
+  border-left-color: #ef4444; /* Red */
+}
+
+.actionable-error-card-db_ssl_required,
+.actionable-error-card-db_safety_mutation {
+  border-left-color: #8b5cf6; /* Purple */
+}
+
+.actionable-error-card-db_timeout {
+  border-left-color: #ec4899; /* Pink */
+}
+
+/* Header */
+.actionable-error-header {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  margin-bottom: 0.75rem;
+}
+
+.actionable-error-icon {
+  font-size: 1.6rem;
+  line-height: 1;
+}
+
+.actionable-error-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.actionable-error-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: #94a3b8;
+}
+
+.actionable-error-title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+/* Summary */
+.actionable-error-summary {
+  margin: 0.4rem 0 0.85rem 0;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: #cbd5e1;
+}
+
+/* Section */
+.actionable-error-section {
+  margin-top: 0.85rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.actionable-error-section-label {
+  display: block;
+  font-size: 0.825rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #94a3b8;
+  margin-bottom: 0.35rem;
+}
+
+.actionable-error-root-cause {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: #e2e8f0;
+}
+
+/* Steps list */
+.actionable-error-steps-list {
+  margin: 0.4rem 0 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.actionable-error-step-item {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: #e2e8f0;
+}
+
+.actionable-step-bullet {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 50%;
+  background: #334155;
+  color: #f8fafc;
+  font-size: 0.75rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+/* Action buttons */
+.actionable-error-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1.15rem;
+}
+
+.actionable-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.55rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease-in-out;
+  border: none;
+}
+
+.actionable-btn-primary {
+  background-color: #3b82f6;
+  color: #ffffff;
+}
+
+.actionable-btn-primary:hover {
+  background-color: #2563eb;
+  transform: translateY(-1px);
+}
+
+.actionable-btn-secondary {
+  background-color: #334155;
+  color: #f1f5f9;
+  border: 1px solid #475569;
+}
+
+.actionable-btn-secondary:hover {
+  background-color: #475569;
+}
+
+/* Technical Details Accordion */
+.actionable-error-technical-section {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.actionable-toggle-technical-btn {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  font-size: 0.8rem;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+  transition: color 0.15s ease;
+}
+
+.actionable-toggle-technical-btn:hover {
+  color: #e2e8f0;
+}
+
+.actionable-technical-pre {
+  margin: 0.6rem 0 0 0;
+  padding: 0.75rem 1rem;
+  background-color: #0f172a;
+  border: 1px solid #1e293b;
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.8rem;
+  color: #f87171;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}

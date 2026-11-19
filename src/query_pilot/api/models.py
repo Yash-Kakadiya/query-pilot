@@ -1106,6 +1106,10 @@ class GenerateSQLResponse(BaseModel):
         max_length=500,
         description="Actionable retry guidance if supported by provider metadata. Present ONLY when status == 'generation_failed'.",
     )
+    diagnostic_solution: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Structured self-healing diagnostic solution with 1-click repair actions.",
+    )
 
     @field_validator("clarification_options", mode="before")
     @classmethod

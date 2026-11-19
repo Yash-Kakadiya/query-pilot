@@ -606,6 +606,12 @@ class ConnectionProfile(BaseModel):
         default=None,
         description="SQL Authentication password (required if use_trusted_connection is False).",
     )
+    port: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=65535,
+        description="Optional custom TCP port (e.g. 5432 for PostgreSQL, 3306 for MySQL).",
+    )
     encrypt: bool = Field(
         default=True,
         description="Enforce TLS/SSL transport encryption (Encrypt=yes for MSSQL).",
@@ -674,10 +680,14 @@ class ConnectionProfile(BaseModel):
         if v is None:
             return "mssql"
         clean = v.strip().lower()
-        if clean not in ("mssql", "sqlite"):
+        if clean not in ("mssql", "sqlite", "postgresql", "postgres", "mysql", "mariadb"):
             raise ValueError(
-                f"Unsupported engine_type '{v}'. QueryPilot supports 'mssql' and 'sqlite'."
+                f"Unsupported engine_type '{v}'. QueryPilot supports 'mssql', 'sqlite', 'postgresql', and 'mysql'."
             )
+        if clean in ("postgres", "postgresql"):
+            return "postgresql"
+        if clean in ("mysql", "mariadb"):
+            return "mysql"
         return clean
 
     @field_validator("display_name")
@@ -735,6 +745,38 @@ class ConnectionProfile(BaseModel):
                 object.__setattr__(self, "database_name", Path(canonical_path).stem)
             if not self.schema_name or not self.schema_name.strip():
                 object.__setattr__(self, "schema_name", "main")
+        elif self.engine_type == "postgresql":
+            if not self.server or not self.server.strip():
+                raise ValueError("server must be specified for postgresql profiles.")
+            if not self.database_name or not self.database_name.strip():
+                raise ValueError("database_name must be specified for postgresql profiles.")
+            if not self.user or not self.user.strip():
+                raise ValueError("user must be specified for postgresql profiles.")
+            if not self.schema_name or not self.schema_name.strip():
+                object.__setattr__(self, "schema_name", "public")
+            if not self.port:
+                object.__setattr__(self, "port", 5432)
+            if self.is_cloud:
+                clean_srv = validate_cloud_server_target_policy(self.server)
+                object.__setattr__(self, "server", clean_srv)
+                if not self.password or not self.password.get_secret_value():
+                    raise ValueError("password must be specified for cloud postgresql profiles.")
+        elif self.engine_type == "mysql":
+            if not self.server or not self.server.strip():
+                raise ValueError("server must be specified for mysql profiles.")
+            if not self.database_name or not self.database_name.strip():
+                raise ValueError("database_name must be specified for mysql profiles.")
+            if not self.user or not self.user.strip():
+                raise ValueError("user must be specified for mysql profiles.")
+            if not self.schema_name or not self.schema_name.strip():
+                object.__setattr__(self, "schema_name", self.database_name)
+            if not self.port:
+                object.__setattr__(self, "port", 3306)
+            if self.is_cloud:
+                clean_srv = validate_cloud_server_target_policy(self.server)
+                object.__setattr__(self, "server", clean_srv)
+                if not self.password or not self.password.get_secret_value():
+                    raise ValueError("password must be specified for cloud mysql profiles.")
         return self
 
     @property
@@ -810,9 +852,15 @@ class ConnectionProfile(BaseModel):
 
         Returns:
             'sqlite' if engine_type is 'sqlite' or 'sqlite3'.
+            'postgres' if engine_type is 'postgresql' or 'postgres'.
+            'mysql' if engine_type is 'mysql' or 'mariadb'.
             'tsql' if engine_type is 'mssql', 'tsql', omitted, or empty.
         """
         engine = (self.engine_type or "mssql").strip().lower()
+        if engine in ("postgresql", "postgres"):
+            return "postgres"
+        if engine in ("mysql", "mariadb"):
+            return "mysql"
         if engine in ("sqlite", "sqlite3"):
             return "sqlite"
         return "tsql"
@@ -820,8 +868,10 @@ class ConnectionProfile(BaseModel):
     def get_sqlalchemy_url(self, hide_password: bool = False) -> str:
         """Construct a SQLAlchemy URL.
 
-        For MSSQL: uses the mssql+pyodbc dialect.
+        For MSSQL: uses mssql+pyodbc dialect.
         For SQLite: uses read-only URI mode (mode=ro&uri=true).
+        For PostgreSQL: uses postgresql+psycopg dialect.
+        For MySQL: uses mysql+pymysql dialect.
 
         Args:
             hide_password: If True, masks credentials for safe logging and error reporting.
@@ -832,6 +882,40 @@ class ConnectionProfile(BaseModel):
                     f"SQLite profile '{self.profile_id}' is missing required 'database_path'."
                 )
             return format_sqlite_uri(self.database_path)
+
+        if self.engine_type == "postgresql":
+            user_part = urllib.parse.quote_plus(self.user or "")
+            pwd_val = self.password.get_secret_value() if self.password else ""
+            pwd_part = f":{urllib.parse.quote_plus(pwd_val)}" if (pwd_val and not hide_password) else (":********" if (pwd_val and hide_password) else "")
+            auth_part = f"{user_part}{pwd_part}@" if user_part else ""
+            srv = self.server or "localhost"
+            port_val = self.port or 5432
+            if ":" in srv:
+                parts = srv.split(":", 1)
+                srv = parts[0]
+                try:
+                    port_val = int(parts[1])
+                except ValueError:
+                    pass
+            ssl_param = "?sslmode=require" if (self.is_cloud or getattr(self, "ssl_mode", None) == "require") else ""
+            return f"postgresql+psycopg://{auth_part}{srv}:{port_val}/{self.database_name}{ssl_param}"
+
+        if self.engine_type == "mysql":
+            user_part = urllib.parse.quote_plus(self.user or "")
+            pwd_val = self.password.get_secret_value() if self.password else ""
+            pwd_part = f":{urllib.parse.quote_plus(pwd_val)}" if (pwd_val and not hide_password) else (":********" if (pwd_val and hide_password) else "")
+            auth_part = f"{user_part}{pwd_part}@" if user_part else ""
+            srv = self.server or "localhost"
+            port_val = self.port or 3306
+            if ":" in srv:
+                parts = srv.split(":", 1)
+                srv = parts[0]
+                try:
+                    port_val = int(parts[1])
+                except ValueError:
+                    pass
+            ssl_param = "?ssl_mode=REQUIRED" if (self.is_cloud or getattr(self, "ssl_mode", None) == "require") else ""
+            return f"mysql+pymysql://{auth_part}{srv}:{port_val}/{self.database_name}{ssl_param}"
 
         odbc_str = self.get_odbc_connection_string(hide_password=hide_password)
         params = urllib.parse.quote_plus(odbc_str)
@@ -1344,23 +1428,22 @@ def validate_safe_profile_data(data: Dict[str, Any]) -> None:
     norm_dict = {str(k).strip().lower(): v for k, v in data.items() if isinstance(k, str)}
     engine = str(norm_dict.get("engine_type", "mssql")).strip().lower()
 
-    if engine not in ("mssql", "sqlite"):
+    if engine not in ("mssql", "sqlite", "postgresql", "postgres", "mysql", "mariadb"):
         raise ProfileConfigurationError(
-            f"Unsupported engine_type '{engine}'. Only 'mssql' and 'sqlite' are supported in this milestone."
+            f"Unsupported engine_type '{engine}'. QueryPilot supports 'mssql', 'sqlite', 'postgresql', and 'mysql'."
         )
 
     is_cloud = bool(norm_dict.get("is_cloud", False))
 
-    if not is_cloud:
+    if not is_cloud and engine == "mssql":
         # 1. Normalize and recursively reject any password or username credentials at any depth
         _inspect_forbidden_keys_recursive(data)
-        if engine == "mssql":
-            trusted = norm_dict.get("use_trusted_connection", norm_dict.get("trusted_connection", True))
-            if trusted is False or str(trusted).strip().lower() in {"false", "0", "no"}:
-                raise ProfileConfigurationError(
-                    "SECURITY REJECTION: SQL-authenticated profiles (trusted_connection=False) are rejected for local profiles. "
-                    "Use Windows Integrated Authentication (use_trusted_connection=True)."
-                )
+        trusted = norm_dict.get("use_trusted_connection", norm_dict.get("trusted_connection", True))
+        if trusted is False or str(trusted).strip().lower() in {"false", "0", "no"}:
+            raise ProfileConfigurationError(
+                "SECURITY REJECTION: SQL-authenticated profiles (trusted_connection=False) are rejected for local profiles. "
+                "Use Windows Integrated Authentication (use_trusted_connection=True)."
+            )
     else:
         if engine == "mssql":
             u = norm_dict.get("user") or norm_dict.get("username") or norm_dict.get("uid")
@@ -1489,9 +1572,15 @@ def load_trusted_profiles_file(path: Path | str) -> ProfileStore:
 
         # Standardize trusted connection and engine type
         engine = entry.get("engine_type", "mssql")
-        if engine not in ("mssql", "sqlite"):
+        if engine not in ("mssql", "sqlite", "postgresql", "postgres", "mysql", "mariadb"):
             raise ProfileConfigurationError(f"Unsupported engine_type '{engine}'.")
-        entry["engine_type"] = engine
+        if engine in ("postgres", "postgresql"):
+            entry["engine_type"] = "postgresql"
+        elif engine in ("mysql", "mariadb"):
+            entry["engine_type"] = "mysql"
+        else:
+            entry["engine_type"] = engine
+
         is_cloud = bool(entry.get("is_cloud", False)) or (entry.get("use_trusted_connection") is False)
         if engine == "mssql":
             if not is_cloud:
@@ -1500,6 +1589,9 @@ def load_trusted_profiles_file(path: Path | str) -> ProfileStore:
             else:
                 entry["use_trusted_connection"] = False
                 entry["is_cloud"] = True
+        elif engine in ("postgresql", "mysql"):
+            entry["use_trusted_connection"] = False
+            entry["is_cloud"] = is_cloud
 
         try:
             profile = ConnectionProfile(**entry)

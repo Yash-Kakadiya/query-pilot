@@ -104,8 +104,14 @@ class TestSQLValidatorDialect:
         v_sqlite3_caps = SQLValidator(schema=sample_schema, dialect="SQLite3")
         assert v_sqlite3_caps.dialect == "sqlite"
 
+        v_pg = SQLValidator(schema=sample_schema, dialect="postgres")
+        assert v_pg.dialect == "postgres"
+
+        v_mysql = SQLValidator(schema=sample_schema, dialect="mysql")
+        assert v_mysql.dialect == "mysql"
+
     def test_unsupported_dialects_rejected(self, sample_schema: DatabaseSchema):
-        for unsupported in ["postgres", "postgresql", "mysql", "oracle", "duckdb", "unknown", "invalid"]:
+        for unsupported in ["oracle", "duckdb", "redshift", "bigquery", "unknown", "invalid"]:
             with pytest.raises(ValueError, match="Unsupported SQL dialect"):
                 SQLValidator(schema=sample_schema, dialect=unsupported)
 

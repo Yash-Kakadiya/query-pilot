@@ -3,6 +3,8 @@ import type { ClarificationOption, ConversationTurnContext, GenerateSQLResponse 
 import './CandidateSqlReview.css'
 
 import { deriveClarifiedQuestion } from '../services/sqlGeneration.ts'
+import { resolveDiagnostic, type DiagnosticSolution } from '../services/errorDiagnostics.ts'
+import { ActionableErrorCard } from './ActionableErrorCard.tsx'
 export { deriveClarifiedQuestion }
 
 export interface CandidateSqlReviewProps {
@@ -842,62 +844,13 @@ export function CandidateSqlReview({
 
           {/* Structured Generation Failure Outcome Card */}
           {!isManualModeActive && response && response.status === 'generation_failed' && (
-            <div
-              className={`candidate-outcome-card candidate-outcome-failed ${
-                (response.failure_diagnostic?.classification || response.failure_classification) === 'quota_exhausted'
-                  ? 'candidate-outcome-quota'
-                  : ''
-              }`}
-              role="alert"
-              aria-label="Generation Failure Notice"
-            >
-              <div className="candidate-failure-header">
-                <span className="candidate-failure-icon" aria-hidden="true">
-                  {(response.failure_diagnostic?.classification || response.failure_classification) === 'quota_exhausted'
-                    ? '⏳'
-                    : '⚠️'}
-                </span>
-                <strong className="candidate-failure-title">
-                  {(response.failure_diagnostic?.classification || response.failure_classification) === 'quota_exhausted'
-                    ? 'AI Provider Quota Exhausted'
-                    : (response.failure_diagnostic?.classification || response.failure_classification) === 'authentication_failed'
-                    ? 'AI Provider Authentication Failed'
-                    : (response.failure_diagnostic?.classification || response.failure_classification) === 'provider_unavailable'
-                    ? 'AI Provider Temporarily Unavailable'
-                    : (response.failure_diagnostic?.classification || response.failure_classification) === 'network_error'
-                    ? 'Network Connection Error'
-                    : 'Candidate SQL Generation Failed'}
-                </strong>
-              </div>
-
-              <p className="candidate-failure-message">
-                {response.failure_diagnostic?.message ||
-                  response.failure_message ||
-                  'Candidate SQL generation could not be completed.'}
-              </p>
-
-              {(response.failure_diagnostic?.retry_guidance || response.retry_guidance) && (
-                <div className="candidate-retry-guidance" role="note">
-                  <span className="candidate-guidance-icon" aria-hidden="true">💡</span>
-                  <span className="candidate-guidance-text">
-                    <strong>Guidance:</strong>{' '}
-                    {response.failure_diagnostic?.retry_guidance || response.retry_guidance}
-                  </span>
-                </div>
-              )}
-
-              <div className="candidate-failure-actions">
-                <button
-                  type="button"
-                  className="candidate-retry-btn"
-                  onClick={onSubmit}
-                  disabled={isLoading || isExecuting}
-                  aria-label="Retry candidate SQL generation"
-                >
-                  {isLoading ? 'Generating Candidate SQL...' : 'Retry Generation'}
-                </button>
-              </div>
-            </div>
+            <ActionableErrorCard
+              diagnostic={
+                (response.diagnostic_solution as unknown as DiagnosticSolution) ||
+                resolveDiagnostic(response.failure_message || response.failure_diagnostic?.message || 'Candidate SQL generation failed')
+              }
+              onRetry={onSubmit}
+            />
           )}
 
           {!isManualModeActive && response && response.status === 'generated' && response.execution_disclaimer && (

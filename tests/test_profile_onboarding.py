@@ -166,11 +166,11 @@ def test_rejects_sql_auth_trusted_connection_false():
 
 
 def test_rejects_unsupported_engine_type():
-    """Non-mssql database engines are rejected in this milestone."""
+    """Unsupported database engines are rejected."""
     bad_data = {
-        "profile_id": "postgres_profile",
-        "display_name": "Postgres Profile",
-        "engine_type": "postgresql",
+        "profile_id": "oracle_profile",
+        "display_name": "Oracle Profile",
+        "engine_type": "oracle",
         "server": "localhost",
         "database_name": "TestDB",
         "use_trusted_connection": True,
