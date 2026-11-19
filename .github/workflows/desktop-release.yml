@@ -67,6 +67,9 @@ jobs:
 
       - name: Build and Package Desktop Release Bundle
         run: |
+          if (Test-Path "C:\Program Files (x86)\NSIS") {
+            $env:PATH = "C:\Program Files (x86)\NSIS;$env:PATH"
+          }
           $ver = "${{ github.event.inputs.version || github.ref_name }}"
           $ver = $ver.TrimStart('v')
           if (-not $ver) { $ver = "0.2.0" }

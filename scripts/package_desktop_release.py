@@ -26,6 +26,13 @@ import sys
 import zipfile
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
 DEFAULT_VERSION = "0.2.0"
 
 
@@ -72,7 +79,10 @@ def build_desktop_release(
     sidecar_exe = sidecar_dir / ("querypilot-agent.exe" if sys.platform == "win32" else "querypilot-agent")
     if rebuild or not sidecar_exe.is_file():
         print("\n[2/5] Packaging Python agent sidecar via PyInstaller...")
-        from scripts.package_sidecar import package_sidecar
+        try:
+            from scripts.package_sidecar import package_sidecar
+        except ImportError:
+            from package_sidecar import package_sidecar
         package_sidecar(repo_root=REPO_ROOT, rebuild_frontend=False, clean=True)
     else:
         print("\n[2/5] Using existing frozen sidecar at dist/querypilot-agent/.")

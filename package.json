@@ -1,0 +1,9 @@
+{
+  "name": "query-pilot",
+  "private": true,
+  "scripts": {
+    "build": "npm --prefix frontend run build",
+    "dev": "npm --prefix frontend run dev",
+    "test": "npm --prefix frontend test"
+  }
+}
