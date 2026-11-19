@@ -159,11 +159,11 @@ export function AiStatusIndicator({
         <div className="ai-gemini-key-status-indicator">
           {hasCustomKey ? (
             <span className="ai-gemini-badge-custom">
-              ✓ Custom Primary Key Active &bull; Automatic fallback to backup keys enabled
+              ✓ Custom Gemini Key Active &bull; Stored locally on this device
             </span>
           ) : (
             <span className="ai-gemini-badge-default">
-              ℹ️ Using configured backup keys from environment &bull; Enter key above to set primary key
+              ⚠️ No Gemini Key Set &bull; Paste your free Gemini API key above to enable AI queries
             </span>
           )}
         </div>

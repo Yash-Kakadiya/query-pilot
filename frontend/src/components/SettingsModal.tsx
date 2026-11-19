@@ -155,8 +155,8 @@ export function SettingsModal({
 
                 <span className={hasCustomKey ? 'settings-badge-active' : 'settings-badge-muted'}>
                   {hasCustomKey
-                    ? '✓ Custom Primary Key Set (Fallback active)'
-                    : 'ℹ️ Using Environment Backup Keys'}
+                    ? '✓ Custom Gemini Key Active (Stored locally on device)'
+                    : '⚠️ No Key Set (Paste your Gemini API key above)'}
                 </span>
               </div>
             </div>
