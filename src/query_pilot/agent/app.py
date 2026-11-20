@@ -417,6 +417,76 @@ def create_agent_app(
         return {"pairing_token": tok or ""}
 
     @app.get(
+        "/agent/v1/system-diagnostics",
+        responses={401: {"model": AgentErrorResponse}},
+    )
+    def get_system_diagnostics(session: Session = Depends(get_current_session)):
+        """Deep self-diagnostic audit of runtime subsystems, driver availability, and safety ceilings."""
+        drivers = {}
+        try:
+            import sqlite3
+            drivers["sqlite"] = {"available": True, "version": getattr(sqlite3, "sqlite_version", "bundled")}
+        except Exception as e:
+            drivers["sqlite"] = {"available": False, "error": str(e)}
+
+        try:
+            import psycopg2
+            drivers["postgresql"] = {"available": True, "version": getattr(psycopg2, "__version__", "installed")}
+        except Exception as e:
+            drivers["postgresql"] = {"available": False, "error": str(e)}
+
+        try:
+            import pymysql
+            drivers["mysql"] = {"available": True, "version": getattr(pymysql, "__version__", "installed")}
+        except Exception as e:
+            drivers["mysql"] = {"available": False, "error": str(e)}
+
+        try:
+            import pyodbc
+            drivers["mssql_odbc"] = {"available": True, "version": getattr(pyodbc, "version", "installed")}
+        except Exception as e:
+            drivers["mssql_odbc"] = {"available": False, "error": str(e)}
+
+        # Audit profiles store
+        store_healthy = (
+            resolved_config.profiles_file.is_file()
+            or resolved_config.profiles_file.parent.is_dir()
+        )
+        profile_count = len(resolved_store.profiles)
+
+        # Audit safety boundaries
+        from query_pilot.db.profile import GLOBAL_MAX_ROW_LIMIT, GLOBAL_MAX_TIMEOUT_SECONDS
+
+        ast_operational = True
+        try:
+            import sqlglot
+            from sqlglot import exp
+
+            parsed_safe = sqlglot.parse_one("SELECT 1 FROM demo", read="sqlite")
+            parsed_drop = sqlglot.parse_one("DROP TABLE demo", read="sqlite")
+            ast_operational = isinstance(parsed_safe, exp.Select) and isinstance(parsed_drop, exp.Drop)
+        except Exception:
+            ast_operational = False
+
+        from query_pilot import __version__
+
+        return {
+            "status": "healthy",
+            "version": __version__,
+            "bind_host": resolved_config.bind_host,
+            "profiles_store": {
+                "healthy": store_healthy,
+                "profile_count": profile_count,
+            },
+            "drivers": drivers,
+            "guardrails": {
+                "max_row_limit_ceiling": GLOBAL_MAX_ROW_LIMIT,
+                "max_timeout_seconds_ceiling": GLOBAL_MAX_TIMEOUT_SECONDS,
+                "ast_validator_operational": ast_operational,
+            },
+        }
+
+    @app.get(
         "/agent/v1/profiles",
         response_model=ProfileListResponse,
         responses={401: {"model": AgentErrorResponse}},

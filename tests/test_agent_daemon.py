@@ -1033,6 +1033,43 @@ def test_list_profiles_unauthenticated_fails_with_401(agent_test_setup):
     assert resp.status_code == status.HTTP_401_UNAUTHORIZED
 
 
+def test_system_diagnostics_authenticated_returns_subsystem_audit(agent_test_setup):
+    """GET /agent/v1/system-diagnostics returns deep driver and guardrails audit."""
+    client = agent_test_setup["client"]
+    token = agent_test_setup["bootstrap_token"]
+
+    login_resp = client.post(
+        "/agent/v1/auth/bootstrap",
+        headers={"X-QueryPilot-Request": "1"},
+        json={"bootstrap_token": token},
+    )
+    session_id = login_resp.cookies.get(SESSION_COOKIE_NAME)
+
+    resp = client.get(
+        "/agent/v1/system-diagnostics",
+        cookies={SESSION_COOKIE_NAME: session_id},
+    )
+    assert resp.status_code == status.HTTP_200_OK
+    data = resp.json()
+    assert data["status"] == "healthy"
+    assert data["version"] == "0.3.0"
+    assert "drivers" in data
+    assert "sqlite" in data["drivers"]
+    assert data["drivers"]["sqlite"]["available"] is True
+    assert "guardrails" in data
+    assert data["guardrails"]["max_row_limit_ceiling"] == 100
+    assert data["guardrails"]["max_timeout_seconds_ceiling"] == 15
+    assert data["guardrails"]["ast_validator_operational"] is True
+    assert "profiles_store" in data
+
+
+def test_system_diagnostics_unauthenticated_fails_with_401(agent_test_setup):
+    """GET /agent/v1/system-diagnostics without session cookie fails with HTTP 401."""
+    client = agent_test_setup["client"]
+    resp = client.get("/agent/v1/system-diagnostics")
+    assert resp.status_code == status.HTTP_401_UNAUTHORIZED
+
+
 # ==============================================================================
 # 7. Dynamic Schema Introspection & Database Identity Verification
 # ==============================================================================

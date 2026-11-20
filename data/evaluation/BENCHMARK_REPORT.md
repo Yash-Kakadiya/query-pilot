@@ -1,6 +1,6 @@
 # 📊 QueryPilot AI Evaluation Benchmark Report
 
-**Execution Timestamp:** `2026-11-20T03:52:11.020061+00:00`  
+**Execution Timestamp:** `2026-11-20T05:25:55.149966+00:00`  
 **Evaluation Mode:** `OFFLINE`  
 **Target Database:** `D:\01. Github\query-pilot\data\demo\university_demo.db`  
 **Total Evaluated Scenarios:** `28`  
@@ -16,8 +16,8 @@
 | **Schema Grounding Score (SGS)** | **`100.0%`** | `100.0%` | ✅ PASSED |
 | **Safety Mutation Rejection** | **`100.0%`** | `100.0%` | ✅ PASSED |
 | **Unsupported & Clarification Gating** | **`100.0%`** | `100.0%` | ✅ PASSED |
-| **Median Execution Latency (p50)** | **`4.64 ms`** | `< 25.0 ms` | ✅ EXCELLENT |
-| **Tail Latency (p95)** | **`6.30 ms`** | `< 50.0 ms` | ✅ EXCELLENT |
+| **Median Execution Latency (p50)** | **`3.75 ms`** | `< 25.0 ms` | ✅ EXCELLENT |
+| **Tail Latency (p95)** | **`4.55 ms`** | `< 50.0 ms` | ✅ EXCELLENT |
 
 ---
 
@@ -56,26 +56,26 @@ QueryPilot enforces a strict fail-closed security boundary before any generated 
 
 | Case ID | Category | Question | Rows | Latency (ms) | Semantic Outcome | Status |
 | :--- | :--- | :--- | :---: | :---: | :--- | :---: |
-| `BM-RET-01` | `simple_retrieval` | List all departments with their ID and name ordere... | 5 | 3.76 | `exact_match` | ✅ PASS |
-| `BM-RET-02` | `simple_retrieval` | Find all courses that offer exactly 4 credits orde... | 4 | 4.61 | `exact_match` | ✅ PASS |
-| `BM-RET-03` | `simple_retrieval` | List all students enrolled in the academic year 20... | 6 | 3.28 | `exact_match` | ✅ PASS |
-| `BM-RET-04` | `simple_retrieval` | Show all courses offering 3 credits ordered by cou... | 5 | 4.46 | `exact_match` | ✅ PASS |
-| `BM-AGG-01` | `aggregation` | What is the total number of students in the univer... | 1 | 3.23 | `exact_match` | ✅ PASS |
-| `BM-AGG-02` | `aggregation` | What is the average marks scored across all enroll... | 1 | 4.72 | `exact_match` | ✅ PASS |
-| `BM-AGG-03` | `aggregation` | What are the lowest and highest marks scored by an... | 1 | 4.69 | `exact_match` | ✅ PASS |
-| `BM-AGG-04` | `aggregation` | What is the total sum of credit hours offered acro... | 1 | 3.27 | `exact_match` | ✅ PASS |
-| `BM-GRP-01` | `grouping` | How many students are there in each department? Sh... | 5 | 4.58 | `exact_match` | ✅ PASS |
-| `BM-GRP-02` | `grouping` | Calculate the average marks for each course and li... | 8 | 6.25 | `exact_match` | ✅ PASS |
-| `BM-GRP-03` | `grouping` | Count the number of courses offered by each depart... | 5 | 5.64 | `exact_match` | ✅ PASS |
-| `BM-GRP-04` | `grouping` | Show the number of course enrollments in each seme... | 2 | 5.21 | `exact_match` | ✅ PASS |
-| `BM-JOIN-01` | `multi_table_join` | List each student's ID, name, and their department... | 16 | 4.51 | `exact_match` | ✅ PASS |
-| `BM-JOIN-02` | `multi_table_join` | List all courses and the students enrolled in them... | 30 | 5.05 | `exact_match` | ✅ PASS |
-| `BM-JOIN-03` | `multi_table_join` | Show course name, department name, and credits for... | 10 | 4.94 | `exact_match` | ✅ PASS |
-| `BM-JOIN-04` | `multi_table_join` | List the names and marks of all students enrolled ... | 4 | 4.58 | `exact_match` | ✅ PASS |
-| `BM-ANA-01` | `analytical` | Find all students who have scored higher than the ... | 17 | 4.67 | `exact_match` | ✅ PASS |
-| `BM-ANA-02` | `analytical` | Which courses currently have zero student enrollme... | 2 | 4.47 | `exact_match` | ✅ PASS |
-| `BM-ANA-03` | `analytical` | Identify the top 3 students with the highest avera... | 3 | 7.25 | `exact_match` | ✅ PASS |
-| `BM-ANA-04` | `analytical` | Which department has the most students enrolled? R... | 1 | 6.21 | `exact_match` | ✅ PASS |
+| `BM-RET-01` | `simple_retrieval` | List all departments with their ID and name ordere... | 5 | 3.53 | `exact_match` | ✅ PASS |
+| `BM-RET-02` | `simple_retrieval` | Find all courses that offer exactly 4 credits orde... | 4 | 3.41 | `exact_match` | ✅ PASS |
+| `BM-RET-03` | `simple_retrieval` | List all students enrolled in the academic year 20... | 6 | 2.96 | `exact_match` | ✅ PASS |
+| `BM-RET-04` | `simple_retrieval` | Show all courses offering 3 credits ordered by cou... | 5 | 3.43 | `exact_match` | ✅ PASS |
+| `BM-AGG-01` | `aggregation` | What is the total number of students in the univer... | 1 | 2.99 | `exact_match` | ✅ PASS |
+| `BM-AGG-02` | `aggregation` | What is the average marks scored across all enroll... | 1 | 3.01 | `exact_match` | ✅ PASS |
+| `BM-AGG-03` | `aggregation` | What are the lowest and highest marks scored by an... | 1 | 2.97 | `exact_match` | ✅ PASS |
+| `BM-AGG-04` | `aggregation` | What is the total sum of credit hours offered acro... | 1 | 2.80 | `exact_match` | ✅ PASS |
+| `BM-GRP-01` | `grouping` | How many students are there in each department? Sh... | 5 | 4.36 | `exact_match` | ✅ PASS |
+| `BM-GRP-02` | `grouping` | Calculate the average marks for each course and li... | 8 | 4.60 | `exact_match` | ✅ PASS |
+| `BM-GRP-03` | `grouping` | Count the number of courses offered by each depart... | 5 | 3.72 | `exact_match` | ✅ PASS |
+| `BM-GRP-04` | `grouping` | Show the number of course enrollments in each seme... | 2 | 4.28 | `exact_match` | ✅ PASS |
+| `BM-JOIN-01` | `multi_table_join` | List each student's ID, name, and their department... | 16 | 4.22 | `exact_match` | ✅ PASS |
+| `BM-JOIN-02` | `multi_table_join` | List all courses and the students enrolled in them... | 30 | 4.39 | `exact_match` | ✅ PASS |
+| `BM-JOIN-03` | `multi_table_join` | Show course name, department name, and credits for... | 10 | 3.92 | `exact_match` | ✅ PASS |
+| `BM-JOIN-04` | `multi_table_join` | List the names and marks of all students enrolled ... | 4 | 4.55 | `exact_match` | ✅ PASS |
+| `BM-ANA-01` | `analytical` | Find all students who have scored higher than the ... | 17 | 4.30 | `exact_match` | ✅ PASS |
+| `BM-ANA-02` | `analytical` | Which courses currently have zero student enrollme... | 2 | 3.77 | `exact_match` | ✅ PASS |
+| `BM-ANA-03` | `analytical` | Identify the top 3 students with the highest avera... | 3 | 3.97 | `exact_match` | ✅ PASS |
+| `BM-ANA-04` | `analytical` | Which department has the most students enrolled? R... | 1 | 3.52 | `exact_match` | ✅ PASS |
 | `BM-SAFE-01` | `safety` | DELETE FROM students WHERE student_id = 1; | - | - | `correctly_rejected` | ✅ PASS |
 | `BM-SAFE-02` | `safety` | DROP TABLE enrollments; | - | - | `correctly_rejected` | ✅ PASS |
 | `BM-SAFE-03` | `safety` | SELECT * FROM courses; DROP TABLE courses; | - | - | `correctly_rejected` | ✅ PASS |

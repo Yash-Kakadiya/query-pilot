@@ -17,7 +17,7 @@
   background: var(--card-bg, #ffffff);
   border: 1px solid var(--border-color, #cbd5e1);
   border-radius: var(--radius-lg, 16px);
-  max-width: 580px;
+  max-width: 660px;
   width: 100%;
   max-height: 90vh;
   display: flex;
@@ -359,6 +359,353 @@
   line-height: 1;
 }
 
+/* =============================================================================
+   System Health & Full App Diagnostic Suite Styles
+   ============================================================================= */
+
+.settings-diag-section {
+  border-top: 1px dashed var(--border-color, #e2e8f0);
+  padding-top: 1.5rem;
+  margin-top: 1.5rem;
+}
+
+.settings-diag-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+  flex-wrap: wrap;
+}
+
+.settings-diag-run-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 1.15rem;
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  color: #ffffff;
+  border: 1px solid #1d4ed8;
+  border-radius: var(--radius-md, 8px);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.25);
+}
+
+.settings-diag-run-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #1d4ed8, #1e40af);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(37, 99, 235, 0.35);
+}
+
+.settings-diag-run-btn:disabled {
+  opacity: 0.75;
+  cursor: not-allowed;
+}
+
+.diag-spinner {
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: diag-spin 0.6s linear infinite;
+}
+
+.diag-spinner-sm {
+  display: inline-block;
+  width: 0.85rem;
+  height: 0.85rem;
+  border: 2px solid rgba(59, 130, 246, 0.3);
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: diag-spin 0.6s linear infinite;
+}
+
+@keyframes diag-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.diag-report-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  animation: settings-fade-in 0.2s ease-out;
+}
+
+/* Score Card */
+.diag-score-card {
+  padding: 1.15rem 1.25rem;
+  border-radius: var(--radius-md, 10px);
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.diag-score-healthy {
+  background: #f0fdf4;
+  border-color: #86efac;
+}
+
+.diag-score-warning {
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+
+.diag-score-critical {
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.diag-score-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.diag-score-badge {
+  font-weight: 700;
+  font-size: 0.95rem;
+  letter-spacing: -0.01em;
+}
+
+.diag-score-healthy .diag-score-badge {
+  color: #15803d;
+}
+
+.diag-score-warning .diag-score-badge {
+  color: #b45309;
+}
+
+.diag-score-critical .diag-score-badge {
+  color: #b91c1c;
+}
+
+.diag-score-stats {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.diag-stat-pill {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.2rem 0.55rem;
+  border-radius: 9999px;
+}
+
+.diag-stat-pill.stat-pass {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.diag-stat-pill.stat-warn {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.diag-stat-pill.stat-fail {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.diag-stat-pill.stat-skip {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+/* Progress Bar */
+.diag-progress-bar-track {
+  width: 100%;
+  height: 6px;
+  background: rgba(0, 0, 0, 0.08);
+  border-radius: 9999px;
+  overflow: hidden;
+}
+
+.diag-progress-bar-fill {
+  height: 100%;
+  transition: width 0.4s ease;
+  border-radius: 9999px;
+}
+
+.diag-progress-bar-fill.fill-healthy {
+  background: #22c55e;
+}
+
+.diag-progress-bar-fill.fill-warning {
+  background: #f59e0b;
+}
+
+.diag-progress-bar-fill.fill-critical {
+  background: #ef4444;
+}
+
+.diag-summary-text {
+  font-size: 0.85rem;
+  color: #334155;
+  margin: 0;
+  line-height: 1.45;
+}
+
+/* Subsystem Checklist */
+.diag-checks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  max-height: 340px;
+  overflow-y: auto;
+  padding-right: 0.35rem;
+}
+
+.diag-check-row {
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--card-bg, #ffffff);
+  padding: 0.75rem 0.95rem;
+  transition: background-color 0.15s ease;
+}
+
+.diag-check-row:hover {
+  background: var(--pill-bg, #f8fafc);
+}
+
+.diag-check-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.diag-check-status-col {
+  flex-shrink: 0;
+  font-size: 0.95rem;
+  line-height: 1.35;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+}
+
+.diag-icon-pass {
+  color: #16a34a;
+  font-weight: 700;
+}
+
+.diag-icon-fail {
+  color: #dc2626;
+  font-weight: 700;
+}
+
+.diag-icon-warn {
+  color: #d97706;
+}
+
+.diag-icon-skip {
+  color: #94a3b8;
+}
+
+.diag-icon-pending {
+  color: #cbd5e1;
+}
+
+.diag-check-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.diag-check-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.diag-check-name {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-heading, #0f172a);
+}
+
+.diag-check-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.diag-latency {
+  font-size: 0.75rem;
+  color: #64748b;
+  font-family: var(--font-mono, monospace);
+}
+
+.diag-badge {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.diag-badge-passed {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.diag-badge-failed {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.diag-badge-warning {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.diag-badge-skipped {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.diag-badge-running {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.diag-badge-pending {
+  background: #f1f5f9;
+  color: #94a3b8;
+}
+
+.diag-check-details {
+  font-size: 0.8125rem;
+  color: #475569;
+  margin: 0.2rem 0;
+  line-height: 1.4;
+}
+
+.diag-check-solution {
+  font-size: 0.78125rem;
+  color: #92400e;
+  background: #fefce8;
+  border: 1px solid #fef08a;
+  border-radius: 6px;
+  padding: 0.45rem 0.65rem;
+  margin-top: 0.4rem;
+  line-height: 1.4;
+}
+
 /* Dark Mode Overrides for Settings Modal */
 @media (prefers-color-scheme: dark) {
   .settings-dialog {
@@ -444,5 +791,69 @@
   .settings-bottom-left-trigger:hover {
     background: #334155;
     border-color: #64748b;
+  }
+
+  /* Dark Mode Diagnostics */
+  .settings-diag-section {
+    border-color: #334155;
+  }
+
+  .diag-score-card {
+    background: #1e293b;
+    border-color: #334155;
+  }
+
+  .diag-score-healthy {
+    background: rgba(22, 101, 52, 0.15);
+    border-color: #166534;
+  }
+
+  .diag-score-healthy .diag-score-badge {
+    color: #4ade80;
+  }
+
+  .diag-score-warning {
+    background: rgba(146, 64, 14, 0.15);
+    border-color: #92400e;
+  }
+
+  .diag-score-warning .diag-score-badge {
+    color: #fbbf24;
+  }
+
+  .diag-score-critical {
+    background: rgba(153, 27, 27, 0.15);
+    border-color: #991b1b;
+  }
+
+  .diag-score-critical .diag-score-badge {
+    color: #f87171;
+  }
+
+  .diag-summary-text {
+    color: #cbd5e1;
+  }
+
+  .diag-check-row {
+    background: #1e293b;
+    border-color: #334155;
+  }
+
+  .diag-check-row:hover {
+    background: #253349;
+  }
+
+  .diag-check-name {
+    color: #f8fafc;
+  }
+
+  .diag-check-details {
+    color: #94a3b8;
+  }
+
+  .diag-check-solution {
+    background: rgba(146, 64, 14, 0.2);
+    border-color: #78350f;
+    color: #fde68a;
   }
 }

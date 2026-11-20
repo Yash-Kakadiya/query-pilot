@@ -1,16 +1,23 @@
 import { useState, useEffect } from 'react'
 import { getStoredGeminiKey, setStoredGeminiKey } from '../services/geminiKeyStorage.ts'
 import { openExternalUrl } from '../services/systemBrowser.ts'
+import { runAppDiagnostics } from '../services/appDiagnostics.ts'
+import type { ProfileSummary } from '../types/api.ts'
+import type { DiagnosticReport } from '../types/diagnostics.ts'
 import './SettingsModal.css'
 
 export interface SettingsModalProps {
   isOpen: boolean
   onClose: () => void
+  activeProfile?: ProfileSummary | null
+  profiles?: ProfileSummary[]
 }
 
 export function SettingsModal({
   isOpen,
   onClose,
+  activeProfile,
+  profiles,
 }: SettingsModalProps) {
   const [apiKey, setApiKey] = useState<string>(() => getStoredGeminiKey())
   const [showKey, setShowKey] = useState<boolean>(false)
@@ -36,6 +43,10 @@ export function SettingsModal({
     }
   })
   const [savedNotification, setSavedNotification] = useState<boolean>(false)
+
+  // System Diagnostics state
+  const [diagReport, setDiagReport] = useState<DiagnosticReport | null>(null)
+  const [isRunningDiag, setIsRunningDiag] = useState<boolean>(false)
 
   useEffect(() => {
     if (isOpen) {
@@ -75,6 +86,26 @@ export function SettingsModal({
   const handleClearKey = () => {
     setApiKey('')
     setStoredGeminiKey('')
+  }
+
+  const handleRunDiagnostics = async () => {
+    setIsRunningDiag(true)
+    try {
+      const report = await runAppDiagnostics({
+        activeProfile,
+        profiles,
+        apiKey,
+        model: selectedModel,
+        maxRows,
+        queryTimeout,
+        onProgress: (live) => setDiagReport({ ...live }),
+      })
+      setDiagReport(report)
+    } catch {
+      // Diagnostic errors are captured within report checks
+    } finally {
+      setIsRunningDiag(false)
+    }
   }
 
   const hasCustomKey = Boolean(apiKey.trim())
@@ -242,6 +273,112 @@ export function SettingsModal({
                 <span className="settings-info-val">SQLite &bull; PostgreSQL &bull; MySQL &bull; SQL Server</span>
               </div>
             </div>
+          </div>
+
+          {/* Section 4: System Health & Diagnostic Suite */}
+          <div className="settings-section settings-diag-section">
+            <div className="settings-diag-header">
+              <div>
+                <h3 className="settings-section-title">
+                  <span className="settings-section-icon">🩺</span> System Health & App Diagnostics
+                </h3>
+                <p className="settings-section-desc">
+                  Run comprehensive self-diagnostics across daemon connectivity, active database connections, schema discovery, SQL AST guardrails, and Gemini credentials.
+                </p>
+              </div>
+              <button
+                type="button"
+                className={`settings-diag-run-btn ${isRunningDiag ? 'is-running' : ''}`}
+                onClick={handleRunDiagnostics}
+                disabled={isRunningDiag}
+              >
+                {isRunningDiag ? (
+                  <>
+                    <span className="diag-spinner" aria-hidden="true" />
+                    <span>Running Audit...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>🩺</span>
+                    <span>Diagnose Entire App</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            {diagReport && (
+              <div className="diag-report-container">
+                {/* Overall Scorecard */}
+                <div className={`diag-score-card diag-score-${diagReport.overallStatus}`}>
+                  <div className="diag-score-header">
+                    <div className="diag-score-badge">
+                      {diagReport.overallStatus === 'healthy' && '🟢 100% Fully Operational'}
+                      {diagReport.overallStatus === 'warning' && `🟡 ${diagReport.successRate}% Partially Operational`}
+                      {diagReport.overallStatus === 'critical' && `🔴 ${diagReport.successRate}% Issues Detected`}
+                    </div>
+                    <div className="diag-score-stats">
+                      <span className="diag-stat-pill stat-pass">✓ {diagReport.passed} Passed</span>
+                      {diagReport.warnings > 0 && (
+                        <span className="diag-stat-pill stat-warn">⚠️ {diagReport.warnings} Warning{diagReport.warnings > 1 ? 's' : ''}</span>
+                      )}
+                      {diagReport.failed > 0 && (
+                        <span className="diag-stat-pill stat-fail">✕ {diagReport.failed} Failed</span>
+                      )}
+                      {diagReport.skipped > 0 && (
+                        <span className="diag-stat-pill stat-skip">⏭ {diagReport.skipped} Skipped</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Progress Bar */}
+                  <div className="diag-progress-bar-track">
+                    <div
+                      className={`diag-progress-bar-fill fill-${diagReport.overallStatus}`}
+                      style={{ width: `${diagReport.successRate}%` }}
+                    />
+                  </div>
+
+                  <p className="diag-summary-text">{diagReport.summary}</p>
+                </div>
+
+                {/* Subsystem Test Checklist */}
+                <div className="diag-checks-list">
+                  {diagReport.checks.map((check) => (
+                    <div key={check.id} className={`diag-check-row diag-check-${check.status}`}>
+                      <div className="diag-check-main">
+                        <div className="diag-check-status-col">
+                          {check.status === 'passed' && <span className="diag-icon-pass">✓</span>}
+                          {check.status === 'failed' && <span className="diag-icon-fail">✕</span>}
+                          {check.status === 'warning' && <span className="diag-icon-warn">⚠️</span>}
+                          {check.status === 'skipped' && <span className="diag-icon-skip">⏭</span>}
+                          {check.status === 'running' && <span className="diag-spinner-sm" />}
+                          {check.status === 'pending' && <span className="diag-icon-pending">○</span>}
+                        </div>
+                        <div className="diag-check-content">
+                          <div className="diag-check-top">
+                            <span className="diag-check-name">{check.name}</span>
+                            <div className="diag-check-meta">
+                              {check.durationMs !== undefined && (
+                                <span className="diag-latency">{check.durationMs}ms</span>
+                              )}
+                              <span className={`diag-badge diag-badge-${check.status}`}>
+                                {check.status.toUpperCase()}
+                              </span>
+                            </div>
+                          </div>
+                          {check.details && <p className="diag-check-details">{check.details}</p>}
+                          {check.solution && (
+                            <div className="diag-check-solution">
+                              <strong>Recommended Solution:</strong> {check.solution}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

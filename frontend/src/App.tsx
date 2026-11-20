@@ -533,17 +533,6 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator, ai
                 <span className="header-action-count">{sqlGenState.conversationHistory.length}</span>
               )}
             </button>
-
-            <button
-              type="button"
-              className="header-action-btn header-settings-btn"
-              onClick={() => setIsSettingsOpen(true)}
-              title="Open application settings"
-              aria-label="Open application settings"
-            >
-              <span className="header-action-icon" aria-hidden="true">⚙️</span>
-              <span className="header-action-text">Settings</span>
-            </button>
           </div>
         </div>
       </header>
@@ -853,6 +842,8 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator, ai
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
+        activeProfile={agentSession.selectedProfile}
+        profiles={agentSession.profiles}
       />
     </div>
   )
