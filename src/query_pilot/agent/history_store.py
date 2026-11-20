@@ -46,6 +46,10 @@ class HistoryStore:
         self._history_file = history_file.resolve()
         self._lock = threading.RLock()
         self._entries: Dict[str, HistoryItem] = {}
+        try:
+            self._history_file.parent.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
         self._load()
 
     @property

@@ -305,7 +305,7 @@ query-pilot/
 ├── src-tauri/                 # Tauri v2 Windows desktop shell (Rust)
 │   └── src/process_manager.rs # Win32 Job Object sidecar supervision
 ├── scripts/                   # Build, release packaging & evaluation scripts
-├── tests/                     # 1,963 pytest backend and integration tests
+├── tests/                     # 1,964 pytest backend and integration tests
 └── README.md                  # Project overview & documentation
 ```
 

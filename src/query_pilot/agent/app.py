@@ -23,6 +23,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 import logging
 import mimetypes
+import os
 import threading
 import time
 from typing import Any, Callable, Dict, Optional, Union
@@ -459,10 +460,19 @@ def create_agent_app(
             drivers["mssql_odbc"] = {"available": False, "error": str(e)}
 
         # Audit profiles store
-        store_healthy = (
-            resolved_config.profiles_file.is_file()
-            or resolved_config.profiles_file.parent.is_dir()
-        )
+        store_healthy = True
+        try:
+            p_path = resolved_config.profiles_file
+            if p_path.is_file():
+                store_healthy = os.access(p_path, os.R_OK | os.W_OK)
+            else:
+                check_dir = p_path.parent
+                while not check_dir.exists() and check_dir.parent != check_dir:
+                    check_dir = check_dir.parent
+                store_healthy = os.access(check_dir, os.W_OK)
+        except Exception:
+            store_healthy = False
+
         profile_count = len(resolved_store.profiles)
 
         # Audit safety boundaries
@@ -480,10 +490,19 @@ def create_agent_app(
             ast_operational = False
 
         # Audit history store
-        history_healthy = (
-            resolved_config.history_file.is_file()
-            or resolved_config.history_file.parent.is_dir()
-        )
+        history_healthy = True
+        try:
+            h_path = resolved_config.history_file
+            if h_path.is_file():
+                history_healthy = os.access(h_path, os.R_OK | os.W_OK)
+            else:
+                check_dir = h_path.parent
+                while not check_dir.exists() and check_dir.parent != check_dir:
+                    check_dir = check_dir.parent
+                history_healthy = os.access(check_dir, os.W_OK)
+        except Exception:
+            history_healthy = False
+
         history_count = len(resolved_history_store._entries)
         favorites_count = sum(1 for e in resolved_history_store._entries if e.is_favorite)
 

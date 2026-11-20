@@ -1065,6 +1065,31 @@ def test_system_diagnostics_authenticated_returns_subsystem_audit(agent_test_set
     assert data["history_store"]["healthy"] is True
 
 
+def test_system_diagnostics_handles_nonexistent_history_directory(agent_test_setup, tmp_path):
+    """System diagnostics verifies ancestor writeability when history directory is not yet created."""
+    client = agent_test_setup["client"]
+    token = agent_test_setup["bootstrap_token"]
+
+    # Point history_file to a deeply nested nonexistent path within tmp_path
+    nonexistent = tmp_path / "deep" / "nested" / "sub" / "history.json"
+    agent_test_setup["app"].state.config.history_file = nonexistent
+
+    login_resp = client.post(
+        "/agent/v1/auth/bootstrap",
+        headers={"X-QueryPilot-Request": "1"},
+        json={"bootstrap_token": token},
+    )
+    session_id = login_resp.cookies.get(SESSION_COOKIE_NAME)
+
+    resp = client.get(
+        "/agent/v1/system-diagnostics",
+        cookies={SESSION_COOKIE_NAME: session_id},
+    )
+    assert resp.status_code == status.HTTP_200_OK
+    data = resp.json()
+    assert data["history_store"]["healthy"] is True
+
+
 def test_system_diagnostics_unauthenticated_fails_with_401(agent_test_setup):
     """GET /agent/v1/system-diagnostics without session cookie fails with HTTP 401."""
     client = agent_test_setup["client"]
