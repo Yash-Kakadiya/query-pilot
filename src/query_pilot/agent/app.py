@@ -479,6 +479,14 @@ def create_agent_app(
         except Exception:
             ast_operational = False
 
+        # Audit history store
+        history_healthy = (
+            resolved_config.history_file.is_file()
+            or resolved_config.history_file.parent.is_dir()
+        )
+        history_count = len(resolved_history_store._entries)
+        favorites_count = sum(1 for e in resolved_history_store._entries if e.is_favorite)
+
         from query_pilot import __version__
 
         return {
@@ -488,6 +496,11 @@ def create_agent_app(
             "profiles_store": {
                 "healthy": store_healthy,
                 "profile_count": profile_count,
+            },
+            "history_store": {
+                "healthy": history_healthy,
+                "total_queries": history_count,
+                "favorites_count": favorites_count,
             },
             "drivers": drivers,
             "guardrails": {

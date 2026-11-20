@@ -28,6 +28,7 @@ export type DiagnosticCheckId =
   | 'gemini_credentials'
   | 'storage_integrity'
   | 'data_export_engine'
+  | 'history_persistence'
 
 export type DiagnosticStatus =
   | 'pending'

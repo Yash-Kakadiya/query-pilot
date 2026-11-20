@@ -1061,6 +1061,8 @@ def test_system_diagnostics_authenticated_returns_subsystem_audit(agent_test_set
     assert data["guardrails"]["max_timeout_seconds_ceiling"] == 15
     assert data["guardrails"]["ast_validator_operational"] is True
     assert "profiles_store" in data
+    assert "history_store" in data
+    assert data["history_store"]["healthy"] is True
 
 
 def test_system_diagnostics_unauthenticated_fails_with_401(agent_test_setup):
