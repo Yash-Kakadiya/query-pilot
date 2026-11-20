@@ -15,7 +15,7 @@
   <a href="https://github.com/Yash-Kakadiya/query-pilot/releases"><img src="https://img.shields.io/github/v/release/Yash-Kakadiya/query-pilot?color=22c55e&label=Desktop%20Release" alt="Desktop Release" /></a>
   <a href="https://github.com/Yash-Kakadiya/query-pilot/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Yash-Kakadiya/query-pilot/ci.yml?branch=main&label=CI%20Pipeline&color=brightgreen" alt="CI Status" /></a>
   <a href="data/evaluation/BENCHMARK_REPORT.md"><img src="https://img.shields.io/badge/AI%20Benchmark%20Accuracy-100%25%20EX-blueviolet.svg" alt="Benchmark" /></a>
-  <a href="#test-coverage--verification"><img src="https://img.shields.io/badge/Tests-2%2C461%20Passing-brightgreen.svg" alt="Tests" /></a>
+  <a href="#test-coverage--verification"><img src="https://img.shields.io/badge/Tests-2%2C506%20Passing-brightgreen.svg" alt="Tests" /></a>
   <a href="src-tauri/"><img src="https://img.shields.io/badge/Desktop-Tauri%20v2%20%2B%20WebView2-blue.svg" alt="Desktop" /></a>
   <a href="frontend/"><img src="https://img.shields.io/badge/Frontend-React%2019%20%2B%20TypeScript-61dafb.svg" alt="Frontend" /></a>
   <a href="pyproject.toml"><img src="https://img.shields.io/badge/Python->=3.12-009688.svg" alt="Python" /></a>
@@ -57,7 +57,9 @@ Traditional web-based text-to-SQL tools require uploading database schemas, conn
 
 | Feature | Description |
 | :--- | :--- |
-| ☁️ **Multi-Cloud Database Profiles** | Connect seamlessly to local **SQLite** files, **AWS RDS**, **Google Cloud SQL**, **Azure SQL**, **MonsterASP**, or on-premise **Microsoft SQL Server** with SQL or Windows Authentication. |
+| ☁️ **Multi-Database & Cloud Profiles** | Connect seamlessly to local **SQLite**, **PostgreSQL** (Supabase, Neon, AWS RDS, GCP Cloud SQL), **MySQL** (PlanetScale, AWS RDS), or **Microsoft SQL Server** (Azure SQL, AWS RDS, MonsterASP) with SQL or Windows Authentication. |
+| 🩺 **Full App Diagnostic Suite** | 11-stage live self-diagnostics auditing daemon loopback, database drivers (Postgres, MySQL, SQLite, ODBC), active connection handshakes, schema discovery, SQL AST guardrails, and Gemini credentials with an instant health scorecard. |
+| 🛡️ **Actionable Error Diagnostics** | Plain-English error diagnosis cards with 1-click solutions for API key errors, quota limits, connection failures, SSL requirements, and schema mismatches with zero credential exposure. |
 | 🔑 **In-App Gemini Key Management** | Paste your free Google Gemini API key directly into the UI header (saved securely in your local browser storage) or use environment fallback keys. |
 | 🛡️ **Fail-Closed Safety Engine** | Advanced AST parsing via SQLGlot blocks DDL/DML mutations, multi-statement injection, and hallucinated schema tables/columns before queries reach the database. |
 | 📊 **Enterprise Data UX** | **1-Click Copy CSV**, **1-Click Download CSV**, sticky table headers, numeric right-alignment, starter exploration chips, and <kbd>Ctrl</kbd>+<kbd>Enter</kbd> execution. |
@@ -188,9 +190,9 @@ cargo check --manifest-path src-tauri/Cargo.toml
 
 | Subsystem | Test Framework | Passing Tests | Failures |
 | :--- | :--- | :---: | :---: |
-| **Python Backend** | `pytest 9.1` | **1,933** | 0 |
-| **Frontend UI** | Node.js Test Runner | **528** | 0 |
-| **Combined Baseline** | Full Suite | **2,461** | **0** |
+| **Python Backend** | `pytest 9.1` | **1,957** | 0 |
+| **Frontend UI** | Node.js Test Runner | **549** | 0 |
+| **Combined Baseline** | Full Suite | **2,506** | **0** |
 
 ---
 

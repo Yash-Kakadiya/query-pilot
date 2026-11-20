@@ -69,7 +69,7 @@ Verified scripts from [package.json](package.json):
 * `npm run build`: Type-checks the application via `tsc -b` and builds production-optimized static assets in `dist/`.
 * `npm run lint`: Runs Oxlint over TypeScript and React source files for fast static analysis.
 * `npm run preview`: Serves the local `dist/` production bundle for previewing.
-* `npm test`: Runs unit tests for API client endpoint resolution using Node.js native test runner.
+* `npm test`: Runs unit tests across all 549 test specifications using the Node.js native test runner.
 
 ---
 
@@ -85,11 +85,21 @@ frontend/
 │   ├── components/
 │   │   ├── QueryInput.tsx   # Search input, Submit/Cancel buttons, and keyboard controls
 │   │   ├── QueryResults.tsx # Grounded answers, interactive clarification pills, and data table
+│   │   ├── ProfileSelector.tsx # Multi-database profile onboarding and switcher (SQLite, Postgres, MySQL, MSSQL)
+│   │   ├── SettingsModal.tsx # Application settings dialog with 11-stage full app self-diagnostics
+│   │   ├── ActionableErrorCard.tsx # Self-healing error diagnostics with 1-click solutions
+│   │   ├── ConversationDrawer.tsx # Multi-turn conversation history drawer
+│   │   ├── ResultVisualizer.tsx # Recharts data visualization charts
 │   │   └── ErrorAlert.tsx   # Sanitized error alert banner with correlated X-Request-ID
 │   ├── services/
+│   │   ├── appDiagnostics.ts # 11-stage comprehensive app health and subsystem diagnostic runner
+│   │   ├── errorDiagnostics.ts # Actionable error diagnostic classifier and resolver
+│   │   ├── agentClient.ts   # Typed loopback agent daemon client
+│   │   ├── agentSession.ts  # Session coordinator and dynamic schema introspection
 │   │   └── apiClient.ts     # Typed fetch client wrapping /api/health and /api/query
 │   ├── types/
-│   │   └── api.ts           # TypeScript interfaces matching backend Pydantic models
+│   │   ├── api.ts           # TypeScript interfaces matching backend models
+│   │   └── diagnostics.ts   # Diagnostic check, report, and scorecard type contracts
 │   ├── App.tsx              # Root application shell, state management, and request lifecycle
 │   ├── App.css              # Application layout, responsive grid, and component styles
 │   ├── index.css            # Base CSS reset and typographic tokens
