@@ -154,11 +154,18 @@ def test_normalize_dialect():
     assert normalize_dialect("sqlite3") == "sqlite"
     assert normalize_dialect("SQLITE3") == "sqlite"
 
-    with pytest.raises(ValueError, match="Unsupported SQL dialect 'postgres'"):
-        normalize_dialect("postgres")
+    assert normalize_dialect("postgres") == "postgres"
+    assert normalize_dialect("POSTGRES") == "postgres"
+    assert normalize_dialect("postgresql") == "postgres"
+    assert normalize_dialect("mysql") == "mysql"
+    assert normalize_dialect("MYSQL") == "mysql"
+    assert normalize_dialect("mariadb") == "mysql"
 
-    with pytest.raises(ValueError, match="Unsupported SQL dialect 'mysql'"):
-        normalize_dialect("mysql")
+    with pytest.raises(ValueError, match="Unsupported SQL dialect 'oracle'"):
+        normalize_dialect("oracle")
+
+    with pytest.raises(ValueError, match="Unsupported SQL dialect 'snowflake'"):
+        normalize_dialect("snowflake")
 
 
 @pytest.fixture

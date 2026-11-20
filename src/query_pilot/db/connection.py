@@ -59,8 +59,9 @@ def verify_engine_database_context(
     try:
         actual_db = conn.execute(text(query)).scalar()
     except SQLAlchemyError as exc:
+        eng_label = "SQL Server" if engine_type == "mssql" else engine_type
         raise DatabaseConnectionError(
-            f"Failed to query {engine_type} session context: {exc}"
+            f"Failed to query {eng_label} session context: {exc}"
         ) from exc
 
     if not actual_db or str(actual_db).strip().lower() != expected_db.strip().lower():
