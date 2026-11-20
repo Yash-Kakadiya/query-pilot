@@ -35,7 +35,7 @@ class TestDesktopReleasePackaging:
 
     def test_isolated_staging_and_zip_assembly(self, tmp_path: Path):
         """Verify portable bundle assembly and zip compression logic in an isolated test directory."""
-        stage_dir = tmp_path / "stage" / "QueryPilot-v0.2.0-test"
+        stage_dir = tmp_path / "stage" / "QueryPilot-v0.3.0-test"
         stage_dir.mkdir(parents=True)
 
         (stage_dir / "QueryPilot.exe").write_bytes(b"MOCK_BINARY")
@@ -46,12 +46,12 @@ class TestDesktopReleasePackaging:
         agent_dir.mkdir()
         (agent_dir / "querypilot-agent.exe").write_bytes(b"MOCK_AGENT")
 
-        zip_out = tmp_path / "QueryPilot-v0.2.0-test.zip"
+        zip_out = tmp_path / "QueryPilot-v0.3.0-test.zip"
         with zipfile.ZipFile(zip_out, "w", zipfile.ZIP_DEFLATED) as zf:
             for file in stage_dir.rglob("*"):
                 if file.is_file():
                     rel_path = file.relative_to(stage_dir)
-                    zf.write(file, arcname=str(Path("QueryPilot-v0.2.0-test") / rel_path))
+                    zf.write(file, arcname=str(Path("QueryPilot-v0.3.0-test") / rel_path))
 
         assert zip_out.is_file()
         sha = compute_sha256(zip_out)

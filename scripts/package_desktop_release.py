@@ -33,7 +33,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-DEFAULT_VERSION = "0.2.0"
+DEFAULT_VERSION = "0.3.0"
 
 
 def compute_sha256(file_path: Path) -> str:

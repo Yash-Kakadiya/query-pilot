@@ -235,11 +235,11 @@ export function SettingsModal({
               </div>
               <div className="settings-info-row">
                 <span className="settings-info-name">Version:</span>
-                <span className="settings-info-val">QueryPilot v0.2.0 (Tauri 2.12 + WebView2)</span>
+                <span className="settings-info-val">QueryPilot v0.3.0 (Tauri 2.12 + WebView2)</span>
               </div>
               <div className="settings-info-row">
                 <span className="settings-info-name">Database Engines:</span>
-                <span className="settings-info-val">SQLite &bull; Microsoft SQL Server (ODBC)</span>
+                <span className="settings-info-val">SQLite &bull; PostgreSQL &bull; MySQL &bull; SQL Server</span>
               </div>
             </div>
           </div>

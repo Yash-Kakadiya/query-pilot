@@ -56,7 +56,7 @@ test('Gemini Key Storage & Header Propagation', async (t) => {
 
     globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
       capturedHeaders = (init?.headers as Record<string, string>) || {}
-      return new Response(JSON.stringify({ status: 'healthy', version: '0.2.0' }), {
+      return new Response(JSON.stringify({ status: 'healthy', version: '0.3.0' }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       })

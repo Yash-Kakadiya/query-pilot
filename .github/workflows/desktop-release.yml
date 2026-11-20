@@ -7,9 +7,9 @@ name: Desktop Release
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version tag (e.g. 0.2.0)"
+        description: "Release version tag (e.g. 0.3.0)"
         required: true
-        default: "0.2.0"
+        default: "0.3.0"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -66,14 +66,20 @@ jobs:
           }
 
       - name: Build and Package Desktop Release Bundle
+        id: package
         run: |
           if (Test-Path "C:\Program Files (x86)\NSIS") {
             $env:PATH = "C:\Program Files (x86)\NSIS;$env:PATH"
           }
           $ver = "${{ github.event.inputs.version || github.ref_name }}"
           $ver = $ver.TrimStart('v')
-          if (-not $ver) { $ver = "0.2.0" }
+          if (-not $ver) { $ver = "0.3.0" }
           python scripts/package_desktop_release.py --version $ver --rebuild
+          $notesPath = "docs/RELEASE_NOTES_v$ver.md"
+          if (-not (Test-Path $notesPath)) {
+            $notesPath = "docs/RELEASE_NOTES_v0.3.0.md"
+          }
+          echo "notes_path=$notesPath" >> $env:GITHUB_OUTPUT
 
       - name: Upload Artifacts to GitHub Release
         uses: softprops/action-gh-release@v2
@@ -82,7 +88,7 @@ jobs:
             release/QueryPilot-*.exe
             release/QueryPilot-*.zip
             release/SHA256SUMS.txt
-          body_path: docs/RELEASE_NOTES_v0.2.0.md
+          body_path: ${{ steps.package.outputs.notes_path }}
           draft: false
           prerelease: false
           generate_release_notes: true

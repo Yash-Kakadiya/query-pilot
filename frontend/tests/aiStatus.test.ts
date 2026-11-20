@@ -36,7 +36,7 @@ function restoreFetch(): void {
 
 const SAMPLE_HEALTH: HealthResponse = {
   status: 'online',
-  version: '0.2.0',
+  version: '0.3.0',
   dialect: 'tsql',
   tracing_enabled: false,
 }

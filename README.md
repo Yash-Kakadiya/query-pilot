@@ -23,20 +23,20 @@
 
 ---
 
-## ⬇️ Download QueryPilot for Windows (v0.2.0)
+## ⬇️ Download QueryPilot for Windows (v0.3.0)
 
 > [!TIP]
 > **Direct Executable & Portable**: Choose the direct Windows installer (`.exe`) or the zero-installation portable archive (`.zip`). Both run 100% locally with all dependencies included!
 
-👉 **[Download QueryPilot v0.2.0 from GitHub Releases](https://github.com/Yash-Kakadiya/query-pilot/releases)**
+👉 **[Download QueryPilot v0.3.0 from GitHub Releases](https://github.com/Yash-Kakadiya/query-pilot/releases)**
 
 | Download Link | Type | Description |
 | :--- | :--- | :--- |
-| 🪟 **[QueryPilot-v0.2.0-Setup.exe](https://github.com/Yash-Kakadiya/query-pilot/releases)** | **Windows Installer (.exe)** | **Recommended**: Direct executable setup wizard. Automatically installs desktop & start menu shortcuts. |
-| 📦 **[QueryPilot-v0.2.0-windows-x64.zip](https://github.com/Yash-Kakadiya/query-pilot/releases)** | **Portable Archive (.zip)** | Standalone runnable bundle. Unzip anywhere and double-click `QueryPilot.exe`—no installation needed! |
+| 🪟 **[QueryPilot-v0.3.0-Setup.exe](https://github.com/Yash-Kakadiya/query-pilot/releases)** | **Windows Installer (.exe)** | **Recommended**: Direct executable setup wizard. Automatically installs desktop & start menu shortcuts. |
+| 📦 **[QueryPilot-v0.3.0-windows-x64.zip](https://github.com/Yash-Kakadiya/query-pilot/releases)** | **Portable Archive (.zip)** | Standalone runnable bundle. Unzip anywhere and double-click `QueryPilot.exe`—no installation needed! |
 
 ### Getting Started in 3 Steps:
-1. Download **`QueryPilot-v0.2.0-Setup.exe`** (or extract the `.zip`).
+1. Download **`QueryPilot-v0.3.0-Setup.exe`** (or extract the `.zip`).
 2. Launch **`QueryPilot`** and select the bundled **`university_demo.db`** (or connect your cloud database).
 3. Paste your free Google Gemini API key into the top header and start asking questions in plain English!
 
@@ -220,15 +220,15 @@ QueryPilot includes a reproducible benchmark runner ([run_evaluation_benchmark.p
 
 To build a standalone portable release archive locally:
 ```powershell
-.venv\Scripts\python scripts/package_desktop_release.py --version 0.2.0 --rebuild
+.venv\Scripts\python scripts/package_desktop_release.py --version 0.3.0 --rebuild
 ```
-This produces `release/QueryPilot-v0.2.0-windows-x64.zip` (46.3 MB) and generates cryptographic hashes in `release/SHA256SUMS.txt`.
+This produces `release/QueryPilot-v0.3.0-windows-x64.zip` and generates cryptographic hashes in `release/SHA256SUMS.txt`.
 
 ### Automated GitHub Release Workflow
 Releases are automatically built and published to GitHub Releases via GitHub Actions whenever a version tag is pushed:
 ```powershell
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.3.0
+git push origin v0.3.0
 ```
 
 ---

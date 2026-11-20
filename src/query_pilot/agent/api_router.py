@@ -191,7 +191,7 @@ async def proxy_health(request: Request) -> Response:
                 status_code=status.HTTP_200_OK,
                 content={
                     "status": "healthy",
-                    "version": "0.2.0",
+                    "version": "0.3.0",
                     "dialect": "T-SQL",
                     "mode": "in_process",
                     "primary_key": "custom" if custom_gemini_key else "environment",
@@ -241,7 +241,7 @@ async def proxy_health(request: Request) -> Response:
                 status_code=status.HTTP_200_OK,
                 content={
                     "status": "healthy",
-                    "version": "0.2.0",
+                    "version": "0.3.0",
                     "dialect": "T-SQL",
                     "mode": "in_process",
                 },

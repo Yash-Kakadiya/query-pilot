@@ -12,6 +12,8 @@ QueryPilot Desktop is a standalone Windows x64 desktop application combining a n
 | **Microsoft Edge WebView2** | Required Runtime | Microsoft Edge WebView2 Evergreen Runtime. Pre-installed on modern Windows 10 and 11; if missing, the installer bootstrapper will download and install it. |
 | **Python 3.12 Runtime** | **Bundled** | **Pre-packaged**. Users do NOT need Python installed on their system. The standalone Python runtime and all internal application dependencies are self-contained. |
 | **SQLite Engine** | **Built-in** | **Pre-packaged**. Native SQLite introspection, read-only safety validation, and local execution require no external drivers. |
+| **PostgreSQL Engine** | **Bundled** | **Pre-packaged**. Pure-Python driver (`psycopg2-binary`) bundled for local & cloud PostgreSQL (Supabase, Neon, AWS RDS). |
+| **MySQL Engine** | **Bundled** | **Pre-packaged**. Pure-Python driver (`PyMySQL`) bundled for local & cloud MySQL (PlanetScale, AWS RDS). |
 | **SQL Server (MSSQL)** | External Prerequisite | Microsoft ODBC Driver 17 or 18 for SQL Server is required **only** if configuring and connecting to Microsoft SQL Server databases. |
 | **Administrator Rights** | Not Required | Standard per-user installation into `%LOCALAPPDATA%\QueryPilot`. |
 
@@ -20,10 +22,10 @@ QueryPilot Desktop is a standalone Windows x64 desktop application combining a n
 ## 2. Installation Walkthrough
 
 ### Step 1: Download
-Download the latest `QueryPilot_0.2.0_x64-setup.exe` installer from the release distribution.
+Download the latest `QueryPilot-v0.3.0-Setup.exe` installer from the release distribution.
 
 ### Step 2: Run Installer
-Double-click `QueryPilot_0.2.0_x64-setup.exe` to start the setup wizard.
+Double-click `QueryPilot-v0.3.0-Setup.exe` to start the setup wizard.
 - The installer installs QueryPilot into your personal local applications folder:
   `%LOCALAPPDATA%\QueryPilot`
 - It does **not** require administrative elevation (UAC prompt).
@@ -33,7 +35,7 @@ Double-click `QueryPilot_0.2.0_x64-setup.exe` to start the setup wizard.
 > **Silent / Automated Installation**:
 > For automated lab deployments, run the installer with the `/S` flag:
 > ```powershell
-> .\QueryPilot_0.2.0_x64-setup.exe /S
+> .\QueryPilot-v0.3.0-Setup.exe /S
 > ```
 
 ---
@@ -54,7 +56,7 @@ Microsoft Defender SmartScreen prevented an unrecognized app from starting.
 ### How to Proceed:
 1. (Optional but recommended) Verify the installer hash in PowerShell:
    ```powershell
-   Get-FileHash QueryPilot_0.2.0_x64-setup.exe -Algorithm SHA256
+   Get-FileHash QueryPilot-v0.3.0-Setup.exe -Algorithm SHA256
    ```
 2. Click the **"More info"** link in the SmartScreen dialog.
 3. Click the **"Run anyway"** button that appears.
