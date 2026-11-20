@@ -538,3 +538,84 @@ class TestConnectionResponse(BaseModel):
     )
 
 
+# ==============================================================================
+# Persistent Query History & Favorites Contracts (Phase 3 / Option 1)
+# ==============================================================================
+
+
+class HistoryItem(BaseModel):
+    """Represents a durable query history and bookmark entry."""
+
+    model_config = {"extra": "forbid"}
+
+    id: str = Field(..., max_length=128)
+    timestamp: int = Field(..., description="Epoch timestamp in milliseconds")
+    question: Optional[str] = Field(None, max_length=1000)
+    sql: str = Field(..., min_length=1, max_length=10000)
+    profile_id: str = Field(..., max_length=128)
+    profile_name: str = Field(..., max_length=256)
+    engine_type: str = Field(..., max_length=32)
+    status: str = Field(..., pattern="^(succeeded|failed|rejected)$")
+    row_count: Optional[int] = Field(None, ge=0)
+    execution_time_ms: Optional[float] = Field(None, ge=0.0)
+    error_message: Optional[str] = Field(None, max_length=1000)
+    synthesized_answer: Optional[str] = Field(None, max_length=2000)
+    result_columns: Optional[List[str]] = Field(None, max_length=100)
+    is_favorite: bool = Field(default=False)
+    tags: List[str] = Field(default_factory=list, max_length=10)
+    notes: Optional[str] = Field(None, max_length=1000)
+
+
+class HistoryItemCreate(BaseModel):
+    """Payload to record an executed query into persistent history."""
+
+    model_config = {"extra": "forbid"}
+
+    id: Optional[str] = Field(None, max_length=128)
+    timestamp: Optional[int] = None
+    question: Optional[str] = Field(None, max_length=1000)
+    sql: str = Field(..., min_length=1, max_length=10000)
+    profile_id: str = Field(..., max_length=128)
+    profile_name: str = Field(..., max_length=256)
+    engine_type: str = Field(..., max_length=32)
+    status: str = Field(default="succeeded", pattern="^(succeeded|failed|rejected)$")
+    row_count: Optional[int] = Field(None, ge=0)
+    execution_time_ms: Optional[float] = Field(None, ge=0.0)
+    error_message: Optional[str] = Field(None, max_length=1000)
+    synthesized_answer: Optional[str] = Field(None, max_length=2000)
+    result_columns: Optional[List[str]] = Field(None, max_length=100)
+    is_favorite: bool = Field(default=False)
+    tags: List[str] = Field(default_factory=list, max_length=10)
+    notes: Optional[str] = Field(None, max_length=1000)
+
+
+class HistoryListResponse(BaseModel):
+    """Response returned by GET /agent/v1/history."""
+
+    model_config = {"extra": "forbid"}
+
+    entries: List[HistoryItem]
+    total_count: int
+    favorites_count: int
+
+
+class HistoryToggleStarResponse(BaseModel):
+    """Response returned by POST /agent/v1/history/{id}/toggle-star."""
+
+    model_config = {"extra": "forbid"}
+
+    id: str
+    is_favorite: bool
+    message: str
+
+
+class HistoryDeleteResponse(BaseModel):
+    """Response returned by DELETE /agent/v1/history."""
+
+    model_config = {"extra": "forbid"}
+
+    success: bool
+    deleted_count: int
+    message: str
+
+

@@ -139,6 +139,14 @@ def get_default_profiles_file() -> Path:
     return Path.home() / ".query_pilot" / "profiles.json"
 
 
+def get_default_history_file() -> Path:
+    """Resolve default location of persistent query history file."""
+    resolved = _get_env_path(["QUERYPILOT_HISTORY_FILE"], None)
+    if resolved is not None:
+        return resolved
+    return Path.home() / ".query_pilot" / "history.json"
+
+
 class AgentConfig(BaseModel):
     """Configuration contract for the local-agent daemon.
 
@@ -198,6 +206,10 @@ class AgentConfig(BaseModel):
     profiles_file: Path = Field(
         default_factory=get_default_profiles_file,
         description="Path to local database connection profiles file (for future onboarding contract).",
+    )
+    history_file: Path = Field(
+        default_factory=get_default_history_file,
+        description="Path to persistent query history and favorites store.",
     )
     session_idle_seconds: int = Field(
         default_factory=lambda: _get_env_int(["QUERYPILOT_AGENT_SESSION_IDLE_SECONDS"], 3600),
@@ -294,6 +306,15 @@ class AgentConfig(BaseModel):
         raw = str(v).strip()
         if not raw or raw == ".":
             raise ValueError("profiles_file cannot be empty.")
+        return v
+
+    @field_validator("history_file")
+    @classmethod
+    def validate_history_file(cls, v: Path) -> Path:
+        """Validate that history_file path is non-empty."""
+        raw = str(v).strip()
+        if not raw or raw == ".":
+            raise ValueError("history_file cannot be empty.")
         return v
 
     @field_validator("token_dir")

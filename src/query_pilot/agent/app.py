@@ -65,7 +65,13 @@ from query_pilot.agent.models import (
     DeleteProfileResponse,
     TestConnectionRequest,
     TestConnectionResponse,
+    HistoryItem,
+    HistoryItemCreate,
+    HistoryListResponse,
+    HistoryToggleStarResponse,
+    HistoryDeleteResponse,
 )
+from query_pilot.agent.history_store import HistoryStore
 from query_pilot.api.security import StreamingPayloadSizeMiddleware
 from query_pilot.db.connection import (
     DatabaseConnectionError,
@@ -149,6 +155,7 @@ def create_agent_app(
     caller_engine: Optional[Engine] = None,
     caller_schema: Optional[Union[DatabaseSchema, Dict[str, DatabaseSchema]]] = None,
     upstream_client: Optional[httpx.AsyncClient] = None,
+    history_store: Optional[HistoryStore] = None,
 ) -> FastAPI:
     """Instantiate and configure the QueryPilot Local Agent FastAPI application.
 
@@ -204,6 +211,9 @@ def create_agent_app(
         idle_timeout_seconds=resolved_config.session_idle_seconds,
         max_lifetime_seconds=resolved_config.session_max_lifetime_seconds,
     )
+    resolved_history_store = history_store or HistoryStore(
+        history_file=resolved_config.history_file
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -238,6 +248,7 @@ def create_agent_app(
     app.state.engine_manager = resolved_engine_mgr
     app.state.token_manager = resolved_token_mgr
     app.state.session_manager = resolved_session_mgr
+    app.state.history_store = resolved_history_store
     app.state.caller_engine = caller_engine
     app.state.caller_schema = caller_schema
     app.state.upstream_client = upstream_client
@@ -1214,6 +1225,121 @@ def create_agent_app(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Query execution failed.",
             ) from None
+
+    # --------------------------------------------------------------------------
+    # Persistent Query History & Favorites Endpoints (Phase 3 / Option 1)
+    # --------------------------------------------------------------------------
+
+    @app.get(
+        "/agent/v1/history",
+        response_model=HistoryListResponse,
+        responses={401: {"model": AgentErrorResponse}},
+    )
+    def list_query_history(
+        session: Session = Depends(get_current_session),
+        profile_id: Optional[str] = None,
+        only_favorites: bool = False,
+        search: Optional[str] = None,
+        tag: Optional[str] = None,
+    ):
+        """Retrieve persistent query history and favorites matching optional filters."""
+        entries = resolved_history_store.list_entries(
+            profile_id=profile_id,
+            only_favorites=only_favorites,
+            search=search,
+            tag=tag,
+        )
+        total, favs = resolved_history_store.get_counts()
+        return HistoryListResponse(
+            entries=entries,
+            total_count=total,
+            favorites_count=favs,
+        )
+
+    @app.post(
+        "/agent/v1/history",
+        response_model=HistoryItem,
+        status_code=status.HTTP_201_CREATED,
+        responses={
+            400: {"model": AgentErrorResponse},
+            401: {"model": AgentErrorResponse},
+            422: {"model": AgentErrorResponse},
+        },
+    )
+    def record_query_history(
+        payload: HistoryItemCreate,
+        session: Session = Depends(get_current_session),
+    ):
+        """Record an executed query into persistent history with automatic password scrubbing."""
+        return resolved_history_store.add_entry(payload)
+
+    @app.post(
+        "/agent/v1/history/{entry_id}/toggle-star",
+        response_model=HistoryToggleStarResponse,
+        responses={
+            401: {"model": AgentErrorResponse},
+            404: {"model": AgentErrorResponse},
+        },
+    )
+    def toggle_history_star(
+        entry_id: str,
+        session: Session = Depends(get_current_session),
+    ):
+        """Toggle ⭐ favorite bookmark state on a history entry."""
+        updated = resolved_history_store.toggle_favorite(entry_id)
+        if not updated:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"History entry '{entry_id}' not found.",
+            )
+        action = "starred" if updated.is_favorite else "unstarred"
+        return HistoryToggleStarResponse(
+            id=updated.id,
+            is_favorite=updated.is_favorite,
+            message=f"Query {action} successfully.",
+        )
+
+    @app.delete(
+        "/agent/v1/history/{entry_id}",
+        response_model=HistoryDeleteResponse,
+        responses={
+            401: {"model": AgentErrorResponse},
+            404: {"model": AgentErrorResponse},
+        },
+    )
+    def delete_history_entry(
+        entry_id: str,
+        session: Session = Depends(get_current_session),
+    ):
+        """Delete a single query history item by ID."""
+        deleted = resolved_history_store.delete_entry(entry_id)
+        if not deleted:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"History entry '{entry_id}' not found.",
+            )
+        return HistoryDeleteResponse(
+            success=True,
+            deleted_count=1,
+            message=f"History entry '{entry_id}' deleted.",
+        )
+
+    @app.delete(
+        "/agent/v1/history",
+        response_model=HistoryDeleteResponse,
+        responses={401: {"model": AgentErrorResponse}},
+    )
+    def clear_query_history(
+        session: Session = Depends(get_current_session),
+        clear_favorites: bool = False,
+    ):
+        """Clear query history. Preserves starred favorites by default unless clear_favorites=True."""
+        count = resolved_history_store.clear_entries(clear_favorites=clear_favorites)
+        return HistoryDeleteResponse(
+            success=True,
+            deleted_count=count,
+            message=f"Cleared {count} historical queries.",
+        )
 
     # --------------------------------------------------------------------------
     # Production Frontend Static Serving & SPA Fallback

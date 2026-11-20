@@ -34,6 +34,13 @@ import {
   type ValidateProfileConfigRequest,
   type ValidateProfileConfigResponse,
 } from '../types/api.ts'
+import type {
+  HistoryDeleteResponse,
+  HistoryItem,
+  HistoryItemCreate,
+  HistoryListResponse,
+  HistoryToggleStarResponse,
+} from '../types/history.ts'
 import { projectToModelFacingSchema } from './schemaProjection.ts'
 
 export { AgentClientError, type AgentErrorKind }
@@ -855,5 +862,147 @@ export async function deleteProfile(
     options
   )
 }
+
+/**
+ * Retrieves persisted query execution history with optional filtering.
+ */
+export async function getHistory(
+  params?: {
+    profileId?: string
+    onlyFavorites?: boolean
+    search?: string
+    limit?: number
+    offset?: number
+  },
+  options?: AgentRequestOptions
+): Promise<HistoryListResponse> {
+  const query = new URLSearchParams()
+  if (params?.profileId) query.set('profile_id', params.profileId)
+  if (params?.onlyFavorites !== undefined) query.set('only_favorites', String(params.onlyFavorites))
+  if (params?.search) query.set('search', params.search)
+  if (params?.limit !== undefined) query.set('limit', String(params.limit))
+  if (params?.offset !== undefined) query.set('offset', String(params.offset))
+
+  const qs = query.toString()
+  const url = resolveAgentEndpoint(`/v1/history${qs ? `?${qs}` : ''}`)
+
+  return sendAgentRequest<HistoryListResponse>(
+    url,
+    {
+      method: 'GET',
+    },
+    options
+  )
+}
+
+/**
+ * Records an executed query into persistent history.
+ */
+export async function recordHistory(
+  item: HistoryItemCreate,
+  options?: AgentRequestOptions
+): Promise<HistoryItem> {
+  if (!item || !item.sql || !item.sql.trim()) {
+    throw new AgentClientError({
+      message: 'History item must contain non-empty SQL.',
+      kind: 'validation',
+    })
+  }
+
+  const url = resolveAgentEndpoint('/v1/history')
+
+  return sendAgentRequest<HistoryItem>(
+    url,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(item),
+    },
+    options
+  )
+}
+
+/**
+ * Toggles the favorite (starred) state of a persistent history entry.
+ */
+export async function toggleHistoryStar(
+  id: string,
+  options?: AgentRequestOptions
+): Promise<HistoryToggleStarResponse> {
+  if (typeof id !== 'string' || !id.trim()) {
+    throw new AgentClientError({
+      message: 'History ID must be a non-empty string.',
+      kind: 'validation',
+    })
+  }
+
+  const encodedId = encodeURIComponent(id.trim())
+  const url = resolveAgentEndpoint(`/v1/history/${encodedId}/toggle-star`)
+
+  return sendAgentRequest<HistoryToggleStarResponse>(
+    url,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({}),
+    },
+    options
+  )
+}
+
+/**
+ * Deletes a single persistent history entry by ID.
+ */
+export async function deleteHistoryEntry(
+  id: string,
+  options?: AgentRequestOptions
+): Promise<HistoryDeleteResponse> {
+  if (typeof id !== 'string' || !id.trim()) {
+    throw new AgentClientError({
+      message: 'History ID must be a non-empty string.',
+      kind: 'validation',
+    })
+  }
+
+  const encodedId = encodeURIComponent(id.trim())
+  const url = resolveAgentEndpoint(`/v1/history/${encodedId}`)
+
+  return sendAgentRequest<HistoryDeleteResponse>(
+    url,
+    {
+      method: 'DELETE',
+    },
+    options
+  )
+}
+
+/**
+ * Clears persistent query history.
+ * By default, starred favorites are strictly preserved unless clearFavorites is true.
+ */
+export async function clearHistory(
+  clearFavorites: boolean = false,
+  profileId?: string,
+  options?: AgentRequestOptions
+): Promise<HistoryDeleteResponse> {
+  const query = new URLSearchParams()
+  query.set('clear_favorites', String(clearFavorites))
+  if (profileId) query.set('profile_id', profileId)
+
+  const url = resolveAgentEndpoint(`/v1/history?${query.toString()}`)
+
+  return sendAgentRequest<HistoryDeleteResponse>(
+    url,
+    {
+      method: 'DELETE',
+    },
+    options
+  )
+}
+
 
 

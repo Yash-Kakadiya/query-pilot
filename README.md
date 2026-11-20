@@ -58,6 +58,7 @@ Traditional web-based text-to-SQL tools require uploading database schemas, conn
 | Feature | Description |
 | :--- | :--- |
 | ☁️ **Multi-Database & Cloud Profiles** | Connect seamlessly to local **SQLite**, **PostgreSQL** (Supabase, Neon, AWS RDS, GCP Cloud SQL), **MySQL** (PlanetScale, AWS RDS), or **Microsoft SQL Server** (Azure SQL, AWS RDS, MonsterASP) with SQL or Windows Authentication. |
+| ⭐ **Persistent History & Starred Favorites** | Automatically preserves all executed queries across app restarts with full-text search, profile tagging, 1-click **⚡ Run Query**, **📋 Copy SQL**, and **⭐ Starred Favorites** saved to `~/.query_pilot/history.json` with fail-closed password redaction. |
 | 🩺 **Full App Diagnostic Suite** | 11-stage live self-diagnostics auditing daemon loopback, database drivers (Postgres, MySQL, SQLite, ODBC), active connection handshakes, schema discovery, SQL AST guardrails, and Gemini credentials with an instant health scorecard. |
 | 🛡️ **Actionable Error Diagnostics** | Plain-English error diagnosis cards with 1-click solutions for API key errors, quota limits, connection failures, SSL requirements, and schema mismatches with zero credential exposure. |
 | 🔑 **In-App Gemini Key Management** | Paste your free Google Gemini API key directly into the UI header (saved securely in your local browser storage) or use environment fallback keys. |
@@ -295,7 +296,7 @@ query-pilot/
 │   └── evaluation/            # Canonical AI benchmark dataset & reports
 ├── frontend/                  # React 19 + TypeScript single-page application
 │   ├── src/components/        # UI components (Header, ReviewCard, Tables, Modals)
-│   └── tests/                 # 528 automated frontend tests
+│   └── tests/                 # 569 automated frontend tests
 ├── src/query_pilot/           # Python backend core
 │   ├── agent/                 # Local daemon, loopback auth & CLI
 │   ├── db/                    # Multi-cloud profile managers, connection pools
@@ -304,7 +305,7 @@ query-pilot/
 ├── src-tauri/                 # Tauri v2 Windows desktop shell (Rust)
 │   └── src/process_manager.rs # Win32 Job Object sidecar supervision
 ├── scripts/                   # Build, release packaging & evaluation scripts
-├── tests/                     # 1,933 pytest backend and integration tests
+├── tests/                     # 1,963 pytest backend and integration tests
 └── README.md                  # Project overview & documentation
 ```
 

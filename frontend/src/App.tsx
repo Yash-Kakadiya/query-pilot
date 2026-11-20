@@ -29,6 +29,7 @@ import {
 import { AiStatusIndicator } from './components/AiStatusIndicator'
 import { QueryPilotLogo } from './components/QueryPilotLogo'
 import { SettingsModal } from './components/SettingsModal'
+import { queryHistoryCoordinator } from './services/queryHistory'
 import './App.css'
 
 export interface AppProps {
@@ -372,6 +373,8 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator, ai
     const questionForThisCandidate = isManual ? null : sqlGenState.lastGeneratedQuestion
     const profileForThisCandidate = isManual ? null : sqlGenState.lastGeneratedProfileId
     const candidateIdForThisCandidate = isManual ? null : sqlGenState.candidateId
+    const startTime = performance.now()
+    let safeSummary: string | null = null
 
     try {
       const result = await execCoordinator.executeQuery(
@@ -379,6 +382,7 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator, ai
         sqlToExecute,
         isManual ? null : sqlGenState.response?.request_id
       )
+      const durationMs = performance.now() - startTime
 
       // Record completed turn only when execution succeeded, query was an AI candidate, and active profile remains matched
       if (
@@ -388,7 +392,6 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator, ai
         profileForThisCandidate === agentSession.selectedProfileId &&
         agentSession.status === 'authenticated'
       ) {
-        let safeSummary: string | null = null
         try {
           const synthesized = synthesizeDeterministicAnswer(result)
           safeSummary = synthesized?.text || null
@@ -407,8 +410,37 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator, ai
           }
         )
       }
-    } catch {
-      // Error handled in queryExecState.error
+
+      // Persist executed query to history & favorites coordinator
+      if (agentSession.selectedProfile) {
+        void queryHistoryCoordinator.recordQuery({
+          sql: sqlToExecute,
+          question: questionForThisCandidate || null,
+          profile_id: agentSession.selectedProfile.profile_id,
+          profile_name: agentSession.selectedProfile.display_name,
+          engine_type: agentSession.selectedProfile.engine_type || 'mssql',
+          status: 'succeeded',
+          row_count: result ? result.row_count : undefined,
+          execution_time_ms: result?.execution_time_ms || durationMs,
+          synthesized_answer: safeSummary,
+          result_columns: result?.columns,
+        })
+      }
+    } catch (err: unknown) {
+      const durationMs = performance.now() - startTime
+      if (agentSession.selectedProfile) {
+        const errorMsg = err instanceof Error ? err.message : String(err)
+        void queryHistoryCoordinator.recordQuery({
+          sql: sqlToExecute,
+          question: questionForThisCandidate || null,
+          profile_id: agentSession.selectedProfile.profile_id,
+          profile_name: agentSession.selectedProfile.display_name,
+          engine_type: agentSession.selectedProfile.engine_type || 'mssql',
+          status: 'failed',
+          execution_time_ms: durationMs,
+          error_message: errorMsg,
+        })
+      }
     }
   }
 
@@ -420,7 +452,7 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator, ai
           <div className="brand">
             <QueryPilotLogo size={42} className="brand-logo" />
             <h1 className="brand-title">QueryPilot</h1>
-            <span className="brand-badge">v0.2</span>
+            <span className="brand-badge">v0.3</span>
           </div>
           <p className="brand-subtitle">
             Autonomous Data Analyst
@@ -814,7 +846,7 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator, ai
         }}
       />
 
-      {/* Conversation History Drawer (Milestone B22-B) */}
+      {/* Conversation History & Starred Favorites Drawer (Milestone B22-B & Phase 3) */}
       <ConversationHistoryDrawer
         isOpen={isHistoryDrawerOpen}
         onClose={() => setIsHistoryDrawerOpen(false)}
@@ -825,6 +857,22 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator, ai
           setReviewedSql('')
         }}
         onNewTopic={handleResetConversation}
+        onSelectQuery={(sql, profileId) => {
+          if (profileId && profileId !== agentSession.selectedProfileId) {
+            handleSelectProfile(profileId)
+          }
+          setReviewedSql(sql)
+          execCoordinator.clearResult()
+        }}
+        onRunQuery={(sql, profileId) => {
+          if (profileId && profileId !== agentSession.selectedProfileId) {
+            handleSelectProfile(profileId)
+          }
+          setReviewedSql(sql)
+          void handleExecuteCandidateSql(sql, true)
+        }}
+        activeProfileId={agentSession.selectedProfileId}
+        activeProfileName={agentSession.selectedProfile?.display_name}
       />
 
       {/* Floating Bottom-Left Settings Trigger */}

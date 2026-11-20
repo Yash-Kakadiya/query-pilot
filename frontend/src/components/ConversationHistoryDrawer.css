@@ -301,3 +301,444 @@
   line-height: 1.35;
 }
 
+
+/* ==========================================================================
+   Persistent History & Favorites Tabs, Search, and Cards (Phase 3)
+   ========================================================================== */
+
+.history-clear-btn {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #dc2626;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.history-clear-btn:hover {
+  background: #fee2e2;
+}
+
+.history-clear-confirm-banner {
+  background: #fff1f2;
+  border-bottom: 1px solid #fecdd3;
+  padding: 0.85rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.history-clear-confirm-text strong {
+  font-size: 0.8125rem;
+  color: #9f1239;
+}
+
+.history-clear-confirm-text p {
+  margin: 0.2rem 0 0;
+  font-size: 0.75rem;
+  color: #be123c;
+}
+
+.history-clear-confirm-buttons {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.history-confirm-btn {
+  padding: 0.3rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.history-confirm-btn.danger {
+  background: #e11d48;
+  color: #ffffff;
+  border: none;
+}
+
+.history-confirm-btn.danger:hover {
+  background: #be123c;
+}
+
+.history-confirm-btn.cancel {
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  color: #475569;
+}
+
+.history-confirm-btn.cancel:hover {
+  background: #f1f5f9;
+}
+
+.history-tabs-bar {
+  display: flex;
+  background: #f1f5f9;
+  border-bottom: 1px solid var(--border-color, #e2e8f0);
+  padding: 0.25rem 0.75rem 0;
+  gap: 0.25rem;
+}
+
+.history-tab-btn {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.history-tab-btn:hover {
+  color: #0f172a;
+}
+
+.history-tab-btn.active {
+  color: #2563eb;
+  border-bottom-color: #2563eb;
+  background: #ffffff;
+  border-radius: 6px 6px 0 0;
+}
+
+.history-filter-section {
+  padding: 0.75rem 1.25rem;
+  background: #ffffff;
+  border-bottom: 1px solid var(--border-color, #e2e8f0);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.history-search-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.history-search-icon {
+  position: absolute;
+  left: 0.65rem;
+  font-size: 0.8125rem;
+  color: #94a3b8;
+  pointer-events: none;
+}
+
+.history-search-input {
+  width: 100%;
+  padding: 0.45rem 2rem 0.45rem 2rem;
+  font-size: 0.8125rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #f8fafc;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.history-search-input:focus {
+  border-color: #3b82f6;
+  background: #ffffff;
+}
+
+.history-search-clear {
+  position: absolute;
+  right: 0.5rem;
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 0.75rem;
+  padding: 0.2rem;
+}
+
+.history-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.history-filter-chip {
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 9999px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: #475569;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.history-filter-chip:hover {
+  background: #e2e8f0;
+}
+
+.history-filter-chip.active {
+  background: #eff6ff;
+  border-color: #93c5fd;
+  color: #1d4ed8;
+  font-weight: 600;
+}
+
+.history-filter-chip.tag-chip {
+  color: #0284c7;
+}
+
+.history-filter-chip.tag-chip.active {
+  background: #e0f2fe;
+  border-color: #7dd3fc;
+  color: #0369a1;
+}
+
+.history-persistent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.history-query-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  transition: all 0.15s ease;
+}
+
+.history-query-card:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.06);
+}
+
+.history-query-card.favorite-border {
+  border-left: 3px solid #eab308;
+}
+
+.history-query-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.history-card-meta-left {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.history-status-badge {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+}
+
+.history-status-badge.succeeded {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.history-status-badge.failed {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.history-status-badge.rejected {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.history-profile-badge {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  background: #f1f5f9;
+  color: #334155;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-engine-badge {
+  font-size: 0.625rem;
+  font-weight: 700;
+  background: #e2e8f0;
+  color: #64748b;
+  padding: 0.125rem 0.35rem;
+  border-radius: 3px;
+  letter-spacing: 0.03em;
+}
+
+.history-card-meta-right {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.history-card-timestamp {
+  font-size: 0.6875rem;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+
+.history-star-btn {
+  background: transparent;
+  border: none;
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0.15rem 0.25rem;
+  border-radius: 4px;
+  transition: transform 0.15s ease;
+}
+
+.history-star-btn:hover {
+  transform: scale(1.2);
+}
+
+.history-star-btn.starred {
+  filter: drop-shadow(0 0 2px rgba(234, 179, 8, 0.4));
+}
+
+.history-query-question {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+  font-size: 0.78125rem;
+  color: #334155;
+  font-style: italic;
+}
+
+.history-question-icon {
+  font-size: 0.75rem;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.history-sql-code-box {
+  background: #0f172a;
+  border-radius: 6px;
+  padding: 0.55rem 0.75rem;
+  overflow-x: auto;
+}
+
+.history-sql-code {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.75rem;
+  color: #38bdf8;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.history-metrics-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.history-stat-pill {
+  font-size: 0.6875rem;
+  color: #64748b;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  padding: 0.125rem 0.4rem;
+  border-radius: 4px;
+}
+
+.history-card-tags {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.history-item-tag {
+  font-size: 0.625rem;
+  color: #0284c7;
+  background: #e0f2fe;
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+}
+
+.history-error-banner {
+  background: #fff1f2;
+  border: 1px solid #fecdd3;
+  border-radius: 4px;
+  padding: 0.35rem 0.55rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.71875rem;
+  color: #be123c;
+}
+
+.history-card-actions-footer {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-top: 1px solid #f1f5f9;
+  padding-top: 0.5rem;
+}
+
+.history-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.71875rem;
+  font-weight: 500;
+  padding: 0.3rem 0.6rem;
+  border-radius: 5px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.15s ease;
+}
+
+.history-action-btn.run-btn {
+  background: #2563eb;
+  color: #ffffff;
+  border-color: #1d4ed8;
+}
+
+.history-action-btn.run-btn:hover {
+  background: #1d4ed8;
+}
+
+.history-action-btn.copy-btn {
+  background: #f8fafc;
+  color: #334155;
+  border-color: #cbd5e1;
+}
+
+.history-action-btn.copy-btn:hover {
+  background: #f1f5f9;
+}
+
+.history-action-btn.copy-btn.copied {
+  background: #dcfce7;
+  color: #15803d;
+  border-color: #86efac;
+}
+
+.history-action-btn.delete-btn {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  font-size: 0.8125rem;
+  color: #94a3b8;
+  padding: 0.25rem 0.4rem;
+}
+
+.history-action-btn.delete-btn:hover {
+  color: #ef4444;
+  background: #fee2e2;
+}
