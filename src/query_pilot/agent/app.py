@@ -967,11 +967,18 @@ def create_agent_app(
                 poolclass=NullPool,
             )
             with temp_engine.connect() as conn:
-                actual_db = verify_database_context(
-                    conn,
-                    expected_db=profile.database_name,
-                    engine_type=profile.engine_type,
-                )
+                if profile.engine_type == "sqlite":
+                    verify_sqlite_database_context(
+                        conn,
+                        expected_path=profile.database_path or "",
+                    )
+                    actual_db = profile.database_name or "main"
+                else:
+                    actual_db = verify_database_context(
+                        conn,
+                        expected_db=profile.database_name,
+                        engine_type=profile.engine_type,
+                    )
                 elapsed_ms = (time.perf_counter() - start_time) * 1000.0
                 return TestConnectionResponse(
                     connected=True,
