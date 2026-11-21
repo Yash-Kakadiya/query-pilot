@@ -71,7 +71,12 @@ from query_pilot.agent.models import (
     HistoryListResponse,
     HistoryToggleStarResponse,
     HistoryDeleteResponse,
+    TablePeekResponse,
+    ColumnDictionaryEntry,
+    TableDictionaryEntry,
+    DataDictionaryResponse,
 )
+from query_pilot.agent.dictionary_store import DictionaryStore
 from query_pilot.agent.history_store import HistoryStore
 from query_pilot.api.security import StreamingPayloadSizeMiddleware
 from query_pilot.db.connection import (
@@ -157,6 +162,7 @@ def create_agent_app(
     caller_schema: Optional[Union[DatabaseSchema, Dict[str, DatabaseSchema]]] = None,
     upstream_client: Optional[httpx.AsyncClient] = None,
     history_store: Optional[HistoryStore] = None,
+    dictionary_store: Optional[DictionaryStore] = None,
 ) -> FastAPI:
     """Instantiate and configure the QueryPilot Local Agent FastAPI application.
 
@@ -215,6 +221,9 @@ def create_agent_app(
     resolved_history_store = history_store or HistoryStore(
         history_file=resolved_config.history_file
     )
+    resolved_dictionary_store = dictionary_store or DictionaryStore(
+        dictionaries_dir=resolved_config.dictionaries_dir
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -250,6 +259,7 @@ def create_agent_app(
     app.state.token_manager = resolved_token_mgr
     app.state.session_manager = resolved_session_mgr
     app.state.history_store = resolved_history_store
+    app.state.dictionary_store = resolved_dictionary_store
     app.state.caller_engine = caller_engine
     app.state.caller_schema = caller_schema
     app.state.upstream_client = upstream_client
@@ -506,6 +516,22 @@ def create_agent_app(
         history_count = len(resolved_history_store._entries)
         favorites_count = sum(1 for e in resolved_history_store._entries if e.is_favorite)
 
+        # Audit data dictionary store
+        dict_healthy = True
+        try:
+            d_dir = resolved_config.dictionaries_dir
+            if d_dir.is_dir():
+                dict_healthy = os.access(d_dir, os.R_OK | os.W_OK)
+            else:
+                check_dir = d_dir
+                while not check_dir.exists() and check_dir.parent != check_dir:
+                    check_dir = check_dir.parent
+                dict_healthy = os.access(check_dir, os.W_OK)
+        except Exception:
+            dict_healthy = False
+
+        dict_count = resolved_dictionary_store.get_cached_count()
+
         from query_pilot import __version__
 
         return {
@@ -520,6 +546,10 @@ def create_agent_app(
                 "healthy": history_healthy,
                 "total_queries": history_count,
                 "favorites_count": favorites_count,
+            },
+            "dictionary_store": {
+                "healthy": dict_healthy,
+                "cached_dictionaries_count": dict_count,
             },
             "drivers": drivers,
             "guardrails": {
@@ -1372,6 +1402,335 @@ def create_agent_app(
             deleted_count=count,
             message=f"Cleared {count} historical queries.",
         )
+
+    # --------------------------------------------------------------------------
+    # Visual Schema Explorer, Table Peek & Data Dictionary Endpoints (Phase 4 / Option 3)
+    # --------------------------------------------------------------------------
+
+    @app.get(
+        "/agent/v1/profiles/{profile_id}/tables/{table_name}/peek",
+        response_model=TablePeekResponse,
+        responses={
+            400: {"model": AgentErrorResponse},
+            401: {"model": AgentErrorResponse},
+            403: {"model": AgentErrorResponse},
+            404: {"model": AgentErrorResponse},
+            500: {"model": AgentErrorResponse},
+            504: {"model": AgentErrorResponse},
+        },
+    )
+    def peek_table_rows(
+        profile_id: str,
+        table_name: str,
+        limit: int = 5,
+        session: Session = Depends(get_current_session),
+    ):
+        """Peek first 5 rows from an approved table for rapid exploratory data inspection.
+
+        Guarantees:
+        - Authenticated ambient session requirement.
+        - Strict profile resolution; unknown profiles fail closed (404).
+        - Profile table allowlist enforcement; restricted tables fail closed (403).
+        - Hard clamp to at most 5 rows (ceiling) regardless of query parameter.
+        - Dialect-safe query synthesis (LIMIT 5 vs TOP 5) respecting quotes/brackets.
+        - Sensitive columns permanently redacted.
+        - Execution timeout clamped to 5s.
+        """
+        try:
+            profile = resolved_store.get_profile(profile_id)
+        except UnknownProfileError:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Profile '{profile_id}' not found.",
+            )
+
+        clean_table = table_name.strip()
+        if profile.allowed_tables:
+            allowed = {t.strip().lower() for t in profile.allowed_tables}
+            if clean_table.lower() not in allowed:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Table '{clean_table}' is not in the approved table allowlist for profile '{profile_id}'.",
+                )
+
+        schema_cache: Dict[str, DatabaseSchema] = getattr(app.state, "schema_cache", {})
+        active_schema = schema_cache.get(profile_id)
+        if active_schema is None:
+            effective_caller_schema = getattr(app.state, "caller_schema", caller_schema)
+            if effective_caller_schema is not None:
+                if isinstance(effective_caller_schema, dict):
+                    active_schema = effective_caller_schema.get(profile_id)
+                elif isinstance(effective_caller_schema, DatabaseSchema):
+                    if effective_caller_schema.database_name.lower() == profile.database_name.lower():
+                        active_schema = effective_caller_schema
+
+        if active_schema is None:
+            try:
+                introspect_engine = resolved_engine_mgr.get_or_create_engine(
+                    profile_id=profile_id,
+                    caller_engine=caller_engine,
+                    mode="introspection",
+                )
+                introspector = ProfileDatabaseIntrospector(
+                    config=profile,
+                    engine=introspect_engine,
+                    factory=resolved_factory,
+                )
+                active_schema = introspector.introspect_model_facing()
+                schema_cache[profile_id] = active_schema
+            except Exception as exc:
+                sanitized = sanitize_message(str(exc))
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Schema introspection failed.",
+                )
+
+        target_meta = None
+        for t in active_schema.tables:
+            if t.table_name.lower() == clean_table.lower():
+                target_meta = t
+                break
+
+        if target_meta is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Table '{clean_table}' not found in schema for profile '{profile_id}'.",
+            )
+
+        target_table_name = target_meta.table_name
+        target_schema_name = target_meta.schema_name or profile.schema_name
+
+        effective_limit = min(max(1, limit), 5)
+        engine_type = profile.engine_type.lower()
+        col_names = [c.name for c in target_meta.columns] if target_meta.columns else []
+
+        if col_names:
+            if engine_type == "sqlite":
+                cols_sql = ", ".join(f'"{c}"' for c in col_names)
+                sql_query = f'SELECT {cols_sql} FROM "{target_table_name}" LIMIT {effective_limit}'
+            elif engine_type == "mssql":
+                cols_sql = ", ".join(f'[{c}]' for c in col_names)
+                s_name = target_schema_name or "dbo"
+                sql_query = f'SELECT TOP {effective_limit} {cols_sql} FROM [{s_name}].[{target_table_name}]'
+            elif engine_type == "postgres":
+                cols_sql = ", ".join(f'"{c}"' for c in col_names)
+                s_name = target_schema_name or "public"
+                sql_query = f'SELECT {cols_sql} FROM "{s_name}"."{target_table_name}" LIMIT {effective_limit}'
+            elif engine_type == "mysql":
+                cols_sql = ", ".join(f'`{c}`' for c in col_names)
+                s_name = target_schema_name or profile.database_name
+                sql_query = f'SELECT {cols_sql} FROM `{s_name}`.`{target_table_name}` LIMIT {effective_limit}'
+            else:
+                cols_sql = ", ".join(f'"{c}"' for c in col_names)
+                sql_query = f'SELECT {cols_sql} FROM "{target_table_name}" LIMIT {effective_limit}'
+        else:
+            if engine_type == "sqlite":
+                sql_query = f'SELECT * FROM "{target_table_name}" LIMIT {effective_limit}'
+            elif engine_type == "mssql":
+                s_name = target_schema_name or "dbo"
+                sql_query = f'SELECT TOP {effective_limit} * FROM [{s_name}].[{target_table_name}]'
+            elif engine_type == "postgres":
+                s_name = target_schema_name or "public"
+                sql_query = f'SELECT * FROM "{s_name}"."{target_table_name}" LIMIT {effective_limit}'
+            elif engine_type == "mysql":
+                s_name = target_schema_name or profile.database_name
+                sql_query = f'SELECT * FROM `{s_name}`.`{target_table_name}` LIMIT {effective_limit}'
+            else:
+                sql_query = f'SELECT * FROM "{target_table_name}" LIMIT {effective_limit}'
+
+        engine = resolved_engine_mgr.get_or_create_engine(
+            profile_id=profile_id,
+            caller_engine=caller_engine,
+            mode="execution",
+        )
+
+        try:
+            boundary = ProfileExecutionBoundary(
+                config=profile,
+                schema=active_schema,
+                engine=engine,
+                factory=resolved_factory,
+            )
+            result = boundary.execute(sql=sql_query)
+            raw_peek_rows = result.rows[:effective_limit]
+            import re
+            sensitive_pattern = re.compile(r"(?i)(password|secret|ssn|token|hash|credential|api_key)")
+            sanitized_rows = []
+            for r in raw_peek_rows:
+                row_copy = {}
+                for k, v in r.items():
+                    if sensitive_pattern.search(k):
+                        row_copy[k] = "[REDACTED]"
+                    else:
+                        row_copy[k] = v
+                sanitized_rows.append(row_copy)
+
+            return TablePeekResponse(
+                profile_id=profile_id,
+                table_name=target_table_name,
+                schema_name=target_schema_name,
+                columns=result.columns,
+                rows=sanitized_rows,
+                row_count=len(sanitized_rows),
+                execution_time_ms=result.execution_time_ms,
+            )
+        except UnsafeQueryError as exc:
+            sanitized = sanitize_message(str(exc))
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=sanitized,
+            ) from None
+        except DatabaseSecurityError as exc:
+            sanitized = sanitize_message(str(exc))
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=sanitized,
+            ) from None
+        except QueryTimeoutError as exc:
+            sanitized = sanitize_message(str(exc))
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=sanitized,
+            ) from None
+        except Exception as exc:
+            sanitized = sanitize_message(str(exc))
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=sanitized,
+            ) from None
+
+    @app.get(
+        "/agent/v1/profiles/{profile_id}/data-dictionary",
+        response_model=DataDictionaryResponse,
+        responses={
+            401: {"model": AgentErrorResponse},
+            404: {"model": AgentErrorResponse},
+            500: {"model": AgentErrorResponse},
+        },
+    )
+    def get_profile_data_dictionary(
+        profile_id: str,
+        session: Session = Depends(get_current_session),
+    ):
+        """Retrieve the plain-English data dictionary for an approved database profile.
+
+        Returns cached dictionary if present; otherwise derives instant deterministic heuristics.
+        """
+        try:
+            profile = resolved_store.get_profile(profile_id)
+        except UnknownProfileError:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Profile '{profile_id}' not found.",
+            )
+
+        cached = resolved_dictionary_store.get_dictionary(profile_id)
+        if cached is not None:
+            return cached
+
+        schema_cache: Dict[str, DatabaseSchema] = getattr(app.state, "schema_cache", {})
+        active_schema = schema_cache.get(profile_id)
+        if active_schema is None:
+            effective_caller_schema = getattr(app.state, "caller_schema", caller_schema)
+            if effective_caller_schema is not None:
+                if isinstance(effective_caller_schema, dict):
+                    active_schema = effective_caller_schema.get(profile_id)
+                elif isinstance(effective_caller_schema, DatabaseSchema):
+                    if effective_caller_schema.database_name.lower() == profile.database_name.lower():
+                        active_schema = effective_caller_schema
+
+        if active_schema is None:
+            try:
+                introspect_engine = resolved_engine_mgr.get_or_create_engine(
+                    profile_id=profile_id,
+                    caller_engine=caller_engine,
+                    mode="introspection",
+                )
+                introspector = ProfileDatabaseIntrospector(
+                    config=profile,
+                    engine=introspect_engine,
+                    factory=resolved_factory,
+                )
+                active_schema = introspector.introspect_model_facing()
+                schema_cache[profile_id] = active_schema
+            except Exception as exc:
+                sanitized = sanitize_message(str(exc))
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Schema introspection failed.",
+                )
+
+        generated = resolved_dictionary_store.generate_heuristic_dictionary(
+            profile_id=profile_id,
+            database_name=profile.database_name or profile.display_name,
+            schema=active_schema,
+        )
+        resolved_dictionary_store.save_dictionary(profile_id, generated)
+        return generated
+
+    @app.post(
+        "/agent/v1/profiles/{profile_id}/data-dictionary/generate",
+        response_model=DataDictionaryResponse,
+        responses={
+            401: {"model": AgentErrorResponse},
+            404: {"model": AgentErrorResponse},
+            500: {"model": AgentErrorResponse},
+        },
+    )
+    def generate_profile_data_dictionary(
+        profile_id: str,
+        request: Request,
+        session: Session = Depends(get_current_session),
+    ):
+        """Generate or enrich the plain-English data dictionary using AI (Gemini Flash) with offline fallback."""
+        try:
+            profile = resolved_store.get_profile(profile_id)
+        except UnknownProfileError:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Profile '{profile_id}' not found.",
+            )
+
+        schema_cache: Dict[str, DatabaseSchema] = getattr(app.state, "schema_cache", {})
+        active_schema = schema_cache.get(profile_id)
+        if active_schema is None:
+            effective_caller_schema = getattr(app.state, "caller_schema", caller_schema)
+            if effective_caller_schema is not None:
+                if isinstance(effective_caller_schema, dict):
+                    active_schema = effective_caller_schema.get(profile_id)
+                elif isinstance(effective_caller_schema, DatabaseSchema):
+                    if effective_caller_schema.database_name.lower() == profile.database_name.lower():
+                        active_schema = effective_caller_schema
+
+        if active_schema is None:
+            try:
+                introspect_engine = resolved_engine_mgr.get_or_create_engine(
+                    profile_id=profile_id,
+                    caller_engine=caller_engine,
+                    mode="introspection",
+                )
+                introspector = ProfileDatabaseIntrospector(
+                    config=profile,
+                    engine=introspect_engine,
+                    factory=resolved_factory,
+                )
+                active_schema = introspector.introspect_model_facing()
+                schema_cache[profile_id] = active_schema
+            except Exception as exc:
+                sanitized = sanitize_message(str(exc))
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Schema introspection failed.",
+                )
+
+        custom_key = request.headers.get("x-gemini-api-key")
+        result = resolved_dictionary_store.generate_ai_enriched_dictionary(
+            profile_id=profile_id,
+            database_name=profile.database_name or profile.display_name,
+            schema=active_schema,
+            gemini_api_key=custom_key,
+        )
+        return result
 
     # --------------------------------------------------------------------------
     # Production Frontend Static Serving & SPA Fallback

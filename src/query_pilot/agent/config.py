@@ -147,6 +147,14 @@ def get_default_history_file() -> Path:
     return Path.home() / ".query_pilot" / "history.json"
 
 
+def get_default_dictionaries_dir() -> Path:
+    """Resolve default location of data dictionaries directory."""
+    resolved = _get_env_path(["QUERYPILOT_DICTIONARIES_DIR"], None)
+    if resolved is not None:
+        return resolved
+    return Path.home() / ".query_pilot" / "dictionaries"
+
+
 class AgentConfig(BaseModel):
     """Configuration contract for the local-agent daemon.
 
@@ -210,6 +218,10 @@ class AgentConfig(BaseModel):
     history_file: Path = Field(
         default_factory=get_default_history_file,
         description="Path to persistent query history and favorites store.",
+    )
+    dictionaries_dir: Path = Field(
+        default_factory=get_default_dictionaries_dir,
+        description="Directory storing persistent plain-English AI data dictionaries.",
     )
     session_idle_seconds: int = Field(
         default_factory=lambda: _get_env_int(["QUERYPILOT_AGENT_SESSION_IDLE_SECONDS"], 3600),

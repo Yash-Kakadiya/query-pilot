@@ -1063,6 +1063,8 @@ def test_system_diagnostics_authenticated_returns_subsystem_audit(agent_test_set
     assert "profiles_store" in data
     assert "history_store" in data
     assert data["history_store"]["healthy"] is True
+    assert "dictionary_store" in data
+    assert data["dictionary_store"]["healthy"] is True
 
 
 def test_system_diagnostics_handles_nonexistent_history_directory(agent_test_setup, tmp_path):

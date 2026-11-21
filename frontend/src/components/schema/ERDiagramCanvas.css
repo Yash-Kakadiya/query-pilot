@@ -1,0 +1,310 @@
+.er-diagram-container {
+  position: relative;
+  width: 100%;
+  height: 520px;
+  background-color: var(--bg-surface-sunken, #0b1120);
+  background-image: radial-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+  background-size: 20px 20px;
+  border: 1px solid var(--border-color, #334155);
+  border-radius: 10px;
+  overflow: hidden;
+  user-select: none;
+  cursor: grab;
+  transition: all 0.2s ease;
+}
+
+.er-diagram-container:active {
+  cursor: grabbing;
+}
+
+.er-diagram-container.er-fullscreen {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 1100;
+  border-radius: 0;
+  border: none;
+}
+
+/* Toolbar */
+.er-toolbar {
+  position: absolute;
+  top: 1rem;
+  left: 1rem;
+  right: 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.er-toolbar-search {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  background: rgba(30, 41, 59, 0.85);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border-color, #475569);
+  border-radius: 8px;
+  padding: 0.35rem 0.75rem;
+  gap: 0.5rem;
+  width: 280px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+}
+
+.er-search-icon {
+  font-size: 0.9rem;
+  opacity: 0.7;
+}
+
+.er-search-input {
+  background: transparent;
+  border: none;
+  color: var(--text-primary, #f8fafc);
+  font-size: 0.85rem;
+  width: 100%;
+  outline: none;
+}
+
+.er-search-input::placeholder {
+  color: var(--text-muted, #94a3b8);
+}
+
+.er-search-clear {
+  background: transparent;
+  border: none;
+  color: var(--text-muted, #94a3b8);
+  cursor: pointer;
+  padding: 0 0.2rem;
+  font-size: 0.8rem;
+}
+
+.er-toolbar-actions {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  background: rgba(30, 41, 59, 0.85);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border-color, #475569);
+  border-radius: 8px;
+  padding: 0.25rem 0.4rem;
+  gap: 0.25rem;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+}
+
+.er-tool-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary, #cbd5e1);
+  padding: 0.35rem 0.55rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.er-tool-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary, #f8fafc);
+}
+
+.er-zoom-level {
+  font-size: 0.8rem;
+  font-family: ui-monospace, monospace;
+  color: var(--text-muted, #94a3b8);
+  padding: 0 0.4rem;
+}
+
+.er-fullscreen-btn {
+  border-left: 1px solid var(--border-color, #475569);
+  margin-left: 0.25rem;
+  padding-left: 0.65rem;
+  font-weight: 500;
+}
+
+/* Canvas SVG */
+.er-canvas-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Connector Paths */
+.er-relation-path-hover-target {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  cursor: pointer;
+}
+
+.er-relation-path {
+  fill: none;
+  stroke: #38bdf8;
+  stroke-width: 2;
+  opacity: 0.65;
+  transition: stroke 0.2s ease, stroke-width 0.2s ease, opacity 0.2s ease;
+}
+
+.er-relation-group.relation-hovered .er-relation-path {
+  stroke: #fbbf24;
+  stroke-width: 3.5;
+  opacity: 1;
+}
+
+.er-relation-group.relation-dimmed .er-relation-path {
+  opacity: 0.15;
+}
+
+/* Table Cards inside ForeignObject */
+.er-table-node {
+  overflow: visible;
+  transition: opacity 0.2s ease;
+}
+
+.er-table-node.node-filtered-out {
+  opacity: 0.25;
+}
+
+.er-table-node.node-hovered {
+  z-index: 50;
+}
+
+.er-table-card {
+  width: 100%;
+  background: var(--bg-surface, #1e293b);
+  border: 1px solid var(--border-color, #475569);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4);
+  cursor: move;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.er-table-card:hover {
+  border-color: #38bdf8;
+  box-shadow: 0 12px 20px -3px rgba(56, 189, 248, 0.25);
+}
+
+.er-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 0.75rem;
+  background: var(--bg-surface-elevated, #243248);
+  border-bottom: 1px solid var(--border-color, #475569);
+}
+
+.er-card-title-group {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  overflow: hidden;
+}
+
+.er-card-icon {
+  font-size: 0.95rem;
+}
+
+.er-card-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-primary, #f8fafc);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.er-card-actions {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.er-card-action-btn {
+  background: transparent;
+  border: none;
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 0.2rem 0.3rem;
+  border-radius: 4px;
+  transition: background 0.15s ease;
+  line-height: 1;
+}
+
+.er-card-action-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* Columns */
+.er-card-columns {
+  padding: 0.5rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  background: var(--bg-surface, #1e293b);
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.er-col-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  padding: 0.15rem 0;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.4);
+}
+
+.er-col-row:last-child {
+  border-bottom: none;
+}
+
+.er-col-meta-group {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  overflow: hidden;
+}
+
+.er-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 0.05rem 0.3rem;
+  border-radius: 3px;
+  line-height: 1.2;
+}
+
+.pk-badge {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.fk-badge {
+  background: rgba(56, 189, 248, 0.2);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.4);
+}
+
+.er-col-name {
+  color: var(--text-primary, #f8fafc);
+  font-family: ui-monospace, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 110px;
+}
+
+.er-col-type {
+  color: var(--text-muted, #94a3b8);
+  font-family: ui-monospace, monospace;
+  font-size: 0.75rem;
+}

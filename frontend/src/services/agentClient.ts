@@ -31,6 +31,8 @@ import {
   type ProfileListResponse,
   type RotateTokenResponse,
   type TestConnectionResponse,
+  type TablePeekResponse,
+  type DataDictionaryResponse,
   type ValidateProfileConfigRequest,
   type ValidateProfileConfigResponse,
 } from '../types/api.ts'
@@ -999,6 +1001,103 @@ export async function clearHistory(
     url,
     {
       method: 'DELETE',
+    },
+    options
+  )
+}
+
+/**
+ * Rapid exploratory peek of the first 5 rows of an approved database table.
+ */
+export async function peekTable(
+  profileId: string,
+  tableName: string,
+  limit: number = 5,
+  options?: AgentRequestOptions
+): Promise<TablePeekResponse> {
+  if (!profileId || !profileId.trim()) {
+    throw new AgentClientError({
+      message: 'Profile ID must be a non-empty string.',
+      kind: 'validation',
+    })
+  }
+  if (!tableName || !tableName.trim()) {
+    throw new AgentClientError({
+      message: 'Table name must be a non-empty string.',
+      kind: 'validation',
+    })
+  }
+
+  const encodedProfile = encodeURIComponent(profileId.trim())
+  const encodedTable = encodeURIComponent(tableName.trim())
+  const clampedLimit = Math.min(Math.max(1, limit), 5)
+  const url = resolveAgentEndpoint(`/v1/profiles/${encodedProfile}/tables/${encodedTable}/peek?limit=${clampedLimit}`)
+
+  return sendAgentRequest<TablePeekResponse>(
+    url,
+    {
+      method: 'GET',
+    },
+    options
+  )
+}
+
+/**
+ * Retrieve the plain-English business data dictionary for an approved database profile.
+ */
+export async function getDataDictionary(
+  profileId: string,
+  options?: AgentRequestOptions
+): Promise<DataDictionaryResponse> {
+  if (!profileId || !profileId.trim()) {
+    throw new AgentClientError({
+      message: 'Profile ID must be a non-empty string.',
+      kind: 'validation',
+    })
+  }
+
+  const encodedProfile = encodeURIComponent(profileId.trim())
+  const url = resolveAgentEndpoint(`/v1/profiles/${encodedProfile}/data-dictionary`)
+
+  return sendAgentRequest<DataDictionaryResponse>(
+    url,
+    {
+      method: 'GET',
+    },
+    options
+  )
+}
+
+/**
+ * Generate or enrich the plain-English business data dictionary using Gemini Flash with offline fallback.
+ */
+export async function generateDataDictionary(
+  profileId: string,
+  customGeminiKey?: string | null,
+  options?: AgentRequestOptions
+): Promise<DataDictionaryResponse> {
+  if (!profileId || !profileId.trim()) {
+    throw new AgentClientError({
+      message: 'Profile ID must be a non-empty string.',
+      kind: 'validation',
+    })
+  }
+
+  const encodedProfile = encodeURIComponent(profileId.trim())
+  const url = resolveAgentEndpoint(`/v1/profiles/${encodedProfile}/data-dictionary/generate`)
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  }
+  if (customGeminiKey && customGeminiKey.trim()) {
+    headers['X-Gemini-API-Key'] = customGeminiKey.trim()
+  }
+
+  return sendAgentRequest<DataDictionaryResponse>(
+    url,
+    {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({}),
     },
     options
   )

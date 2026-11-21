@@ -29,6 +29,7 @@ export type DiagnosticCheckId =
   | 'storage_integrity'
   | 'data_export_engine'
   | 'history_persistence'
+  | 'visual_schema_and_dictionary'
 
 export type DiagnosticStatus =
   | 'pending'

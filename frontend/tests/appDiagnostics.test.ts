@@ -40,8 +40,8 @@ const MOCK_PROFILE: ProfileSummary = {
 }
 
 test('QueryPilot Diagnostics - Initial Registry & Contracts', async (t) => {
-  await t.test('1. Defines 12 canonical diagnostic checks across 5 core categories', () => {
-    assert.strictEqual(INITIAL_DIAGNOSTIC_CHECKS.length, 12)
+  await t.test('1. Defines 13 canonical diagnostic checks across 5 core categories', () => {
+    assert.strictEqual(INITIAL_DIAGNOSTIC_CHECKS.length, 13)
     const ids = INITIAL_DIAGNOSTIC_CHECKS.map((c) => c.id)
     assert.ok(ids.includes('daemon_connectivity'))
     assert.ok(ids.includes('system_subsystems'))
@@ -55,6 +55,7 @@ test('QueryPilot Diagnostics - Initial Registry & Contracts', async (t) => {
     assert.ok(ids.includes('storage_integrity'))
     assert.ok(ids.includes('data_export_engine'))
     assert.ok(ids.includes('history_persistence'))
+    assert.ok(ids.includes('visual_schema_and_dictionary'))
   })
 
   await t.test('2. Checks cover core daemon, database, safety, AI, and client runtime categories', () => {
@@ -201,9 +202,9 @@ test('QueryPilot Diagnostics - End-to-End Suite Execution', async (t) => {
     }
 
     const report = await runAppDiagnostics(options)
-    assert.strictEqual(report.total, 12)
+    assert.strictEqual(report.total, 13)
     assert.strictEqual(report.failed, 0)
-    assert.strictEqual(report.passed, 12)
+    assert.strictEqual(report.passed, 13)
     assert.strictEqual(report.successRate, 100)
     assert.strictEqual(report.overallStatus, 'healthy')
     assert.ok(report.summary.includes('100% operational'))

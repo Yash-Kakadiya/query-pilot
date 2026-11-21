@@ -464,6 +464,46 @@ export interface SynthesizeAnswerResponse {
   request_id: string
 }
 
+// =============================================================================
+// Phase 4 (Option 3): Visual Schema Explorer, Table Peek & Data Dictionary Models
+// =============================================================================
+
+export interface TablePeekResponse {
+  profile_id: string
+  table_name: string
+  schema_name?: string | null
+  columns: string[]
+  rows: Record<string, unknown>[]
+  row_count: number
+  execution_time_ms: number
+}
+
+export interface ColumnDictionaryEntry {
+  name: string
+  business_name: string
+  description: string
+  data_type?: string | null
+  is_primary_key?: boolean
+  is_foreign_key?: boolean
+  foreign_key_target?: string | null
+}
+
+export interface TableDictionaryEntry {
+  table_name: string
+  business_name: string
+  description: string
+  suggested_questions?: string[]
+  columns: Record<string, ColumnDictionaryEntry>
+}
+
+export interface DataDictionaryResponse {
+  profile_id: string
+  database_name: string
+  source: 'ai_gemini_flash' | 'deterministic_heuristic' | string
+  generated_at: string
+  tables: Record<string, TableDictionaryEntry>
+}
+
 // Re-export pure schema projection helper
 export {
   projectToModelFacingSchema,

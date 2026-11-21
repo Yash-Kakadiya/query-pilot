@@ -619,3 +619,60 @@ class HistoryDeleteResponse(BaseModel):
     message: str
 
 
+# ==============================================================================
+# Phase 4 (Option 3): Visual Schema Explorer, Table Peek & Data Dictionary Models
+# ==============================================================================
+
+class TablePeekResponse(BaseModel):
+    """Response returned by GET /agent/v1/profiles/{profile_id}/tables/{table_name}/peek."""
+
+    model_config = {"extra": "forbid"}
+
+    profile_id: str = Field(description="Connection profile identifier.")
+    table_name: str = Field(description="Name of the peeked table.")
+    schema_name: Optional[str] = Field(default=None, description="Schema/namespace of the table.")
+    columns: List[str] = Field(description="List of column names returned.")
+    rows: List[Dict[str, Any]] = Field(description="List of row dictionaries (max 5).")
+    row_count: int = Field(description="Total rows returned in preview (0 to 5).")
+    execution_time_ms: float = Field(description="Query execution latency in milliseconds.")
+
+
+class ColumnDictionaryEntry(BaseModel):
+    """Business and semantic metadata for a single column."""
+
+    model_config = {"extra": "forbid"}
+
+    name: str = Field(..., max_length=128)
+    business_name: str = Field(..., max_length=256)
+    description: str = Field(..., max_length=2000)
+    data_type: Optional[str] = Field(None, max_length=64)
+    is_primary_key: bool = Field(default=False)
+    is_foreign_key: bool = Field(default=False)
+    foreign_key_target: Optional[str] = Field(None, max_length=256)
+
+
+class TableDictionaryEntry(BaseModel):
+    """Business and semantic metadata for a single table."""
+
+    model_config = {"extra": "forbid"}
+
+    table_name: str = Field(..., max_length=128)
+    business_name: str = Field(..., max_length=256)
+    description: str = Field(..., max_length=3000)
+    suggested_questions: List[str] = Field(default_factory=list, max_length=10)
+    columns: Dict[str, ColumnDictionaryEntry] = Field(default_factory=dict)
+
+
+class DataDictionaryResponse(BaseModel):
+    """Response model for database data dictionary."""
+
+    model_config = {"extra": "forbid"}
+
+    profile_id: str = Field(..., max_length=128)
+    database_name: str = Field(..., max_length=128)
+    source: str = Field(..., pattern="^(ai_gemini_flash|deterministic_heuristic)$")
+    generated_at: str = Field(..., max_length=64)
+    tables: Dict[str, TableDictionaryEntry] = Field(default_factory=dict)
+
+
+

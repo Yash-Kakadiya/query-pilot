@@ -595,6 +595,7 @@ export function App({ agentCoordinator, sqlCoordinator, queryExecCoordinator, ai
                 }}
                 connectionTestStatus={agentSession.connectionTestStatus}
                 connectionTestResult={agentSession.connectionTestResult}
+                onAskQuestion={(prompt) => sqlGenCoordinator.setQuestion(prompt)}
               />
             </section>
           )}

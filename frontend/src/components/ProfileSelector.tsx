@@ -6,6 +6,9 @@ import type {
   TestConnectionResponse,
 } from '../types/api.ts'
 import type { SchemaIntrospectionStatus } from '../services/agentSession.ts'
+import { ERDiagramCanvas } from './schema/ERDiagramCanvas.tsx'
+import { TablePeekModal } from './schema/TablePeekModal.tsx'
+import { DataDictionaryDrawer } from './schema/DataDictionaryDrawer.tsx'
 import './ProfileSelector.css'
 
 export interface ProfileSelectorProps {
@@ -23,6 +26,7 @@ export interface ProfileSelectorProps {
   onDeleteProfile?: (profileId: string) => Promise<void> | void
   connectionTestStatus?: 'idle' | 'testing' | 'success' | 'failed'
   connectionTestResult?: TestConnectionResponse | null
+  onAskQuestion?: (prompt: string) => void
 }
 
 import { getProfileEngine } from '../utils/profileUtils.ts'
@@ -41,6 +45,7 @@ export function ProfileSelector({
   selectedProfile,
   schemaStatus,
   schemaContext,
+  rawSchema,
   schemaError,
   onSelectProfile,
   onRetrySchema,
@@ -49,6 +54,7 @@ export function ProfileSelector({
   onDeleteProfile,
   connectionTestStatus = 'idle',
   connectionTestResult,
+  onAskQuestion,
 }: ProfileSelectorProps) {
   const hasProfiles = profiles.length > 0
   const isSchemaLoading = schemaStatus === 'loading'
@@ -56,6 +62,12 @@ export function ProfileSelector({
   const [isConfirmingDelete, setIsConfirmingDelete] = useState<boolean>(false)
   const [isDeleting, setIsDeleting] = useState<boolean>(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  // Visual Schema Explorer & Data Dictionary State
+  const [schemaViewMode, setSchemaViewMode] = useState<'tree' | 'er'>('tree')
+  const [peekTableInfo, setPeekTableInfo] = useState<{ tableName: string; schemaName?: string } | null>(null)
+  const [isDictionaryOpen, setIsDictionaryOpen] = useState<boolean>(false)
+  const [dictionaryTargetTable, setDictionaryTargetTable] = useState<string | undefined>(undefined)
 
   return (
     <div
@@ -305,26 +317,97 @@ export function ProfileSelector({
           {schemaStatus === 'loaded' && schemaContext && (
             <div className="schema-status schema-status-loaded" role="status">
               <div className="schema-summary-header">
-                <span className="schema-check-icon" aria-hidden="true">✓</span>
-                <span className="schema-summary-text">
-                  Schema Projected: <strong>{schemaContext.database_name}</strong> &bull;{' '}
-                  {schemaContext.tables.length} table
-                  {schemaContext.tables.length === 1 ? '' : 's'} available for querying
-                </span>
+                <div className="schema-summary-left">
+                  <span className="schema-check-icon" aria-hidden="true">✓</span>
+                  <span className="schema-summary-text">
+                    Schema Projected: <strong>{schemaContext.database_name}</strong> &bull;{' '}
+                    {schemaContext.tables.length} table
+                    {schemaContext.tables.length === 1 ? '' : 's'} available
+                  </span>
+                </div>
+
+                <div className="schema-summary-actions">
+                  <div className="schema-view-toggle-pills" role="radiogroup" aria-label="Schema visualization mode">
+                    <button
+                      type="button"
+                      className={`schema-toggle-pill ${schemaViewMode === 'tree' ? 'pill-active' : ''}`}
+                      onClick={() => setSchemaViewMode('tree')}
+                      aria-checked={schemaViewMode === 'tree'}
+                      role="radio"
+                    >
+                      🗂️ Tree View
+                    </button>
+                    <button
+                      type="button"
+                      className={`schema-toggle-pill ${schemaViewMode === 'er' ? 'pill-active' : ''}`}
+                      onClick={() => setSchemaViewMode('er')}
+                      aria-checked={schemaViewMode === 'er'}
+                      role="radio"
+                    >
+                      🕸️ ER Graph
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    className="schema-action-dict-btn"
+                    onClick={() => {
+                      setDictionaryTargetTable(undefined)
+                      setIsDictionaryOpen(true)
+                    }}
+                    title="Open Plain-English AI Data Dictionary"
+                  >
+                    📖 AI Dictionary
+                  </button>
+                </div>
               </div>
 
-              {schemaContext.tables.length > 0 && (
-                <div className="schema-table-chips" aria-label="Available Tables">
-                  {schemaContext.tables.map((table) => (
-                    <span
-                      key={table.table_name}
-                      className="schema-table-chip"
-                      title={`${table.columns.length} columns`}
-                    >
-                      {table.table_name}{' '}
-                      <small>({table.columns.length} cols)</small>
-                    </span>
-                  ))}
+              {schemaViewMode === 'tree' ? (
+                schemaContext.tables.length > 0 && (
+                  <div className="schema-table-chips" aria-label="Available Tables">
+                    {schemaContext.tables.map((table) => (
+                      <div key={table.table_name} className="schema-table-chip">
+                        <span className="schema-chip-label" title={`${table.columns.length} columns`}>
+                          {table.table_name} <small>({table.columns.length} cols)</small>
+                        </span>
+                        <div className="schema-chip-actions">
+                          <button
+                            type="button"
+                            className="schema-chip-btn"
+                            onClick={() => setPeekTableInfo({ tableName: table.table_name, schemaName: table.schema_name })}
+                            title={`Peek first 5 rows of ${table.table_name}`}
+                            aria-label={`Peek rows of ${table.table_name}`}
+                          >
+                            👁️
+                          </button>
+                          <button
+                            type="button"
+                            className="schema-chip-btn"
+                            onClick={() => {
+                              setDictionaryTargetTable(table.table_name)
+                              setIsDictionaryOpen(true)
+                            }}
+                            title={`Data dictionary for ${table.table_name}`}
+                            aria-label={`Inspect dictionary for ${table.table_name}`}
+                          >
+                            📖
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )
+              ) : (
+                <div className="schema-er-canvas-wrapper">
+                  <ERDiagramCanvas
+                    tables={rawSchema?.tables || []}
+                    databaseName={selectedProfile?.database_name || schemaContext.database_name}
+                    onPeekTable={(tbl, sch) => setPeekTableInfo({ tableName: tbl, schemaName: sch })}
+                    onInspectTable={(tbl) => {
+                      setDictionaryTargetTable(tbl)
+                      setIsDictionaryOpen(true)
+                    }}
+                  />
                 </div>
               )}
             </div>
@@ -348,6 +431,30 @@ export function ProfileSelector({
             </div>
           )}
         </div>
+      )}
+
+      {/* 1-Click Peek Table Modal */}
+      {peekTableInfo && selectedProfileId && (
+        <TablePeekModal
+          isOpen={!!peekTableInfo}
+          onClose={() => setPeekTableInfo(null)}
+          profileId={selectedProfileId}
+          tableName={peekTableInfo.tableName}
+          schemaName={peekTableInfo.schemaName}
+          onAskQuestion={onAskQuestion}
+        />
+      )}
+
+      {/* Plain-English AI Data Dictionary Drawer */}
+      {isDictionaryOpen && selectedProfileId && (
+        <DataDictionaryDrawer
+          isOpen={isDictionaryOpen}
+          onClose={() => setIsDictionaryOpen(false)}
+          profileId={selectedProfileId}
+          databaseName={selectedProfile?.database_name || schemaContext?.database_name}
+          selectedTable={dictionaryTargetTable}
+          onAskQuestion={onAskQuestion}
+        />
       )}
     </div>
   )
