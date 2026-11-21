@@ -64,13 +64,17 @@ if ($Dev -and (-not (Test-PortAvailable 5173))) {
 
 # 4. Check frontend production assets if running in standard (non-Dev) mode
 $distIndex = Join-Path $ProjectRoot "frontend\dist\index.html"
-if ((-not $Dev) -and (-not (Test-Path $distIndex))) {
-    Write-Host "Frontend production assets not found in frontend/dist/. Building assets..." -ForegroundColor Yellow
-    npm run build --prefix frontend
+if (-not $Dev) {
     if (-not (Test-Path $distIndex)) {
-        Write-Error "Failed to build frontend static assets. Please run 'npm install' and 'npm run build' inside 'frontend/'."
-        exit 1
+        Write-Host "Frontend production assets not found in frontend/dist/. Building assets..." -ForegroundColor Yellow
+        npm run build --prefix frontend
+        if (-not (Test-Path $distIndex)) {
+            Write-Error "Failed to build frontend static assets. Please run 'npm install' and 'npm run build' inside 'frontend/'."
+            exit 1
+        }
     }
+    # Sync production assets across local agent and desktop staging locations and clear WebView2 cache
+    & "$PythonExe" (Join-Path $ProjectRoot "scripts\deploy_assets.py")
 }
 
 $trackedPids = @{}

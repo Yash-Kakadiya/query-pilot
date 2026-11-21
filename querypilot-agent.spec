@@ -66,6 +66,8 @@ hiddenimports = [
     "query_pilot.agent.models",
     "query_pilot.agent.api_router",
     "query_pilot.agent.engine_manager",
+    "query_pilot.agent.history_store",
+    "query_pilot.agent.dictionary_store",
     "query_pilot.db",
     "query_pilot.db.connection",
     "query_pilot.db.profile",
