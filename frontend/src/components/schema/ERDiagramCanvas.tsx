@@ -27,6 +27,123 @@ const HEADER_HEIGHT = 42
 const ROW_HEIGHT = 26
 const PADDING = 12
 
+/**
+ * Computes a hierarchical entity layout based on foreign key relationships:
+ * - Layer 0 (Top): Primary / master root tables (referenced by other tables, minimal outgoing FKs)
+ * - Layer 1 (Middle): Entity tables referencing root tables
+ * - Layer 2+ (Bottom): Junction, transaction, and detail tables
+ * - Disconnected tables are positioned alongside root entities
+ */
+export function computeHierarchicalLayout(
+  tables: AgentTableMetadata[]
+): Record<string, TablePosition> {
+  if (!tables || tables.length === 0) return {}
+
+  const tableNames = new Set(tables.map((t) => t.table_name.toLowerCase()))
+
+  // Map each table to its parents (tables it references via FK)
+  // and children (tables that reference it via FK)
+  const parentsOf = new Map<string, Set<string>>()
+  const childrenOf = new Map<string, Set<string>>()
+
+  tables.forEach((t) => {
+    const name = t.table_name.toLowerCase()
+    parentsOf.set(name, new Set())
+    childrenOf.set(name, new Set())
+  })
+
+  tables.forEach((table) => {
+    const child = table.table_name.toLowerCase()
+    const fks = table.foreign_keys || []
+    fks.forEach((fk) => {
+      const parent = fk.target_table?.toLowerCase()
+      // Exclude self-references and non-existent tables
+      if (parent && parent !== child && tableNames.has(parent)) {
+        parentsOf.get(child)?.add(parent)
+        childrenOf.get(parent)?.add(child)
+      }
+    })
+  })
+
+  // Calculate rank/layer for each table using memoized recursion with cycle detection
+  const ranks = new Map<string, number>()
+  const visiting = new Set<string>()
+
+  function computeRank(name: string): number {
+    if (ranks.has(name)) return ranks.get(name)!
+    if (visiting.has(name)) return 0 // Cycle detected, break cycle
+    visiting.add(name)
+
+    const parents = parentsOf.get(name)
+    let maxParentRank = -1
+    if (parents && parents.size > 0) {
+      parents.forEach((p) => {
+        const r = computeRank(p)
+        if (r > maxParentRank) {
+          maxParentRank = r
+        }
+      })
+    }
+
+    visiting.delete(name)
+    const rank = maxParentRank + 1
+    ranks.set(name, rank)
+    return rank
+  }
+
+  tables.forEach((t) => computeRank(t.table_name.toLowerCase()))
+
+  // Group tables by layer rank
+  const layers = new Map<number, AgentTableMetadata[]>()
+  tables.forEach((t) => {
+    const rank = ranks.get(t.table_name.toLowerCase()) || 0
+    if (!layers.has(rank)) {
+      layers.set(rank, [])
+    }
+    layers.get(rank)!.push(t)
+  })
+
+  // Sort tables within each layer: tables with more dependents (children) first
+  layers.forEach((tableList) => {
+    tableList.sort((a, b) => {
+      const aChildCount = childrenOf.get(a.table_name.toLowerCase())?.size || 0
+      const bChildCount = childrenOf.get(b.table_name.toLowerCase())?.size || 0
+      if (bChildCount !== aChildCount) return bChildCount - aChildCount
+      return a.table_name.localeCompare(b.table_name)
+    })
+  })
+
+  // Layout geometry constants
+  const positions: Record<string, TablePosition> = {}
+  const X_GAP = 80
+  const Y_GAP = 90
+
+  const sortedRanks = Array.from(layers.keys()).sort((a, b) => a - b)
+  let currentY = 50
+
+  sortedRanks.forEach((rank) => {
+    const layerTables = layers.get(rank)!
+    let maxLayerHeight = 0
+
+    layerTables.forEach((table, colIdx) => {
+      const colCount = Math.min(table.columns.length, 12)
+      const nodeHeight = HEADER_HEIGHT + PADDING * 2 + colCount * ROW_HEIGHT
+      if (nodeHeight > maxLayerHeight) {
+        maxLayerHeight = nodeHeight
+      }
+
+      positions[table.table_name] = {
+        x: 50 + colIdx * (TABLE_WIDTH + X_GAP),
+        y: currentY,
+      }
+    })
+
+    currentY += maxLayerHeight + Y_GAP
+  })
+
+  return positions
+}
+
 export function ERDiagramCanvas({
   tables,
   databaseName = 'Database',
@@ -52,26 +169,10 @@ export function ERDiagramCanvas({
   const [searchQuery, setSearchQuery] = useState<string>('')
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false)
 
-  // Initialize deterministic layout based on tables count
+  // Initialize hierarchical layout based on database foreign key relationships
   useEffect(() => {
     if (!tables || tables.length === 0) return
-
-    setPositions((prev) => {
-      const updated: Record<string, TablePosition> = { ...prev }
-      const colsPerRow = Math.max(2, Math.ceil(Math.sqrt(tables.length * 1.5)))
-
-      tables.forEach((table, idx) => {
-        if (!updated[table.table_name]) {
-          const col = idx % colsPerRow
-          const row = Math.floor(idx / colsPerRow)
-          updated[table.table_name] = {
-            x: 50 + col * (TABLE_WIDTH + 80),
-            y: 50 + row * 320,
-          }
-        }
-      })
-      return updated
-    })
+    setPositions(computeHierarchicalLayout(tables))
   }, [tables])
 
   // Extract all Foreign Key relationships across tables
@@ -172,6 +273,7 @@ export function ERDiagramCanvas({
   const handleResetView = () => {
     setZoom(0.9)
     setPan({ x: 40, y: 40 })
+    setPositions(computeHierarchicalLayout(tables))
   }
   const handleFitToScreen = () => {
     if (tables.length === 0) return

@@ -366,34 +366,18 @@ export function ProfileSelector({
                 schemaContext.tables.length > 0 && (
                   <div className="schema-table-chips" aria-label="Available Tables">
                     {schemaContext.tables.map((table) => (
-                      <div key={table.table_name} className="schema-table-chip">
-                        <span className="schema-chip-label" title={`${table.columns.length} columns`}>
+                      <button
+                        key={table.table_name}
+                        type="button"
+                        className="schema-table-chip"
+                        onClick={() => setPeekTableInfo({ tableName: table.table_name, schemaName: table.schema_name })}
+                        title={`Click to peek first 5 rows of ${table.table_name}`}
+                        aria-label={`Peek first 5 rows of ${table.table_name}`}
+                      >
+                        <span className="schema-chip-label">
                           {table.table_name} <small>({table.columns.length} cols)</small>
                         </span>
-                        <div className="schema-chip-actions">
-                          <button
-                            type="button"
-                            className="schema-chip-btn"
-                            onClick={() => setPeekTableInfo({ tableName: table.table_name, schemaName: table.schema_name })}
-                            title={`Peek first 5 rows of ${table.table_name}`}
-                            aria-label={`Peek rows of ${table.table_name}`}
-                          >
-                            👁️
-                          </button>
-                          <button
-                            type="button"
-                            className="schema-chip-btn"
-                            onClick={() => {
-                              setDictionaryTargetTable(table.table_name)
-                              setIsDictionaryOpen(true)
-                            }}
-                            title={`Data dictionary for ${table.table_name}`}
-                            aria-label={`Inspect dictionary for ${table.table_name}`}
-                          >
-                            📖
-                          </button>
-                        </div>
-                      </div>
+                      </button>
                     ))}
                   </div>
                 )

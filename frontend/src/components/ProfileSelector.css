@@ -286,7 +286,7 @@
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
-  padding: 0.25rem 0.5rem;
+  padding: 0.3rem 0.65rem;
   font-family: var(--font-mono, monospace);
   font-size: 0.78rem;
   font-weight: 600;
@@ -294,6 +294,21 @@
   border: 1px solid var(--border-color, #cbd5e1);
   border-radius: 6px;
   color: var(--text-heading, #0f172a);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.schema-table-chip:hover {
+  background: var(--bg-surface-elevated, #f1f5f9);
+  border-color: #3b82f6;
+  color: #2563eb;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.06);
+}
+
+.schema-table-chip:active {
+  transform: translateY(0);
 }
 
 .schema-chip-label {

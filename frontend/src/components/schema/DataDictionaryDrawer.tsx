@@ -3,6 +3,7 @@ import {
   fetchProfileDataDictionary,
   enrichProfileDataDictionary,
 } from '../../services/dataDictionary.ts'
+import { getStoredGeminiKey } from '../../services/geminiKeyStorage.ts'
 import type { DataDictionaryResponse } from '../../types/api.ts'
 import './DataDictionaryDrawer.css'
 
@@ -72,7 +73,8 @@ export function DataDictionaryDrawer({
     try {
       setEnriching(true)
       setError(null)
-      const enriched = await enrichProfileDataDictionary(profileId)
+      const storedKey = getStoredGeminiKey()
+      const enriched = await enrichProfileDataDictionary(profileId, storedKey)
       setDictionary(enriched)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'AI enrichment failed.')
@@ -172,6 +174,15 @@ export function DataDictionaryDrawer({
             <div className="dict-loading-state" role="status">
               <span className="dict-spinner" aria-hidden="true" />
               <span>Analyzing database semantics and building dictionary...</span>
+            </div>
+          )}
+
+          {enriching && (
+            <div className="dict-enriching-banner" role="status">
+              <span className="dict-spinner" aria-hidden="true" />
+              <span>
+                ✨ Synthesizing plain-English business definitions and suggested questions with Google Gemini Flash... (this takes ~5-15s)
+              </span>
             </div>
           )}
 

@@ -9,7 +9,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1050;
+  z-index: 2200;
   padding: 1.5rem;
 }
 
@@ -146,6 +146,20 @@
   flex: 1;
   overflow: hidden;
   display: flex;
+  flex-direction: column;
+}
+
+.dict-enriching-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: rgba(99, 102, 241, 0.15);
+  border-bottom: 1px solid rgba(99, 102, 241, 0.3);
+  padding: 0.65rem 1.25rem;
+  color: #a5b4fc;
+  font-size: 0.825rem;
+  font-weight: 500;
+  animation: fadeIn 0.2s ease;
 }
 
 .dict-loading-state {
