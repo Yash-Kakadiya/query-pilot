@@ -323,6 +323,91 @@
   background: var(--primary-hover, #1d4ed8);
 }
 
+/* Developer Profile integration in Settings */
+.settings-about-dev-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 0.65rem;
+  padding: 0.85rem 1rem;
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.08), rgba(99, 102, 241, 0.08));
+  border: 1px solid rgba(37, 99, 235, 0.2);
+  border-radius: var(--radius-sm, 8px);
+}
+
+.settings-about-dev-info {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.settings-about-dev-avatar {
+  font-size: 1.5rem;
+  line-height: 1;
+}
+
+.settings-about-dev-texts {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.settings-about-dev-title {
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--text-heading, #0f172a);
+}
+
+.settings-about-dev-subtitle {
+  font-size: 0.75rem;
+  color: var(--text-muted, #64748b);
+}
+
+.settings-about-dev-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.85rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #ffffff;
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  border: 1px solid #1d4ed8;
+  border-radius: var(--radius-sm, 6px);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.settings-about-dev-btn:hover {
+  background: linear-gradient(135deg, #1d4ed8, #1e40af);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25);
+}
+
+.settings-footer-about-dev-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.45rem 0.85rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-heading, #0f172a);
+  background: var(--pill-bg, #f1f5f9);
+  border: 1px solid var(--border-color, #cbd5e1);
+  border-radius: var(--radius-sm, 8px);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  margin-right: auto;
+}
+
+.settings-footer-about-dev-btn:hover {
+  background: var(--hover-bg, #e2e8f0);
+  border-color: #94a3b8;
+  color: var(--primary, #2563eb);
+}
+
 /* Floating Settings Trigger Button (Bottom-Left) */
 .settings-bottom-left-trigger {
   position: fixed;
@@ -791,6 +876,32 @@
   .settings-bottom-left-trigger:hover {
     background: #334155;
     border-color: #64748b;
+  }
+
+  /* Dark Mode Developer Callouts */
+  .settings-about-dev-banner {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.12), rgba(99, 102, 241, 0.12));
+    border-color: rgba(59, 130, 246, 0.3);
+  }
+
+  .settings-about-dev-title {
+    color: #f8fafc;
+  }
+
+  .settings-about-dev-subtitle {
+    color: #94a3b8;
+  }
+
+  .settings-footer-about-dev-btn {
+    background: #1e293b;
+    border-color: #334155;
+    color: #cbd5e1;
+  }
+
+  .settings-footer-about-dev-btn:hover {
+    background: #334155;
+    border-color: #475569;
+    color: #ffffff;
   }
 
   /* Dark Mode Diagnostics */

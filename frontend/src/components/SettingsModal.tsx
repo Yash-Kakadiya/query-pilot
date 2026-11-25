@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { getStoredGeminiKey, setStoredGeminiKey } from '../services/geminiKeyStorage.ts'
 import { openExternalUrl } from '../services/systemBrowser.ts'
 import { runAppDiagnostics } from '../services/appDiagnostics.ts'
+import { AboutDeveloperModal } from './AboutDeveloperModal.tsx'
 import type { ProfileSummary } from '../types/api.ts'
 import type { DiagnosticReport } from '../types/diagnostics.ts'
 import './SettingsModal.css'
@@ -43,6 +44,9 @@ export function SettingsModal({
     }
   })
   const [savedNotification, setSavedNotification] = useState<boolean>(false)
+
+  // About Developer modal state
+  const [isAboutDevOpen, setIsAboutDevOpen] = useState<boolean>(false)
 
   // System Diagnostics state
   const [diagReport, setDiagReport] = useState<DiagnosticReport | null>(null)
@@ -111,9 +115,10 @@ export function SettingsModal({
   const hasCustomKey = Boolean(apiKey.trim())
 
   return (
-    <div className="settings-backdrop" onClick={onClose} role="dialog" aria-modal="true" aria-label="QueryPilot Settings">
-      <div className="settings-dialog" onClick={(e) => e.stopPropagation()}>
-        <div className="settings-header">
+    <>
+      <div className="settings-backdrop" onClick={onClose} role="dialog" aria-modal="true" aria-label="QueryPilot Settings">
+        <div className="settings-dialog" onClick={(e) => e.stopPropagation()}>
+          <div className="settings-header">
           <div className="settings-header-title">
             <span className="settings-header-icon" aria-hidden="true">⚙️</span>
             <h2 className="settings-title">Application Settings</h2>
@@ -273,6 +278,23 @@ export function SettingsModal({
                 <span className="settings-info-val">SQLite &bull; PostgreSQL &bull; MySQL &bull; SQL Server</span>
               </div>
             </div>
+
+            <div className="settings-about-dev-banner">
+              <div className="settings-about-dev-info">
+                <span className="settings-about-dev-avatar" aria-hidden="true">👨‍💻</span>
+                <div className="settings-about-dev-texts">
+                  <span className="settings-about-dev-title">Developer & Lead Architect</span>
+                  <span className="settings-about-dev-subtitle">Profile, tech stack & contact links</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="settings-about-dev-btn"
+                onClick={() => setIsAboutDevOpen(true)}
+              >
+                About Developer ↗
+              </button>
+            </div>
           </div>
 
           {/* Section 4: System Health & Diagnostic Suite */}
@@ -383,6 +405,14 @@ export function SettingsModal({
         </div>
 
         <div className="settings-footer">
+          <button
+            type="button"
+            className="settings-footer-about-dev-btn"
+            onClick={() => setIsAboutDevOpen(true)}
+            title="View Developer Profile & Credentials"
+          >
+            👨‍💻 About Developer
+          </button>
           {savedNotification && (
             <span className="settings-save-success">✓ Settings Saved!</span>
           )}
@@ -395,5 +425,10 @@ export function SettingsModal({
         </div>
       </div>
     </div>
+    <AboutDeveloperModal
+      isOpen={isAboutDevOpen}
+      onClose={() => setIsAboutDevOpen(false)}
+    />
+  </>
   )
 }
