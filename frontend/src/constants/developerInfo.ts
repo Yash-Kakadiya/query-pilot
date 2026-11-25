@@ -35,7 +35,7 @@ export interface DeveloperConfig {
 
 export const DEVELOPER_INFO: DeveloperConfig = {
   name: "Yash",
-  title: "Lead AI & Database Systems Developer",
+  title: "AI & Database Systems Developer",
   tagline: "Architecting autonomous agents, intelligent database copilots, and high-performance desktop applications.",
   bio: [
     "Creator and lead developer of QueryPilot — a privacy-first AI database copilot enabling natural language SQL queries with local AST guardrails and multi-database support.",
@@ -43,7 +43,6 @@ export const DEVELOPER_INFO: DeveloperConfig = {
   ],
   location: "India",
   skills: [
-    "TypeScript",
     "React",
     "Python",
     "FastAPI",
@@ -55,33 +54,34 @@ export const DEVELOPER_INFO: DeveloperConfig = {
     "Google Gemini API",
     "SQLGlot / ASTs",
     "Database Engineering",
+    "TypeScript",
   ],
   socialLinks: [
     {
       id: "github",
       label: "GitHub",
-      url: "https://github.com",
-      icon: "🐙",
+      url: "https://github.com/yash-kakadiya",
+      icon: "🐱",
       description: "Open-source projects & code",
     },
     {
       id: "linkedin",
       label: "LinkedIn",
-      url: "https://linkedin.com",
+      url: "https://linkedin.com/in/yash-kakadiya-",
       icon: "💼",
       description: "Professional network & articles",
     },
     {
       id: "portfolio",
       label: "Portfolio",
-      url: "https://github.com",
+      url: "https://yashkakadiya.dev/",
       icon: "🌐",
       description: "Personal website & showcase",
     },
     {
       id: "email",
       label: "Email",
-      url: "mailto:developer@querypilot.local",
+      url: "mailto:yash.kakadiya.1125@gmail.com",
       icon: "✉️",
       description: "Direct contact & feedback",
     },
