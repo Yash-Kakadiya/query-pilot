@@ -9,6 +9,7 @@ export interface AboutDeveloperModalProps {
 }
 
 export function AboutDeveloperModal({ isOpen, onClose }: AboutDeveloperModalProps) {
+  const [cacheBuster] = useState<number>(() => Date.now())
   const [gifLoaded, setGifLoaded] = useState<boolean>(false)
   const [gifError, setGifError] = useState<boolean>(false)
 
@@ -26,7 +27,6 @@ export function AboutDeveloperModal({ isOpen, onClose }: AboutDeveloperModalProp
   if (!isOpen) return null
 
   // Resolve GIF URL dynamically with Vite base path (e.g. /app/developer.gif) and cache-buster
-  const [cacheBuster] = useState<number>(() => Date.now())
   const rawBaseUrl = import.meta.env.BASE_URL || '/'
   const normalizedBase = rawBaseUrl.endsWith('/') ? rawBaseUrl : `${rawBaseUrl}/`
   const gifUrl = `${normalizedBase}${DEVELOPER_INFO.gif.filename}?t=${cacheBuster}`

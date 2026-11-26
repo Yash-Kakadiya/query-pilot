@@ -1,7 +1,7 @@
-﻿# QueryPilot Application Build & Asset Deployment Script
+# QueryPilot Application Build & Asset Deployment Script
 # Run this script whenever you update frontend code, constants (developerInfo.ts), or public assets (developer.gif).
 #
-# Examples:
+# Powershell:
 #   .\build-app.ps1          # Standard: Builds frontend, deploys assets to all targets & clears cache
 #   .\build-app.ps1 -Run     # Builds, deploys assets, and immediately launches QueryPilot Desktop
 #   .\build-app.ps1 -Full    # Full: Builds frontend, regenerates PyInstaller sidecar + Tauri binary & deploys
