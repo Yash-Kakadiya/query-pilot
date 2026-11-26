@@ -66,9 +66,9 @@ export function AboutDeveloperModal({ isOpen, onClose }: AboutDeveloperModalProp
 
         {/* Modal Body */}
         <div className="about-dev-body">
-          {/* Hero Section: GIF Display or Fallback */}
+          {/* Hero Section: Circular Avatar Display or Fallback */}
           <div className="about-dev-hero">
-            <div className="about-dev-media-frame">
+            <div className="about-dev-avatar-frame">
               {!gifError ? (
                 <>
                   <img
@@ -81,26 +81,26 @@ export function AboutDeveloperModal({ isOpen, onClose }: AboutDeveloperModalProp
                   {!gifLoaded && (
                     <div className="about-dev-media-placeholder">
                       <span className="about-dev-spinner" aria-hidden="true" />
-                      <span>Loading animation...</span>
                     </div>
                   )}
                 </>
               ) : (
-                <div className="about-dev-media-fallback">
-                  <div className="about-dev-avatar-circle">
-                    <span className="about-dev-avatar-text">
-                      {DEVELOPER_INFO.name.slice(0, 2).toUpperCase()}
-                    </span>
-                  </div>
-                  <div className="about-dev-gif-tip">
-                    <span className="about-dev-tip-icon">💡</span>
-                    <span>
-                      Place your GIF at <code>frontend/public/{DEVELOPER_INFO.gif.filename}</code> to display your custom animation here!
-                    </span>
-                  </div>
+                <div className="about-dev-avatar-circle">
+                  <span className="about-dev-avatar-text">
+                    {DEVELOPER_INFO.name.slice(0, 2).toUpperCase()}
+                  </span>
                 </div>
               )}
             </div>
+
+            {gifError && (
+              <div className="about-dev-gif-tip">
+                <span className="about-dev-tip-icon">💡</span>
+                <span>
+                  Place your GIF at <code>frontend/public/{DEVELOPER_INFO.gif.filename}</code> to display your custom animation here!
+                </span>
+              </div>
+            )}
 
             {DEVELOPER_INFO.gif.caption && !gifError && gifLoaded && (
               <p className="about-dev-gif-caption">{DEVELOPER_INFO.gif.caption}</p>

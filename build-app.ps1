@@ -1,5 +1,7 @@
 ﻿# QueryPilot Application Build & Asset Deployment Script
 # Run this script whenever you update frontend code, constants (developerInfo.ts), or public assets (developer.gif).
+# powershell:
+# .\build-app.ps1 -Full
 
 param (
     [switch]$Run,    # Automatically launch QueryPilot Desktop after building
@@ -59,7 +61,8 @@ if ($Run) {
 
     if (Test-Path $exePath) {
         Write-Host "Launching QueryPilot: $exePath..." -ForegroundColor Cyan
-        Start-Process -FilePath $exePath
+        $workingDir = Split-Path $exePath -Parent
+        Start-Process -FilePath $exePath -WorkingDirectory $workingDir
     } else {
         Write-Warning "QueryPilot.exe not found. Run '.\build-app.ps1 -Full' to compile."
     }
