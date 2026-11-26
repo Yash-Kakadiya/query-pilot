@@ -19,6 +19,15 @@ def main():
         (localappdata / "QueryPilot" / "_up_" / "dist" / "querypilot-agent" / "_internal" / "query_pilot" / "agent" / "static").resolve(),
     ]
 
+    # Dynamically discover all release distribution static directories (e.g. QueryPilot-v0.2.0-windows-x64, v0.3.0)
+    release_dir = repo_root / "release"
+    if release_dir.is_dir():
+        for sub in release_dir.iterdir():
+            if sub.is_dir():
+                cand = (sub / "querypilot-agent" / "_internal" / "query_pilot" / "agent" / "static").resolve()
+                if cand.exists() and cand not in targets:
+                    targets.append(cand)
+
     for t in targets:
         if t.exists():
             print(f"Syncing to {t}...")
@@ -34,13 +43,17 @@ def main():
             print(f"  Synced -> index.html size: {(t / 'index.html').stat().st_size} bytes")
 
     # Clean EBWebView cache
-    ebwebview = localappdata / "com.querypilot.desktop" / "EBWebView"
-    if ebwebview.exists():
-        try:
-            shutil.rmtree(ebwebview)
-            print("Cleared EBWebView cache successfully.")
-        except Exception as e:
-            print(f"Note: Could not clear EBWebView cache: {e}")
+    cache_dirs = [
+        localappdata / "com.querypilot.desktop" / "EBWebView",
+        localappdata / "QueryPilot" / "EBWebView",
+    ]
+    for ebwebview in cache_dirs:
+        if ebwebview.exists():
+            try:
+                shutil.rmtree(ebwebview)
+                print(f"Cleared EBWebView cache successfully at {ebwebview}.")
+            except Exception as e:
+                print(f"Note: Could not clear EBWebView cache at {ebwebview}: {e}")
 
 if __name__ == "__main__":
     main()

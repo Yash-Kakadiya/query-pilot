@@ -25,10 +25,11 @@ export function AboutDeveloperModal({ isOpen, onClose }: AboutDeveloperModalProp
 
   if (!isOpen) return null
 
-  // Resolve GIF URL dynamically with Vite base path (e.g. /app/developer.gif)
+  // Resolve GIF URL dynamically with Vite base path (e.g. /app/developer.gif) and cache-buster
+  const [cacheBuster] = useState<number>(() => Date.now())
   const rawBaseUrl = import.meta.env.BASE_URL || '/'
   const normalizedBase = rawBaseUrl.endsWith('/') ? rawBaseUrl : `${rawBaseUrl}/`
-  const gifUrl = `${normalizedBase}${DEVELOPER_INFO.gif.filename}`
+  const gifUrl = `${normalizedBase}${DEVELOPER_INFO.gif.filename}?t=${cacheBuster}`
 
   const handleLinkClick = (url: string) => {
     void openExternalUrl(url)
